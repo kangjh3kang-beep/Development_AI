@@ -33,6 +33,27 @@ export const BUSINESS_INFO = {
   fax: "02-6305-0044",
 } as const;
 
+/**
+ * ★전자상거래법 제10조가 요구하는 **표시 항목**의 정본 목록.
+ *
+ *   락은 이 목록에서 **파생**한다 — 손으로 세 개만 고르면 나머지가 무잠금이 되고,
+ *   실제로 그랬다. 2026-09-06 기계 변이 감사(base 7609325e)에서
+ *   푸터 JSX 의 **소재지 줄 삭제**와 **대표번호 줄 삭제**가 둘 다 SURVIVED 했다.
+ *   ★그때 렌더 락의 주석에는 이미 *"재료 락만 있었을 때 통신판매업 줄을 지우는 변이가
+ *     SURVIVED 했다"* 고 적혀 있었다 — **한 항목에서 그 결함을 찾고 형제를 안 훑은 것**이다.
+ *
+ *   `brand`·`businessType`·`fax` 는 법정 필수가 아니라 여기 넣지 않는다
+ *   (넣으면 법이 요구하지 않는 것을 요구하는 락이 된다).
+ */
+export const LEGAL_DISCLOSURE_KEYS = [
+  "companyName",
+  "representative",
+  "businessNumber",
+  "mailOrderNumber",
+  "address",
+  "tel",
+] as const satisfies readonly (keyof typeof BUSINESS_INFO)[];
+
 type SiteFooterProps = {
   locale: string;
   /** 대시보드처럼 이미 여백이 있는 곳에서 상단 마진을 줄이고 싶을 때 */

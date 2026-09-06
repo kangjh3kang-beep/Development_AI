@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { BUSINESS_INFO } from "@/components/layout/SiteFooter";
+import { BUSINESS_INFO, LEGAL_DISCLOSURE_KEYS } from "@/components/layout/SiteFooter";
 
 /**
  * ★전자상거래법 표기 락 — 네이버 로그인 검수 반려(2026.05.13) 사유였다.
@@ -20,9 +20,11 @@ const LAYOUT = path.join(WEB, "app", "[locale]", "layout.tsx");
 
 describe("전자상거래법 3종 표기", () => {
   it("★세 항목이 모두 비어 있지 않다 — 하나라도 비면 검수가 반려된다", () => {
-    expect(BUSINESS_INFO.representative.trim()).not.toBe("");
-    expect(BUSINESS_INFO.businessNumber.trim()).not.toBe("");
-    expect(BUSINESS_INFO.mailOrderNumber.trim()).not.toBe("");
+    // ★정본 목록에서 파생한다 — 손으로 고르면 그 셋이 상한이 된다(변이가 실증했다).
+    expect(LEGAL_DISCLOSURE_KEYS.length, "표시항목 목록이 비었다").toBeGreaterThanOrEqual(6);
+    for (const k of LEGAL_DISCLOSURE_KEYS) {
+      expect(BUSINESS_INFO[k].trim(), `${k} 가 비었다`).not.toBe("");
+    }
     // ★대조군: 형식까지 본다(빈 문자열 아닌 아무 값이나 통과하는 것을 막는다)
     expect(BUSINESS_INFO.businessNumber).toMatch(/^\d{3}-\d{2}-\d{5}$/);
     expect(BUSINESS_INFO.mailOrderNumber).toMatch(/^제\d{4}-.+-\d+호$/);

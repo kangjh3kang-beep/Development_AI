@@ -1,7 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { BUSINESS_INFO, SiteFooter } from "@/components/layout/SiteFooter";
+import {
+  BUSINESS_INFO,
+  LEGAL_DISCLOSURE_KEYS,
+  SiteFooter,
+} from "@/components/layout/SiteFooter";
 
 /**
  * ★행위 락 — 「값이 있다」와 「실제로 그려진다」는 다른 축이다.
@@ -10,13 +14,17 @@ import { BUSINESS_INFO, SiteFooter } from "@/components/layout/SiteFooter";
  *   SURVIVED** 했다. 검수자는 소스가 아니라 **화면**을 본다.
  */
 describe("SiteFooter 렌더", () => {
-  it("★전자상거래법 3종이 화면에 실제로 그려진다", () => {
+  it("★전자상거래법 표시항목이 **전수** 화면에 그려진다(정본 목록에서 파생)", () => {
     render(<SiteFooter locale="ko" />);
     const footer = screen.getByTestId("site-footer");
-    // ★세 항목을 각각 태운다 — 하나라도 빠지면 네이버 검수가 반려한다
-    expect(footer.textContent).toContain(BUSINESS_INFO.representative);
-    expect(footer.textContent).toContain(BUSINESS_INFO.businessNumber);
-    expect(footer.textContent).toContain(BUSINESS_INFO.mailOrderNumber);
+    // ★손으로 세 개를 고르던 자리다. 그래서 소재지·대표번호 줄을 지우는 변이가 SURVIVED 했다.
+    //   이제 목록에서 파생하므로 항목이 늘면 자동으로 편입된다.
+    expect(LEGAL_DISCLOSURE_KEYS.length, "표시항목 목록이 비었다 — 조회기 사망").toBeGreaterThanOrEqual(6);
+    for (const k of LEGAL_DISCLOSURE_KEYS) {
+      const v = BUSINESS_INFO[k];
+      expect(v.trim(), `${k} 값이 비었다`).not.toBe("");
+      expect(footer.textContent, `${k}(${v}) 가 화면에 없다`).toContain(v);
+    }
     // 라벨도 함께 — 값만 있고 무엇인지 안 쓰면 검수자가 못 찾는다
     expect(footer.textContent).toContain("통신판매업 신고번호");
     expect(footer.textContent).toContain("사업자등록번호");
