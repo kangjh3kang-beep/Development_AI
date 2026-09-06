@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { PYEONG_SQM } from "../formatters";
 import { buildConstructionParams, perPyeongToPerSqm } from "../construction-cost-params";
 
 const REPO = path.resolve(__dirname, "../../../..");
@@ -12,8 +13,12 @@ describe("④ 공사비 배선 — 단위·폴백·정본", () => {
    * 평당값을 ㎡ 칸에 넣으면 3.3배 과대인데 **결과가 그럴듯한 큰 수**라 화면으로 안 걸린다.
    */
   it("평당→㎡ 변환이 정확하고, 방향이 반대가 아니다", () => {
-    // 아파트 기본 단가 실측: 2,400,000 원/㎡ = 평당 7,933,920 원
-    expect(perPyeongToPerSqm(7_933_920)).toBe(2_400_000);
+    // ★기대값을 **정본 상수에서 파생**한다. 첫 판은 `3.3058` 로 손계산한 7,933,920 →
+    //   2,400,000 을 하드코딩했는데, 정본이 `3.305785` 라 **2,400,011** 이 나와 빨개졌다.
+    //   *«기대값이 내가 깎으려는 그 상수에서 나오는가»* 의 반대 실수 — **정본이 아닌
+    //   내 손계산에서** 나왔다. 11원 차이지만 그것이 «두 벌» 의 실해다.
+    const perSqm = 2_400_000;
+    expect(perPyeongToPerSqm(perSqm * PYEONG_SQM)).toBe(perSqm);
     // ★방향 락 — 나누기를 곱하기로 바꾸면 잡힌다(부호 없는 배수라 크기로만 갈린다)
     expect(perPyeongToPerSqm(1_000_000)).toBeLessThan(1_000_000);
   });
@@ -39,17 +44,37 @@ describe("④ 공사비 배선 — 단위·폴백·정본", () => {
         // 주석·설명은 배제하고 코드 줄만 본다(이 테스트 자신이 그 숫자를 설명에 쓴다)
         const code = src.split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n")
           .replace(/\/\*[\s\S]*?\*\//g, "");
-        if (/3\.3058/.test(code)) hits.push(path.relative(WEB, f));
+        // ★★첫 판은 `/3\.3058/` 만 봤다. 그래서 정본 `formatters.PYEONG_SQM = 3.305785`
+        //   를 **못 보고**, 내가 만든 `3.3058` 을 «유일한 정본» 이라 판정했다 —
+        //   **두 벌인데 한 벌로 읽혔다.** 표기가 다르면 같은 상수도 다른 것으로 보인다.
+        //   → 소수 자릿수와 무관하게 **3.30~3.31 대역**을 전부 잡는다.
+        if (/\b3\.30[0-9]*\b/.test(code)) hits.push(path.relative(WEB, f));
       }
     };
     walk(path.join(WEB, "lib"));
     walk(path.join(WEB, "components"));
     walk(path.join(WEB, "store"));
     // ★공허진리 방지 — 조회기가 살아 있는가(정본 자신은 반드시 잡혀야 한다)
-    expect(hits, "조회기 사망 — 정본조차 못 찾았다").toContain("lib/construction-cost-params.ts");
-    expect(hits, `평당↔㎡ 배수가 여러 곳에 있다: ${hits.join(", ")}`).toEqual([
-      "lib/construction-cost-params.ts",
-    ]);
+    // ★양성 대조군 — 정본이 반드시 잡혀야 한다(조회기 생존)
+    expect(hits, "조회기 사망 — 정본조차 못 찾았다").toContain("lib/formatters.ts");
+
+    // ★★**「두 벌」이 아니라 11벌이었다.** 축을 `3.3058` 에서 `3.30*` 로 넓히자
+    //   `3.305785` 40회 · `3.3058` 8회가 드러났다(위양성 0 — 전부 진짜 평당 상수).
+    //   그중엔 **사용자가 본 실거래 마커를 그리는 `SatongMultiMap.tsx`** 도 있다.
+    //
+    //   ★11벌을 지금 다 통합하면 리뷰 불가능한 크기가 된다(§D-20: 처방 범위 = 결함 범위).
+    //     이번 결함은 **면적 표기 불일치**이고, 상수 다중화는 **별개의 더 큰 부채**다.
+    //   → **래칫**으로 묶는다: 지금 수를 상한으로 두고 **늘어나면 빨개진다.**
+    //     줄이는 것은 언제나 통과한다(래칫이 내려간다).
+    const RATCHET_MAX = 11;   // 2026-09-06 측정치. ★줄었으면 이 수를 내려라.
+    expect(hits.length, (
+      `평당↔㎡ 상수 보유 파일이 ${hits.length}개로 **늘었다**(상한 ${RATCHET_MAX}): ` +
+      `${hits.join(", ")} — 새 파일이 자기 상수를 두지 말고 formatters.PYEONG_SQM 을 쓰라.`
+    )).toBeLessThanOrEqual(RATCHET_MAX);
+    // ★래칫이 느슨해지지 않게 — 실제로 줄었으면 상한도 내리라고 알린다
+    expect(hits.length, (
+      `상수 보유 파일이 ${hits.length}개로 줄었다 — RATCHET_MAX 를 ${hits.length} 로 내려라`
+    )).toBeGreaterThanOrEqual(RATCHET_MAX);
   });
 
   /**
@@ -109,6 +134,39 @@ describe("④ 공사비 배선 — 단위·폴백·정본", () => {
                      "unit_cost_per_pyeong", "construction_cost_override_won"]) {
       expect(code, `스토어가 ${k} 를 리졸버에 넘기지 않는다`).toContain(k);
     }
+  });
+
+  /**
+   * ★⑤ 미러 락 — 프론트 항목 키가 백엔드 `_OTHER_ITEM_SHARE` 와 **같아야** 한다.
+   *   어긋나면 그 항목은 **조용히 무시**되고(백엔드가 모르는 키), 사용자는 값을 넣었는데
+   *   반영이 안 된 채 **표준분이 대신 들어간다** — 화면상 그럴듯해서 안 걸린다.
+   */
+  it("★기타경비 항목 키가 백엔드 몫 표와 일치한다(양방향)", () => {
+    const be = fs.readFileSync(
+      path.join(REPO, "apps/api/app/services/feasibility/modules/common/cost_blocks.py"), "utf8");
+    // ★**선언**에 앵커를 건다 — 첫 판은 `indexOf("_OTHER_ITEM_SHARE")` 라 **내가 쓴 주석의
+    //   언급**을 집어 키를 1개만 봤다(저장소가 이름 붙인 «설명문의 낱말을 집는다» 그대로).
+    const declAt = be.indexOf("_OTHER_ITEM_SHARE: dict");
+    expect(declAt, "몫 표 **선언**을 못 찾았다 — 조회기 사망").toBeGreaterThan(-1);
+    const block = be.slice(declAt, be.indexOf("}", declAt));
+    const beKeys = [...block.matchAll(/"([a-z_]+_won)"\s*:/g)].map((m) => m[1]).sort();
+    expect(beKeys.length, "백엔드 몫 표를 못 읽었다 — 조회기 사망").toBeGreaterThanOrEqual(3);
+
+    const feSrc = fs.readFileSync(path.join(WEB, "lib/construction-cost-params.ts"), "utf8");
+    const feBlock = feSrc.slice(feSrc.indexOf("const OTHER_COST_KEYS"), feSrc.indexOf("] as const", feSrc.indexOf("const OTHER_COST_KEYS")));
+    const feKeys = [...feBlock.matchAll(/"([a-z_]+_won)"/g)].map((m) => m[1]).sort();
+    expect(feKeys.length, "프론트 키 목록을 못 읽었다 — 조회기 사망").toBeGreaterThanOrEqual(3);
+    // ★양방향 — 한쪽만 보면 「빠뜨림」과 「군더더기」 중 하나를 못 잡는다
+    expect(feKeys, "프론트가 보내는 기타경비 키가 백엔드 몫 표와 다르다").toEqual(beKeys);
+  });
+
+  it("★기타경비는 공사비 직접입력과 **함께** 실린다(축이 다르다)", () => {
+    const p = buildConstructionParams({
+      construction_cost_override_won: 50_000_000_000,
+      marketing_cost_won: 100_000_000,
+    });
+    expect(p.construction_cost_override_won).toBe(50_000_000_000);
+    expect(p.marketing_cost_won, "공사비 override 가 기타경비를 삼켰다").toBe(100_000_000);
   });
 
   /**

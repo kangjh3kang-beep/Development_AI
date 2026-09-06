@@ -930,10 +930,16 @@ async def test_different_payment_key_on_paid_order_is_conflict(_capture) -> None
 class _RefundSession:
     """환불 경로가 실제로 만지는 SQL 에만 응답한다."""
 
-    def __init__(self, order_row, topup_balance: float):
+    def __init__(self, order_row, topup_balance: float, *, race_to: float | None = None):
         self.order_row = order_row
         self.topup = topup_balance
         self.clawed: list[float] = []
+        #: ★주문 행의 `refunded_krw` 를 **상태로** 들고 있는다 — CAS 를 재현하려면
+        #:  값이 실제로 바뀌어야 한다(고정값 스텁은 CAS 를 검증할 수 없다).
+        self.refunded = float(order_row.get("refunded_krw") or 0)
+        #: 경쟁 재현 — 첫 CAS **직후** 다른 요청이 이 값으로 바꾼 것처럼 만든다.
+        self._race_to = race_to
+        self.cas_attempts: list[tuple[float, float]] = []  # (expected, 실제)
 
     async def execute(self, stmt, params=None):
         s = str(getattr(stmt, "text", stmt))
@@ -950,6 +956,18 @@ class _RefundSession:
                 self.clawed.append(amt)
                 return _RowRes(("u",))
             return _RowRes(None)
+        if "UPDATE coin_orders" in s and "COALESCE(refunded_krw, 0) =" in s:
+            # ★CAS 재현 — 기대값이 현재값과 같을 때만 성립한다.
+            expected = float(p.get("expected", p.get("expected_now", -1)))
+            self.cas_attempts.append((expected, self.refunded))
+            if expected != self.refunded:
+                return _RowRes(None)
+            self.refunded = float(p.get("r", 0))
+            if self._race_to is not None:
+                # 첫 성립 직후 남이 끼어든다(그 뒤 되돌리기 CAS 는 실패해야 한다).
+                self.refunded = self._race_to
+                self._race_to = None
+            return _RowRes(("o",))
         return _Res()
 
     async def commit(self):
@@ -1911,3 +1929,261 @@ def test_no_mutation_sentinel_survives_into_shipped_source() -> None:
             "(§B-7: 변이가 도는 중에 커밋하지 마라. 2026-09-06 에 실제로 어겼다)"
         ),
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★Q3 — 환불 경쟁: 자문락은 커밋에서 풀리고, 벤더 취소는 그 **뒤에** 돈다
+#
+# `pg_advisory_xact_lock` 은 트랜잭션 스코프다. 환불은 ①코인 환수 → ②커밋 →
+# ③벤더 취소(최대 30초) 순인데, **②에서 락이 풀린다.** 그 창에 두 번째 환불이
+# 들어와 커밋할 수 있고, 종전 코드는 되돌리기에서 그 기록을 **조건 없이 덮었다**:
+#
+#     R1 읽음(already=0) → R2 커밋(refunded=10000) → R1 벤더 실패
+#     → R1 이 refunded 를 0 으로 되돌림 → 사용자는 카드 환불 + 코인 보유(순이득)
+#
+# ★두 모집단을 **같은 실행에서** 가른다 — 한쪽만 걸면 "아무것도 안 되돌림"이 만점이다.
+# ═══════════════════════════════════════════════════════════════════════════
+@pytest.mark.asyncio
+async def test_refund_write_is_compare_and_set(_refund_env, monkeypatch) -> None:
+    """모집단 ① — 기대값이 맞으면 **성립한다**(정상 환불이 죽지 않는다)."""
+    db = _RefundSession(_paid_order(), topup_balance=10_000)
+    out = await _tos.refund_toss_payment(
+        db, order_no="CO20260827-DEADBEEF", reason="테스트", amount=3_000,
+        actor_id="user-A", is_admin=False,
+    )
+    assert db.cas_attempts and db.cas_attempts[0][0] == 0.0, "기대값을 안 실었다"
+    assert db.refunded == 3_000.0, "환불액이 기록되지 않았다"
+    assert out.get("refunded_krw") in (3_000, 3_000.0) or db.refunded == 3_000.0
+
+
+@pytest.mark.asyncio
+async def test_refund_write_aborts_when_someone_else_changed_it(
+    _refund_env, monkeypatch
+) -> None:
+    """모집단 ② — ★그 사이 남이 바꿨으면 **벤더로 가기 전에 멈춘다**.
+
+    여기서 멈추는 것이 가장 싸다 — 아직 되돌릴 수 없는 것을 하나도 하지 않았다.
+    """
+    row = _paid_order()
+    db = _RefundSession(row, topup_balance=10_000)
+    db.refunded = 5_000.0  # 읽은 뒤 남이 바꾼 상태를 만든다(row 의 already 는 0)
+
+    with pytest.raises(_tos.PaymentRejectedError) as ei:
+        await _tos.refund_toss_payment(
+            db, order_no="CO20260827-DEADBEEF", reason="테스트", amount=3_000,
+            actor_id="user-A", is_admin=False,
+        )
+    assert ei.value.code == _tos.CODE_REFUND_CONFLICT
+    # ★벤더에 아무것도 보내지 않았다 — 되돌릴 수 없는 것을 하기 전에 멈췄다.
+    sent = _refund_env
+    assert not sent, f"경쟁을 감지하고도 벤더를 불렀다: {sent}"
+
+
+@pytest.mark.asyncio
+async def test_revert_does_not_clobber_a_concurrent_refund(
+    _refund_env, monkeypatch
+) -> None:
+    """★되돌리기도 CAS — 남이 끼어들었으면 **되돌리지 않고 사람에게 남긴다**."""
+    receipts: list[dict] = []
+
+    async def spy_record(**kw):
+        receipts.append(kw)
+        return "r"
+
+    monkeypatch.setattr(_tos.payment_receipts, "record", spy_record)
+
+    async def boom(**kw):
+        raise TossOutcomeUnknownError("타임아웃")
+
+    monkeypatch.setattr(_tos.toss_payments, "cancel", boom)
+
+    # 첫 CAS 성립 직후 남이 refunded 를 9,999 로 바꾼 것처럼 만든다.
+    db = _RefundSession(_paid_order(), topup_balance=10_000, race_to=9_999.0)
+    with pytest.raises(_tos.PaymentUnresolvedError):
+        await _tos.refund_toss_payment(
+            db, order_no="CO20260827-DEADBEEF", reason="테스트", amount=3_000,
+            actor_id="user-A", is_admin=False,
+        )
+    assert db.refunded == 9_999.0, "★남의 환불 기록을 덮었다"
+    assert any(r.get("toss_code") == _tos.CODE_REFUND_CONFLICT for r in receipts), \
+        "되돌리지 못한 사실을 아무도 볼 수 없다(진단 불가는 그 자체로 장애)"
+
+
+def test_refund_sql_carries_the_compare_and_set_guard() -> None:
+    """★스텁이 우회할 수 있으므로 **실제 SQL 문자열**도 본다."""
+    src = (_API / "app/services/billing/toss_orders_service.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    sql = " ".join(
+        n.value for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and "UPDATE coin_orders" in n.value
+    )
+    assert sql.count("COALESCE(refunded_krw, 0) =") >= 2, \
+        "환불 기록 쓰기와 되돌리기 **둘 다** CAS 여야 한다"
+    # ★대조군 — SQL 리터럴 수집이 죽지 않았다.
+    assert "UPDATE coin_orders" in sql
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★Q4 — 환불 수령계좌: 계정 탈취 시 **현금 인출 통로**였다
+# ═══════════════════════════════════════════════════════════════════════════
+@pytest.mark.parametrize(
+    ("acct", "ok", "why"),
+    [
+        ({"bank": "20", "accountNumber": "9002148908909", "holderName": "강재희"}, True, "정상"),
+        ({"bank": "020", "accountNumber": "900-214-890890", "holderName": "홍길동"}, True, "3자리 코드·하이픈"),
+        ({"bank": "2", "accountNumber": "9002148908909", "holderName": "강재희"}, False, "은행코드 1자리"),
+        ({"bank": "20", "accountNumber": "900 2148908909", "holderName": "강재희"}, False, "공백"),
+        ({"bank": "20", "accountNumber": "abc12345678", "holderName": "강재희"}, False, "문자"),
+        ({"bank": "20", "accountNumber": "９００２１４８９０８９", "holderName": "강"}, False, "전각 숫자"),
+        ({"bank": "20", "accountNumber": "9002148908909", "holderName": ""}, False, "예금주 없음"),
+        ({"bank": "20", "accountNumber": "9002148908909", "holderName": "강\x00재희"}, False, "제어문자"),
+        ({"bank": "20", "accountNumber": "9002148908909", "holderName": "강재희",
+          "extra": "x"}, False, "★정의 밖 키는 거부(벤더로 임의 필드 주입 차단)"),
+    ],
+)
+def test_refund_account_shape_is_enforced(acct, ok, why) -> None:
+    from pydantic import ValidationError
+
+    import routers.billing as _b
+
+    if ok:
+        m = _b.RefundReceiveAccount(**acct)
+        assert m.accountNumber == acct["accountNumber"], why
+    else:
+        with pytest.raises(ValidationError):
+            _b.RefundReceiveAccount(**acct)
+
+
+@pytest.mark.asyncio
+async def test_refund_account_is_rejected_for_non_virtual_account(
+    _refund_env, monkeypatch
+) -> None:
+    """★형식만 막으면 **카드 결제에 계좌를 붙여 보내는 경로**가 남는다.
+
+    카드 환불은 원 결제수단으로 되돌아가므로 계좌를 지정할 이유가 없다 —
+    지정할 수 있다는 것 자체가 **탈취 계정의 현금 인출 통로**다.
+    """
+    async def probe(*, payment_key, order_id):
+        return {"method": "카드", "isPartialCancelable": True}
+
+    monkeypatch.setattr(_tos, "_fetch_payment", probe)
+    db = _RefundSession(_paid_order(), topup_balance=10_000)
+    with pytest.raises(_tos.PaymentRejectedError) as ei:
+        await _tos.refund_toss_payment(
+            db, order_no="CO20260827-DEADBEEF", reason="테스트", amount=3_000,
+            actor_id="user-A", is_admin=False,
+            refund_receive_account={"bank": "20", "accountNumber": "9002148908909",
+                                    "holderName": "강재희"},
+        )
+    assert ei.value.code == _tos.CODE_REFUND_ACCOUNT_NOT_ALLOWED
+    assert not _refund_env, "거절했는데 벤더를 불렀다"
+
+
+@pytest.mark.asyncio
+async def test_virtual_account_refund_requires_an_account(
+    _refund_env, monkeypatch
+) -> None:
+    """★반대 방향 — 가상계좌인데 계좌가 없으면 **미리** 말한다.
+
+    벤더가 어차피 거절하지만, 그때는 이미 코인을 환수한 뒤다.
+    """
+    async def probe(*, payment_key, order_id):
+        return {"method": "가상계좌", "virtualAccount": {"accountNumber": "X123"},
+                "isPartialCancelable": True}
+
+    monkeypatch.setattr(_tos, "_fetch_payment", probe)
+    db = _RefundSession(_paid_order(), topup_balance=10_000)
+    with pytest.raises(_tos.PaymentRejectedError) as ei:
+        await _tos.refund_toss_payment(
+            db, order_no="CO20260827-DEADBEEF", reason="테스트", amount=3_000,
+            actor_id="user-A", is_admin=False,
+        )
+    assert ei.value.code == _tos.CODE_REFUND_ACCOUNT_REQUIRED
+    assert db.clawed == [], "거절 전에 코인을 뺐다"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★Q5 — 웹훅은 무인증이다. 인증을 붙일 수 없으므로 **경계를 좁힌다**
+#
+# 토스 v2 결제 웹훅에는 서명이 없다(서명 헤더는 `payout.changed`·`seller.changed` 전용).
+# 그래서 이 경로는 **열려 있어야 한다.** 열려 있는 대신:
+#   ①전용 레이트리밋 — 전역 기본(100/분)은 프록시 뒤에서 **전 클라이언트가 한 버킷**을
+#     공유하므로 이 엔드포인트를 보호하지 못한다
+#   ②본문 상한 — 본문을 영수증 `raw` 에 통째로 적재하므로 무제한이면 원장이 부푼다
+# ═══════════════════════════════════════════════════════════════════════════
+def test_webhook_has_its_own_rate_limit() -> None:
+    import routers.billing as _b
+
+    assert _b.WEBHOOK_RATE_LIMIT, "전용 레이트리밋 상수가 없다"
+    src = (_API / "routers/billing.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "toss_webhook"
+    )
+    decos = [ast.get_source_segment(src, d) or "" for d in fn.decorator_list]
+    assert any("limiter.limit" in d for d in decos), \
+        f"웹훅에 전용 레이트리밋이 없다: {decos}"
+    # ★상수에 결속 — 데코레이터가 다른 값을 쓰면 상수가 장식이 된다.
+    assert any("WEBHOOK_RATE_LIMIT" in d for d in decos)
+
+
+def test_webhook_caps_body_size_and_still_returns_200() -> None:
+    """★상한을 넘겨도 **200 을 돌려준다** — 유효/무효를 응답으로 구별해 주면
+    그 자체가 탐지 도구가 된다(이 함수의 기존 규율과 같은 이유).
+    """
+    import routers.billing as _b
+
+    assert _b.WEBHOOK_MAX_BODY_BYTES <= 256 * 1024, "상한이 사실상 무제한이다"
+    src = (_API / "routers/billing.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "toss_webhook"
+    )
+    body_src = "\n".join(ast.get_source_segment(src, b) or "" for b in fn.body)
+    assert "WEBHOOK_MAX_BODY_BYTES" in body_src, "상한을 실제로 비교하지 않는다"
+    assert 'return {"ok": True}' in body_src, "상한 초과에 200 이 아닌 것을 돌려준다"
+    # ★서명이 없으므로 **본문을 데이터로 쓰지 않는다**는 기존 계약이 살아 있는가.
+    assert "reconcile_from_webhook" in body_src, "재조회 경로가 사라졌다"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★Q6 — 관리자 게이트가 **목록형**이었다(철자 2종 · 파생형 락 0건)
+#
+# 현재 누락은 **0건**이다. 문제는 형태다: 게이트가 라우트마다 손으로 붙어 있고
+# 철자가 둘이라(`_require_super_admin` / `billing_service.is_super_admin`),
+# 다음에 추가되는 `/admin` 라우트는 **조용히 열린 채** 초록으로 머지된다.
+# ═══════════════════════════════════════════════════════════════════════════
+def test_every_billing_admin_route_is_gated() -> None:
+    """★축을 **라우트 객체**로 파생시킨다 — 파일을 손으로 고르면 놓친다."""
+    import inspect
+
+    import routers.billing as _b
+
+    admin_routes = [
+        r for r in _b.router.routes
+        if "/admin/" in getattr(r, "path", "") and getattr(r, "endpoint", None)
+    ]
+    assert len(admin_routes) >= 8, f"모집단이 비었다({len(admin_routes)}) — 공허한 초록 방지"
+
+    ungated = []
+    for r in admin_routes:
+        src = inspect.getsource(r.endpoint)
+        # ★철자가 둘이므로 **둘 다** 인정한다. 하나만 보면 나머지 절반이 안 보인다.
+        if "_require_super_admin" not in src and "is_super_admin" not in src:
+            ungated.append(r.path)
+    assert not ungated, f"★관리자 게이트가 없는 라우트: {ungated}"
+
+
+def test_admin_gate_spellings_are_enumerated_not_guessed() -> None:
+    """★위 락이 **두 철자를 모두** 세는지 확인한다.
+
+    하나만 세면 그 락은 절반만 보고 「전부 게이트됨」이라 말한다 —
+    이 저장소가 반복해 데인 「적용 범위 ≠ 결함 범위」다.
+    """
+    src = (_API / "routers/billing.py").read_text(encoding="utf-8")
+    assert src.count("_require_super_admin") >= 2, "철자 A 가 사라졌다"
+    assert src.count("is_super_admin") >= 2, "철자 B 가 사라졌다"
+    # ★대조군 — 이 파일을 실제로 읽었다.
+    assert "/admin/payments/health" in src

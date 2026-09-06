@@ -184,6 +184,7 @@ async def _sigungu5_from_address(address: str) -> str | None:
 async def _trade_sale_price_per_pyeong(
     *, dev_type: str, address: str, sigungu5: str | None = None,
     building_type: str | None = None,
+    cases_out: list[dict[str, Any]] | None = None,
 ) -> tuple[int, str, str, None, int] | None:
     """주변 실거래(MOLIT) 직접 조회 → 분양단가(원/평, 공급면적). site_id 불필요(★HIGH-1).
 
@@ -232,7 +233,88 @@ async def _trade_sale_price_per_pyeong(
         building = _canonical_building(building_type) or _svc()._get_building_type(dev_type)
         prop_type = _BUILDING_TO_MOLIT_PROP.get(building, "apt")
         dong = _extract_dong(address)
+
+        # ★★**분양가의 정본은 분양권 전매다**(2026-09-06 · 사용자 신고로 발견).
+        #   기존 `apt`(매매) API 에는 **미준공 분양 단지가 원리적으로 안 들어온다** —
+        #   실측: 화도읍 469건 중 「빌리브센트하이」 **0건**인데 분양권 API 로는 **17건**.
+        #   그리고 값이 크게 다르다(마석우리 · 12개월):
+        #       분양권      전용 2,491 / 공급 1,868 만원/평
+        #       매매(혼합)  전용 1,391 / 공급 1,044             → **-44%**
+        #   ★사용자가 «주변 신축 분양이 평당 2,000에 육박하는데 왜 1,200인가» 로 신고했고,
+        #     근본 원인은 **연식 보정이 아니라 데이터원**이었다.
+        #   ★분양권은 이미 **신축 가격**이므로 신축 프리미엄을 **곱하지 않는다**(이중 계상).
+        pre = None
+        if prop_type == "apt":
+            try:
+                # ★사례를 **같은 수집 루프에서** 함께 받는다(재수집 0회 — `comparables.py` 가
+                #   명문으로 요구하는 규율). 목록화·선택은 이 사례를 소비한다.
+                pre = await _trade_per_pyeong(
+                    sigungu5, dong, "apt_presale", collect_cases=cases_out is not None)
+            except TypeError as e:
+                # ★★**시그니처 불일치를 「조회 실패」로 위장하지 않는다.**
+                #   내 테스트 스텁이 `collect_cases` 를 안 받아 `TypeError` 가 났고,
+                #   그것이 `except Exception` 에 삼켜져 **분양권 경로가 조용히 죽고**
+                #   매매로 폴백했다(값이 −44% 인 채로). 락 4건이 잡았지만, 실서비스에서는
+                #   **아무도 모른 채 낮은 값이 나갔을 것**이다.
+                #   → 프로그래밍 오류는 **error 로 크게** 남긴다(무중단은 유지).
+                logger.error(
+                    "분양권 조회 시그니처 불일치 — **배선 오류**이지 조회 실패가 아니다: %s",
+                    str(e)[:140])
+                pre = None
+            except Exception as e:  # noqa: BLE001 — 조회 실패는 매매로 폴백(무중단)
+                logger.warning("분양권 전매 조회 실패 — 매매로 폴백: %s: %s",
+                               type(e).__name__, str(e)[:100])
+                pre = None
+        if pre:
+            pd_med, pd_n = pre["dong"]["median"], pre["dong"]["n"]
+            ps_med, ps_n = pre["sigungu"]["median"], pre["sigungu"]["n"]
+            if pd_med and pd_n >= _MIN_TRADE_SAMPLES:
+                p_scope, p_med, p_n = "동", int(pd_med), int(pd_n)
+            elif ps_med and ps_n >= _MIN_TRADE_SAMPLES:
+                p_scope, p_med, p_n = "시군구", int(ps_med), int(ps_n)
+            else:
+                p_scope = None
+            if p_scope:
+                ratio, ratio_note = _exclusive_ratio_for(dev_type, building_type)
+                price = int(round(p_med * ratio * 10000))
+                basis = (
+                    f"분양권 전매(MOLIT) {p_scope} 중앙값 {p_med:,}만원/평"
+                    f"(전용, 표본 {p_n}건·최근 12개월) × {ratio_note}"
+                    " → 공급 평당가(신축 프리미엄 미적용 — 분양권은 이미 신축가"
+                    "·물건종별 apt_presale)"
+                )
+                # ★채택한 경로의 사례만 내보낸다 — 폴백으로 내려가면 그 사례는 근거가 아니다.
+                if cases_out is not None:
+                    cases_out.extend(pre.get("cases") or [])
+                return price, "분양권 전매(MOLIT)", basis, None, p_n
+
         pp = await _trade_per_pyeong(sigungu5, dong, prop_type)
+
+        # ★★**2-b 단: 최근 건축년도(신축) 실거래**(2026-09-06 · 사용자 결정).
+        #   «청약홈/분양권 → 없으면 가장 최근 건축년도 실거래»의 그 단이다.
+        #   ★신축 분양가의 비교 대상은 신축이다. 혼합 표본을 쓰면 구축이 끌어내린다 —
+        #     실측(화도읍 469건 전용 만원/평): 전체 1,391 ↔ 신축(≤10년) **1,846** = **+33%**
+        #     (21~30년 구축이 **202건 최다**라 중앙값을 지배한다).
+        #   ★신축 표본에도 **신축 프리미엄은 적용한다** — 매매가에서 분양가로 가는
+        #     환산이지 «구축→신축» 보정이 아니기 때문이다(분양권 단과 다른 이유).
+        r_d, r_s = pp.get("recent_dong") or {}, pp.get("recent_sigungu") or {}
+        if r_d.get("median") and (r_d.get("n") or 0) >= _MIN_TRADE_SAMPLES:
+            r_scope, r_med, r_n = "동", int(r_d["median"]), int(r_d["n"])
+        elif r_s.get("median") and (r_s.get("n") or 0) >= _MIN_TRADE_SAMPLES:
+            r_scope, r_med, r_n = "시군구", int(r_s["median"]), int(r_s["n"])
+        else:
+            r_scope = None
+        if r_scope:
+            yrs = pp.get("recent_build_years")
+            ratio, ratio_note = _exclusive_ratio_for(dev_type, building_type)
+            premium = _PREMIUM["base"]
+            price = int(round(r_med * ratio * premium * 10000))
+            basis = (
+                f"신축 실거래(MOLIT · 준공 {yrs}년 이내) {r_scope} 중앙값 {r_med:,}만원/평"
+                f"(전용, 표본 {r_n}건·최근 8개월) × {ratio_note} × 신축 프리미엄 {premium}"
+                f" → 공급 평당가(공급면적 기준·물건종별 {prop_type})"
+            )
+            return price, "신축 실거래(MOLIT)", basis, None, r_n
     except Exception as e:  # noqa: BLE001 — 실거래 조회 실패는 지역 시세로 폴백(무중단)
         logger.warning("주변 실거래(MOLIT) 분양단가 조회 실패 — 지역 시세 폴백: %s", str(e)[:120])
         return None
@@ -318,13 +400,22 @@ async def _resolve_sale_price_per_pyeong(
             logger.warning("suggest_base_price 실패 — 주변 실거래 직접조회로 폴백: %s", str(e)[:120])
 
     # 2순위: 주변 실거래(MOLIT) 직접 조회 — site_id 없이 주소→시군구로 확보(★HIGH-1).
-    trade = await _trade_sale_price_per_pyeong(dev_type=dev_type, address=address)
+    # ★사례를 원할 때만(=precision 소비처가 있을 때만) 수집한다 — 없으면 비용 0.
+    #   ★★이 인자를 안 넘기면 `cases_out` 통로가 **소비처 0** 으로 남는다.
+    #     사례를 만들고도 밖으로 안 내보내는 것은 «만들었는데 안 불린다» 그 자체다.
+    _cases: list[dict[str, Any]] | None = [] if precision_out is not None else None
+    trade = await _trade_sale_price_per_pyeong(
+        dev_type=dev_type, address=address, cases_out=_cases)
     if trade is not None:
         # ★이 리졸버의 **외부 계약은 4-튜플 그대로**다(rough 호출부 무회귀).
         #   표본수는 `_molit_sale_price_source` 만 쓰므로 여기서 벗겨 낸다.
         #   ★시그니처를 바꾸며 **이 호출부를 안 고쳤다** — 형제·호출부를 파생으로
         #     세지 않고 «바꾼 함수만» 본 결과다(이 저장소가 반복해 데인 형태).
         price, src, basis, deg, _n = trade
+        # ★사례를 **채택된 경로일 때만** 정밀화 출력에 싣는다(목록화·선택의 입력).
+        if precision_out is not None and _cases:
+            precision_out["presale_cases"] = _cases
+            precision_out["presale_case_count"] = len(_cases)
         return price, src, basis, deg
 
     # 3순위(폴백): 지역×유형 시세 테이블(수지·추천 공용 SSOT) — 실거래 아님(추정치).

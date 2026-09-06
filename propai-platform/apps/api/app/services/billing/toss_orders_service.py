@@ -180,12 +180,27 @@ _REMEDIATION: dict[str, tuple[str, str]] = {
 
 #: 우리 쪽 검증 실패 코드(벤더 호출 전에 막은 것).
 CODE_AMOUNT_MISMATCH = "AMOUNT_MISMATCH"
+CODE_REFUND_CONFLICT = "REFUND_CONFLICT"
+CODE_REFUND_ACCOUNT_NOT_ALLOWED = "REFUND_ACCOUNT_NOT_ALLOWED"
+CODE_REFUND_ACCOUNT_REQUIRED = "REFUND_ACCOUNT_REQUIRED"
 CODE_ORDER_NOT_FOUND = "ORDER_NOT_FOUND"
 CODE_ORDER_NOT_PENDING = "ORDER_NOT_PENDING"
 CODE_PAYMENT_KEY_CONFLICT = "PAYMENT_KEY_CONFLICT"
 CODE_NOT_CONFIGURED = "PAYMENT_NOT_CONFIGURED"
 
 _LOCAL_REMEDIATION: dict[str, tuple[str, str]] = {
+    CODE_REFUND_ACCOUNT_NOT_ALLOWED: (
+        "이 결제는 가상계좌 결제가 아니어서 환불 계좌를 지정할 수 없습니다.",
+        "환불금은 결제하신 수단으로 자동 반환됩니다.",
+    ),
+    CODE_REFUND_ACCOUNT_REQUIRED: (
+        "가상계좌 결제는 환불받을 계좌 정보가 필요합니다.",
+        "은행·계좌번호·예금주를 입력해 다시 요청해 주세요.",
+    ),
+    CODE_REFUND_CONFLICT: (
+        "다른 환불 요청이 먼저 처리되었습니다.",
+        "충전 내역에서 현재 환불 상태를 확인한 뒤 다시 시도해 주세요.",
+    ),
     CODE_AMOUNT_MISMATCH: (
         "결제 금액이 주문 금액과 일치하지 않아 결제를 중단했습니다.",
         "충전 화면에서 처음부터 다시 진행해 주세요. 금액은 차감되지 않았습니다.",
@@ -816,8 +831,38 @@ async def refund_toss_payment(
     #   가능하지 않은데 부분 취소를 보내면 토스가 거절하고, 그 사이 우리는 이미 코인을
     #   환수한 상태가 된다. 되돌릴 수는 있지만 **묻는 편이 싸다**.
     partial = want < order_remaining or already > 0
-    if partial:
+    # ★한 번만 묻고 두 판정에 쓴다(무과금 GET). 부분취소 가능성 + **결제수단**.
+    probe = None
+    if partial or refund_receive_account is not None:
         probe = await _fetch_payment(payment_key=payment_key, order_id=order_id)
+
+    # ── ★수령계좌는 **가상계좌 결제일 때만** 허용한다 ─────────────────────────
+    #
+    # 카드 환불은 **원 결제수단으로 되돌아가므로** 계좌를 지정할 이유가 없다.
+    # 그런데 종전에는 어떤 결제든 임의 계좌를 실어 보낼 수 있었다 —
+    # 계정을 탈취한 사람이 **피해자 결제분을 자기 계좌로 빼내는 통로**다.
+    # 형식 검증(라우터의 `RefundReceiveAccount`)만으로는 이 경로가 닫히지 않는다.
+    #
+    # ★두 모집단을 **같은 자리에서** 가른다: VA 가 아닌데 계좌를 주면 거절하고,
+    #   VA 인데 계좌가 없으면 벤더가 어차피 거절하므로 **미리** 사유를 말한다.
+    method = str((probe or {}).get("method") or "")
+    is_va = bool((probe or {}).get("virtualAccount")) or "가상계좌" in method
+    if refund_receive_account is not None and probe is not None and not is_va:
+        raise PaymentRejectedError(
+            CODE_REFUND_ACCOUNT_NOT_ALLOWED,
+            "이 결제는 가상계좌 결제가 아니어서 환불 계좌를 지정할 수 없습니다.",
+            remediation="환불금은 결제하신 수단으로 자동 반환됩니다. 계좌 정보를 빼고 다시 요청해 주세요.",
+            http_status=400,
+        )
+    if refund_receive_account is None and is_va:
+        raise PaymentRejectedError(
+            CODE_REFUND_ACCOUNT_REQUIRED,
+            "가상계좌 결제는 환불받을 계좌 정보가 필요합니다.",
+            remediation="은행·계좌번호·예금주를 입력해 다시 요청해 주세요.",
+            http_status=400,
+        )
+
+    if partial:
         if probe is not None and probe.get("isPartialCancelable") is False:
             raise PaymentRejectedError(
                 "NOT_ALLOWED_PARTIAL_REFUND",
@@ -861,15 +906,43 @@ async def refund_toss_payment(
         created_by=str(actor_id),
     )
     new_refunded = already + want
-    await db.execute(
-        text(
-            "UPDATE coin_orders"
-            "   SET refunded_krw = :r, refunded_at = now(), refund_reason = :why,"
-            "       status = CASE WHEN :r >= amount_krw THEN :refunded ELSE status END"
-            " WHERE id = :id"
-        ),
-        {"r": float(new_refunded), "why": reason[:500], "id": order_id, "refunded": STATUS_REFUNDED},
-    )
+    # ★**CAS(compare-and-set)** — `refunded_krw` 가 우리가 읽은 값 그대로일 때만 쓴다.
+    #
+    #   자문락은 `pg_advisory_xact_lock` 이라 **아래 `commit()` 에서 풀린다.** 그런데
+    #   벤더 취소는 그 **뒤에** 돌고 최대 30초 걸린다(되돌릴 수 없는 쪽이므로 트랜잭션을
+    #   쥔 채 부를 수 없다). 그 창에 두 번째 환불이 들어와 커밋할 수 있다.
+    #   조건 없이 쓰면 그 사람의 기록을 **조용히 덮는다** — 실측 시나리오:
+    #
+    #     R1 읽음(already=0) → R2 읽음(already=5000) → R2 커밋(refunded=10000)
+    #     → R1 의 벤더 취소 실패 → R1 이 refunded 를 **0 으로 되돌림**
+    #     → 사용자는 카드로 10,000 환불받고 코인 5,000 을 그대로 보유(순이득)
+    #
+    #   잔액 차감은 이미 조건부(`AND topup_krw >= :a`)였는데 **주문 행만 무방비**였다.
+    applied = (
+        await db.execute(
+            text(
+                "UPDATE coin_orders"
+                "   SET refunded_krw = :r, refunded_at = now(), refund_reason = :why,"
+                "       status = CASE WHEN :r >= amount_krw THEN :refunded ELSE status END"
+                " WHERE id = :id AND COALESCE(refunded_krw, 0) = :expected"
+                " RETURNING id"
+            ),
+            {
+                "r": float(new_refunded), "why": reason[:500], "id": order_id,
+                "refunded": STATUS_REFUNDED, "expected": float(already),
+            },
+        )
+    ).first()
+    if applied is None:
+        # 그 사이 다른 환불이 성립했다. **코인을 이미 뺐으므로 되돌리고** 거절한다 —
+        # 벤더에는 아직 아무것도 보내지 않았으므로 여기서 멈추는 것이 가장 싸다.
+        await db.rollback()
+        raise PaymentRejectedError(
+            CODE_REFUND_CONFLICT,
+            "다른 환불 요청이 먼저 처리되어 이 요청을 중단했습니다.",
+            remediation="충전 내역에서 현재 환불 상태를 확인한 뒤 다시 시도해 주세요.",
+            http_status=409,
+        )
     await db.commit()
 
     # 2) 벤더 취소(되돌릴 수 없는 쪽).
@@ -888,8 +961,10 @@ async def refund_toss_payment(
         #    ★미확정도 되돌린다: 취소가 성립했을 수도 있지만, 여기서 코인을 뺏은 채 두면
         #      "환불도 안 되고 코인도 없는" 최악이 된다. 사용자에게 유리한 쪽으로 남기고
         #      미해결 영수증으로 사람이 보게 만든다.
+        # ★`expected_now` = 내가 방금 쓴 값. 그 사이 남이 바꿨으면 되돌리지 않는다(CAS).
         await _revert_clawback(db, owner_id=owner_id, order_id=order_id, amount=want,
-                               previous_refunded=already, actor_id=str(actor_id))
+                               previous_refunded=already, actor_id=str(actor_id),
+                               expected_now=new_refunded)
         code = getattr(e, "code", "CANCEL_UNRESOLVED")
         await payment_receipts.record(
             event=payment_receipts.EVENT_CANCEL_REJECTED,
@@ -931,7 +1006,7 @@ async def refund_toss_payment(
 
 async def _revert_clawback(
     db: AsyncSession, *, owner_id: str, order_id: str, amount: int,
-    previous_refunded: int, actor_id: str,
+    previous_refunded: int, actor_id: str, expected_now: int,
 ) -> None:
     """환수를 되돌린다 — 벤더 취소가 성립하지 않았을 때.
 
@@ -954,15 +1029,36 @@ async def _revert_clawback(
             description=f"환불 실패로 코인 원복(주문 {order_id})",
             ref_type="coin_order", ref_id=order_id, created_by=actor_id,
         )
-        await db.execute(
-            text(
-                "UPDATE coin_orders"
-                "   SET refunded_krw = :r, status = CASE WHEN :r <= 0 THEN 'paid' ELSE status END"
-                " WHERE id = :id"
-            ),
-            {"r": float(previous_refunded), "id": order_id},
-        )
+        # ★**CAS** — 내가 쓴 값(`expected_now`)이 그대로일 때만 되돌린다.
+        #   그 사이 다른 환불이 성립했다면 **되돌리지 않는다** — 되돌리면 그 사람의
+        #   기록이 사라지고, 사용자는 환불받고도 코인을 보유하게 된다.
+        reverted = (
+            await db.execute(
+                text(
+                    "UPDATE coin_orders"
+                    "   SET refunded_krw = :r, status = CASE WHEN :r <= 0 THEN 'paid' ELSE status END"
+                    " WHERE id = :id AND COALESCE(refunded_krw, 0) = :expected_now"
+                    " RETURNING id"
+                ),
+                {
+                    "r": float(previous_refunded), "id": order_id,
+                    "expected_now": float(expected_now),
+                },
+            )
+        ).first()
         await db.commit()
+        if reverted is None:
+            # ★조용히 넘기지 않는다 — 원장과 주문 행이 어긋난 채로 남는다.
+            #   미해결 영수증으로 남겨 **관리자 화면에 뜨게** 한다(진단 불가는 그 자체로 장애).
+            await payment_receipts.record(
+                event=payment_receipts.EVENT_APPLY_FAILED,
+                order_id=order_id, user_id=owner_id, amount_krw=float(amount),
+                toss_code=CODE_REFUND_CONFLICT,
+                toss_message=(
+                    "환불 되돌리기를 적용하지 못했습니다(그 사이 다른 환불이 성립). "
+                    "코인 잔액은 복원했으나 주문의 환불액 기록은 사람이 확인해야 합니다."
+                ),
+            )
     except Exception:  # noqa: BLE001
         logger.exception(
             "★환수 되돌리기 실패 — order_id=%s amount=%s (수동 복구 필요)", order_id, amount
