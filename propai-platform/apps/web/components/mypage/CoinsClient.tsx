@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiClientError, apiClient, apiV1BaseUrl } from "@/lib/api-client";
+import { trackEvent } from "@/lib/growth/event-collector";
 import { fromApiError } from "@/lib/payments/payment-error";
 import { openPaymentWindow, TossSdkError, type TossConfig } from "@/lib/payments/toss-sdk";
 import type { Locale } from "@/i18n/config";
@@ -71,6 +72,27 @@ type BankTransferConfig = {
  * ★단일 출처는 **서버**다. 이 함수는 그 값이 **없을 때**의 복원일 뿐이고, 복원 규칙은
  *   결정적이다: `manual_only` 는 「수단 없음」을 뜻하므로 빈 목록으로 옮긴다.
  */
+/**
+ * 충전 퍼널 한 걸음을 기록한다.
+ *
+ * ★**전수 수집**(`sample: "always"`)이다. `funnel_step` 의 기본 샘플링은 15% 인데,
+ *   결제는 저빈도·고가치라 85%가 버려지면 「이탈 3건」이 실제로는 20건일 수 있다.
+ * ★`funnel` 키로 좁혀 둔다 — 다른 퍼널이 생겨도 결제 판정이 오염되지 않는다
+ *   (분석기 `_PAYMENT_FUNNEL_SQL` 이 같은 키로 좁힌다).
+ * ★**PII 를 싣지 않는다** — 단계 이름과 사유 코드만. 금액·주문번호도 넣지 않는다
+ *   (집계에 불필요하고, 성장루프 이벤트는 익명 수집을 허용한다).
+ */
+function trackTopupStep(step: string, reason?: string): void {
+  try {
+    trackEvent("funnel_step", {
+      sample: "always",
+      payload: { funnel: "coin_topup", step, ...(reason ? { reason } : {}) },
+    });
+  } catch {
+    /* 계측 실패가 충전을 막으면 안 된다 */
+  }
+}
+
 export function methodsFromResponse(mode?: string, methods?: string[]): string[] {
   if (Array.isArray(methods)) return methods;
   if (!mode || mode === "manual_only") return [];
@@ -233,6 +255,11 @@ export function CoinsClient({ locale }: { locale: Locale }) {
     void reload();
   }, [reload]);
 
+  // ★퍼널 ① 진입 — 마운트 1회. 분모가 없으면 이탈률을 만들 수 없다.
+  useEffect(() => {
+    trackTopupStep("view");
+  }, []);
+
   const createOrder = async () => {
     setBusy(true);
     setNotice(null);
@@ -257,6 +284,7 @@ export function CoinsClient({ locale }: { locale: Locale }) {
           (order as { payment_methods?: string[] }).payment_methods,
         ),
       );
+      trackTopupStep("order_created");  // ★퍼널 ②
       setNotice({
         kind: "info",
         // ★안내문을 **계좌 설정에서 파생**시킨다. 종전 문구는 *"계좌이체 후 관리자 확인"* 이라
@@ -292,6 +320,7 @@ export function CoinsClient({ locale }: { locale: Locale }) {
         body,
         useMock: false,
       });
+      trackTopupStep("order_created");  // ★퍼널 ② — 두 경로가 같은 분모를 쓴다
       if (!tossConfig) throw new TossSdkError("not_configured", "결제 설정을 불러오지 못했습니다.");
       await openPaymentWindow({
         config: tossConfig,
@@ -305,8 +334,15 @@ export function CoinsClient({ locale }: { locale: Locale }) {
         returnBase: `/${locale}/mypage/coins`,
       });
       // 여기서 리턴되면 결제창이 열린 것이다 — 이후는 리다이렉트가 이어받는다.
+      trackTopupStep("pay_window_opened");  // ★퍼널 ③
       await reload();
     } catch (error) {
+      // ★퍼널 ④ — **결제창이 뜨지 못한** 실패. 이것은 API 호출이 아니라
+      //   `api_error` 로 안 잡힌다. 사유를 함께 실어 「안 뜬다」를 구별 가능하게 한다.
+      trackTopupStep(
+        "pay_window_failed",
+        error instanceof TossSdkError ? error.reason : "unknown",
+      );
       const view =
         error instanceof TossSdkError
           ? { message: error.message, remediation: "잠시 후 다시 시도해 주세요." }

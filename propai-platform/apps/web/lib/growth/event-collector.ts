@@ -60,6 +60,8 @@ interface GrowthEvent {
 
 /** trackEvent 호출자가 넘기는 속성(나머지는 collector 가 채움). */
 export interface TrackEventProps {
+  /** ★샘플링을 건너뛰고 **전수 수집**한다 — 저빈도·고가치 이벤트(결제 등) 전용. */
+  sample?: "always";
   route?: string | null;
   status_code?: number | null;
   latency_ms?: number | null;
@@ -277,8 +279,17 @@ function maskPayload(input: unknown, depth = 0): unknown {
   return undefined;
 }
 
-/** 샘플링 통과 여부(전수 타입은 항상 통과). */
-function passesSampling(type: GrowthEventType): boolean {
+/**
+ * 샘플링 통과 여부(전수 타입은 항상 통과).
+ *
+ * ★`always` 오버라이드가 있는 이유(2026-09-06): `funnel_step` 은 기본 **15%** 다.
+ *   그것으로 **결제 퍼널**을 계측하면 85%가 조용히 버려진다 — 저빈도·고가치 퍼널에서는
+ *   피드백루프가 있으나 마나이고, 「이탈 3건」이 실제로는 20건일 수 있다.
+ *   ★타입 전체의 비율을 올리지 않는 이유: 다른(고빈도) 퍼널이 생기면 그것까지 전수가 된다.
+ *     **중요한 인스턴스만** 전수로 올린다.
+ */
+function passesSampling(type: GrowthEventType, always?: boolean): boolean {
+  if (always) return true;
   const rate = SAMPLE_RATES[type];
   if (rate == null || rate >= 1) return true;
   return Math.random() < rate;
@@ -291,7 +302,7 @@ function passesSampling(type: GrowthEventType): boolean {
 export function trackEvent(type: GrowthEventType, props: TrackEventProps = {}): void {
   try {
     if (typeof window === "undefined") return;
-    if (!passesSampling(type)) return;
+    if (!passesSampling(type, props.sample === "always")) return;
 
     const event: GrowthEvent = {
       event_id: safeUuid(),
