@@ -45,9 +45,15 @@ describe("로컬 전수 선재 실패 원장", () => {
 
   it("★선재 판정의 근거가 문서에 남아 있다(다음 사람이 되짚을 수 있게)", () => {
     const src = fs.readFileSync(path.resolve(__dirname, "local-suite-health.test.ts"), "utf8");
-    // ★수치를 잠근다 — 산문 낱말은 축이 못 된다(오늘 실측)
+    // ★★첫 판은 `toContain(t)` 였는데 **SURVIVED** 했다 — 같은 수치가 **문서 주석과
+    //   이 배열 양쪽**에 있어, 주석을 지워도 **배열 자신이 통과시킨다.**
+    //   *«락이 자기 자신을 근거로 삼으면 무엇을 지워도 초록이다»* — 오늘 세 번째 형태.
+    //   → **문서 블록(주석)에만** 있는지 본다. 배열은 모집단에서 뺀다.
+    const docBlock = src.slice(0, src.indexOf("describe("));
     for (const t of ["1,843", "1,869", "+26", "jsx-dev-runtime"]) {
-      expect(src, `선재 판정의 근거 \`${t}\` 가 사라졌다`).toContain(t);
+      expect(docBlock, `선재 판정의 근거 \`${t}\` 가 **문서에서** 사라졌다`).toContain(t);
     }
+    // ★공허진리 방지 — 문서 블록을 실제로 잘랐는가
+    expect(docBlock.length, "문서 블록을 못 잘랐다 — 조회기 사망").toBeGreaterThan(500);
   });
 });
