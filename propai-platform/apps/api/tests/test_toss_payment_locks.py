@@ -1479,3 +1479,163 @@ async def test_reresolved_payment_with_right_amount_still_grants(
     )
     assert granted, "★금액이 맞는데도 복구가 안 됐다 — 봉합이 정상 경로를 죽였다"
     assert out["status"] == "paid"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★변이 도구가 드러낸 구멍을 메운다 (mutate_changed.py · 2026-09-06)
+#
+# 생존 23건을 분류한 결과 **진짜 구멍 셋**이 나왔다. 나머지는 아래 §설명에 적는다.
+#
+#   ① `:1038` 조건무력화 생존 — `confirm` 경로의 금액 대조는 잠갔는데 **형제
+#      (`reconcile`) 경로의 사용은 안 잠갔다.** 오늘 고친 바로 그 「형제 불일치」를
+#      내가 다시 만들었다(§"방금 고친 결함을 다음 파일에서 내가 만든다").
+#   ② `:1003-1004` SELECT 문자열 생존 — 가짜 세션이 SELECT **내용과 무관하게** 행을
+#      돌려줘서 `refunded_krw` 를 SELECT 에서 지워도 초록이다(스텁이 층을 우회).
+#      → **실제로 실행된 SQL 문자열**을 검사한다.
+#   ③ 차단 영수증의 **기계 필드**(코드)가 무잠금 — 왜 차단했는지 안 남기면 조사 불가.
+# ═══════════════════════════════════════════════════════════════════════════
+@pytest.mark.asyncio
+async def test_reconcile_blocks_grant_when_vendor_amount_differs(
+    _reconcile_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★형제 경로(`reconcile_order`)의 금액 대조도 **행위로** 잠근다.
+
+    변이 `if not vendor_amount_matches(...)` → 무력화가 **생존**했다.
+    한쪽 경로만 잠그면 결함은 잠기지 않은 쪽으로 흐른다 — 오늘 고친 그 형태다.
+    """
+    ledger, receipts = _reconcile_env
+    _stub_vendor(
+        monkeypatch,
+        {"status": "DONE", "paymentKey": "pk_live_1", "totalAmount": 1_000},
+    )
+    granted: list[dict] = []
+
+    async def spy_confirm_order(db, **kw):
+        granted.append(kw)
+        return {"id": kw["order_id"], "order_no": "x", "status": "paid", "coin_krw": 1.0}
+
+    monkeypatch.setattr(_tos.coin_orders_service, "confirm_order", spy_confirm_order)
+    db = _ReconcileSession(_reconcile_row(status="pending"))
+
+    out = await _tos.reconcile_order(db, order_id=_reconcile_row()["id"], actor_id="admin")
+
+    assert out["action"] == "amount_mismatch", out
+    assert granted == [], "★벤더 1,000원 · 우리 10,000원인데 지급됐다"
+    assert any(r.get("toss_code") == _tos.CODE_AMOUNT_MISMATCH for r in receipts), \
+        "왜 막았는지 기계가 읽을 수 있는 코드로 남기지 않았다"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_grants_when_vendor_amount_matches(
+    _reconcile_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★반대 방향 — 금액이 맞으면 **복구가 실제로 일어난다**.
+
+    이쪽이 없으면 "전부 거절"이 만점을 받고 「돈만 낸 상태」 복구가 죽는다.
+    """
+    _reconcile_env
+    _stub_vendor(
+        monkeypatch,
+        {"status": "DONE", "paymentKey": "pk_live_1", "totalAmount": 10_000},
+    )
+    granted: list[dict] = []
+
+    async def spy_confirm_order(db, **kw):
+        granted.append(kw)
+        return {"id": kw["order_id"], "order_no": "x", "status": "paid", "coin_krw": 12_000.0}
+
+    monkeypatch.setattr(_tos.coin_orders_service, "confirm_order", spy_confirm_order)
+    db = _ReconcileSession(_reconcile_row(status="pending"))
+
+    out = await _tos.reconcile_order(db, order_id=_reconcile_row()["id"], actor_id="admin")
+
+    assert granted, "★금액이 맞는데 복구가 안 됐다 — 대조가 정상 경로를 죽였다"
+    assert out["action"] == "granted", out
+
+
+@pytest.mark.asyncio
+async def test_reconcile_actually_selects_refunded_krw(
+    _reconcile_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★**실행된 SQL** 이 `refunded_krw` 를 실제로 요구하는지 본다.
+
+    가짜 세션은 SELECT 내용과 무관하게 행을 돌려준다 — 그래서 컬럼을 지워도 테스트가
+    초록이었다(변이 생존으로 실증). 스텁이 우회하는 층은 **그 층을 직접 태워야** 한다.
+    """
+    _stub_vendor(monkeypatch, {"status": "CANCELED", "paymentKey": "pk_live_1"})
+    db = _ReconcileSession(_reconcile_row(), balance_after=0.0, applied=10_000.0)
+
+    await _tos.reconcile_order(db, order_id=_reconcile_row()["id"], actor_id="admin")
+
+    selects = [s for s in db.sql if "FROM coin_orders WHERE id" in s]
+    assert selects, "주문 조회 자체가 없다(공허한 초록 방지)"
+    assert "refunded_krw" in selects[0], \
+        "★환수 판정이 refunded_krw 를 읽지 않는다 — 부분환불 뒤 전액 재환수가 되살아난다"
+    # ★대조군 — 이 단언이 「무엇이든 통과」가 아님을 보인다.
+    assert "존재하지않는컬럼" not in selects[0]
+
+
+@pytest.mark.asyncio
+async def test_confirm_records_machine_readable_reason_when_blocking(
+    _capture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """차단했으면 **왜 차단했는지**를 기계가 읽을 수 있게 남긴다.
+
+    사람이 읽는 문구(`toss_message`)는 다듬을 때마다 깨지는 취약한 락이 되므로 단언하지
+    않는다 — **코드와 이벤트 종류**만 잠근다(계약이지 산문이 아니다).
+    """
+    sent, receipts = _capture
+
+    async def timeout_confirm(**kw):
+        raise TossOutcomeUnknownError("타임아웃", payment_key=kw.get("payment_key"))
+
+    async def cheap(*, payment_key, order_id):
+        return {"status": "DONE", "totalAmount": 1_000, "paymentKey": payment_key}
+
+    monkeypatch.setattr(_tos.toss_payments, "confirm", timeout_confirm)
+    monkeypatch.setattr(_tos, "_try_resolve", cheap)
+
+    db = _OrderSession(_order())
+    with pytest.raises(_tos.PaymentRejectedError):
+        await _tos.confirm_toss_payment(
+            db, order_id=_order()["id"], payment_key="pk_cheap",
+            claimed_amount=10_000, current_user_id="user-A",
+        )
+    blocked = [r for r in receipts if r.get("event") == _pr.EVENT_BLOCKED]
+    assert blocked, "차단하면서 아무 기록도 남기지 않았다"
+    assert blocked[-1]["toss_code"] == _tos.CODE_AMOUNT_MISMATCH
+
+
+@pytest.mark.asyncio
+async def test_clawback_result_carries_the_two_numbers_a_human_needs(
+    _reconcile_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """환수 결과에 **판정 근거 두 수**가 실린다 — 없으면 관리자가 옳은지 알 수 없다.
+
+    (`expected_remaining_krw` = 우리가 유효하다고 본 액 · `vendor_remaining_krw` = 벤더 잔액)
+    """
+    _stub_vendor(
+        monkeypatch,
+        {"status": "PARTIAL_CANCELED", "paymentKey": "pk_live_1", "balanceAmount": 4_000},
+    )
+    db = _ReconcileSession(_reconcile_row(refunded_krw=3_000.0), balance_after=7_000.0, applied=3_000.0)
+
+    out = await _tos.reconcile_order(db, order_id=_reconcile_row()["id"], actor_id="admin")
+
+    assert out["expected_remaining_krw"] == 7_000.0
+    assert out["vendor_remaining_krw"] == 4_000.0
+    # 두 수의 차가 실제 환수액과 맞아야 판정이 설명된다.
+    assert out["expected_remaining_krw"] - out["vendor_remaining_krw"] == out["clawed_back_krw"]
+
+
+# ── ★설명하고 넘어가는 생존 (변이 점수 부풀리기 방지) ────────────────────────
+#
+# 위 락을 넣은 뒤에도 남는 생존은 아래 부류이고, **구멍이 아니다**:
+#
+#  · **반환 dict 의 키 이름 문자열**(`"order_id"`·`"our_status"` 등) — 응답 스키마의
+#    이름을 바꾸면 소비처(관리자 화면)가 깨지지만, 그 결속은 **프론트 쪽 계약 테스트**의
+#    몫이다. 여기서 키 이름까지 단언하면 같은 계약이 두 곳에 복제된다.
+#  · **사람이 읽는 문구**(`note`·`toss_message`) — 계약이 아니라 표현이라, 다듬을 때마다
+#    깨지는 취약한 락이 된다. 이 저장소 규율이 명시적으로 그것을 금한다.
+#  · **영수증의 부수 인자**(`raw=payment`·`user_id=` 등) — 같은 호출의 다른 인자들이
+#    이미 잠겨 있어 호출 자체가 사라지면 CAUGHT 된다(이중 가드).
