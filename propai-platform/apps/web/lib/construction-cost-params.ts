@@ -14,8 +14,11 @@
  *   **값이 없으면 키를 만들지 않는다** — 키가 생기는 순간 계산 경로가 바뀌기 때문이다.
  */
 
-/** 1평 = 3.3058㎡. ★이 리터럴은 이 파일에만 있어야 한다(락이 전수로 감시). */
-const SQM_PER_PYEONG = 3.3058;
+// ★★**두 벌이었다.** 여기 `3.3058` 을 새로 두었는데 `formatters.PYEONG_SQM` 에
+//   **`3.305785`** 가 이미 있었다. 그리고 내 SSOT 락이 **`3.3058` 리터럴만** 감시해
+//   다른 표기의 정본을 **못 봤다** — *«목록은 곧 상한»* 이 상수 표기에도 적용된다.
+//   → 정본을 재사용한다. 이 파일에는 이제 그 리터럴이 없다.
+import { PYEONG_SQM as SQM_PER_PYEONG } from "@/lib/formatters";
 
 /** 평당(원/평) → ㎡당(원/㎡). **유일한 변환 지점.** */
 export function perPyeongToPerSqm(perPyeong: number): number {
