@@ -1,6 +1,9 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { KakaoCallbackWorkspaceClient } from "@/components/auth/KakaoCallbackWorkspaceClient";
+import {
+  KakaoCallbackWorkspaceClient,
+  LABELS,
+} from "@/components/auth/KakaoCallbackWorkspaceClient";
 import { apiClient } from "@/lib/api-client";
 
 const { pushMock, replaceMock } = vi.hoisted(() => ({
@@ -31,7 +34,22 @@ vi.mock("@/lib/api-client", () => ({
   },
 }));
 
+// ★기대값을 컴포넌트에서 **파생**시킨다 — 형제(네이버·구글)와 같은 형태로 맞춘다.
+//   문구를 다듬어도 「어느 상태에 어느 라벨이 뜨는가」라는 계약만 남는다.
+const EN = LABELS.en;
+const SUCCESS_TITLE = EN.successTitle;
+const STATE_MISMATCH = EN.stateMismatch;
+const MISSING = EN.missingParams;
+
 describe("KakaoCallbackWorkspaceClient", () => {
+  // ★파생은 자기지시라 공허해질 수 있다 — 셋이 모두 ""가 되면 어떤 배선이든 통과한다.
+  it("기대 문구가 비어 있지 않고 서로 다르다 (공허 진리 방지)", () => {
+    for (const [k, v] of Object.entries({ SUCCESS_TITLE, STATE_MISMATCH, MISSING })) {
+      expect(v, `${k} 가 비었다`).toBeTruthy();
+    }
+    expect(new Set([SUCCESS_TITLE, STATE_MISMATCH, MISSING]).size).toBe(3);
+  });
+
   beforeEach(() => {
     window.localStorage.clear();
     window.sessionStorage.clear();
@@ -73,7 +91,7 @@ describe("KakaoCallbackWorkspaceClient", () => {
     });
 
     expect(
-      await screen.findByText("You're signed in"),
+      await screen.findByText(SUCCESS_TITLE),
     ).toBeInTheDocument();
     expect(window.localStorage.getItem("propai_access_token")).toBe(
       "kakao-access-001",
@@ -97,7 +115,7 @@ describe("KakaoCallbackWorkspaceClient", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("Security check failed. Please start the login over."),
+        screen.getByText(STATE_MISMATCH),
       ).toBeInTheDocument();
     });
     expect(apiClient.post).not.toHaveBeenCalled();
@@ -119,7 +137,7 @@ describe("KakaoCallbackWorkspaceClient", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("Security check failed. Please start the login over."),
+        screen.getByText(STATE_MISMATCH),
       ).toBeInTheDocument();
     });
     expect(apiClient.post).not.toHaveBeenCalled();
@@ -140,7 +158,7 @@ describe("KakaoCallbackWorkspaceClient", () => {
 
     // state 누락 → hasRequiredParams=false → missingParams(교환 없음).
     expect(
-      screen.getByText("The sign-in info is invalid. Please start over."),
+      screen.getByText(MISSING),
     ).toBeInTheDocument();
     expect(apiClient.post).not.toHaveBeenCalled();
   });
@@ -156,7 +174,7 @@ describe("KakaoCallbackWorkspaceClient", () => {
     );
 
     expect(
-      screen.getByText("The sign-in info is invalid. Please start over."),
+      screen.getByText(MISSING),
     ).toBeInTheDocument();
     expect(apiClient.post).not.toHaveBeenCalled();
   });

@@ -3,6 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+
+import {
+  classifySocialLoginError,
+  socialLoginErrorMessage,
+} from "@/lib/socialLoginError";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { ensureDataOwner } from "@/lib/projectSync";
@@ -19,6 +24,9 @@ type NaverCallbackWorkspaceClientProps = {
   code: string | null;
   state: string | null;
   redirectUri: string | null;
+  /** 공급자가 돌려보낸 오류(OAuth 2.0 §4.1.2.1). 종전에는 읽지 않고 버렸다. */
+  providerError?: string | null;
+  providerErrorDescription?: string | null;
 };
 
 type CallbackLabels = {
@@ -34,44 +42,52 @@ type CallbackLabels = {
   backToLogin: string;
 };
 
-const LABELS: Record<Locale, CallbackLabels> = {
+// ★테스트가 문구를 손으로 다시 적지 않도록 **내보낸다**.
+//   2026-09-06 실측: 콜백 테스트 3종이 이 문구를 파일 안에 **상수로 복사**해 두고 있었고,
+//   그래서 문구를 고치자 8건이 깨졌다(네이버 4 · 구글 4 · 카카오는 문구 불변이라 우연히 통과).
+//   ★그때 내가 「이 테스트들은 바뀐 문구를 단언하지 않는다」고 **오보**했다 —
+//     문구 리터럴로 훑었는데 테스트는 그것을 **상수 이름**으로 들고 있었다.
+//   여기서 파생시키면 문구를 다듬어도 「어느 상태에 어느 라벨이 뜨는가」라는 계약만 남는다.
+export const LABELS: Record<Locale, CallbackLabels> = {
+  // ★사용자 대면 문구 — **내부 구현을 말하지 않는다.**
+  //   2026-09-06 실측: 여기에 「인가 코드를 실제 `/auth/…/callback` API에 전달해」라고
+  //   적혀 있었다(카카오엔 0건 · 네이버·구글에만 1건씩 — 형제가 갈렸다).
+  //   ★네이버 검수가 요구하는 **4번 캡처(완료 화면)** 가 정확히 이 화면이라,
+  //     심사자에게 **내부 API 경로가 찍힌 화면**을 제출하게 된다.
+  //   톤은 카카오 콜백(형제 중 정돈된 쪽)에 맞춘다.
   ko: {
     eyebrow: "AUTH / NAVER CALLBACK",
-    title: "네이버 로그인 완료 처리",
-    description:
-      "인가 코드를 실제 `/auth/naver/callback` API에 전달해 브라우저 세션을 복구합니다.",
-    loading: "네이버 인증 코드를 교환하는 중입니다.",
-    success: "네이버 인증이 완료되어 브라우저 세션을 저장했습니다.",
-    missingParams: "네이버 callback 파라미터가 부족합니다. code·state를 확인하세요.",
-    stateMismatch: "보안 검증(state) 불일치 — 로그인을 다시 시도해 주세요(CSRF 방지).",
-    error: "네이버 인증을 완료하지 못했습니다.",
+    title: "로그인되었습니다",
+    description: "네이버 계정으로 안전하게 로그인하고 있어요. 잠시 후 자동으로 이동합니다.",
+    loading: "로그인하는 중",
+    success: "네이버 계정으로 로그인되었습니다. 잠시 후 이동합니다.",
+    missingParams: "로그인 정보가 올바르지 않습니다. 처음부터 다시 시도해 주세요.",
+    stateMismatch: "보안 확인에 실패했습니다. 처음부터 다시 시도해 주세요.",
+    error: "네이버 로그인을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.",
     openDashboard: "대시보드로 이동",
     backToLogin: "로그인으로 돌아가기",
   },
   en: {
     eyebrow: "AUTH / NAVER CALLBACK",
-    title: "Naver callback completion",
-    description:
-      "Exchange the authorization code through the live `/auth/naver/callback` API and restore the browser session.",
-    loading: "Exchanging the Naver authorization code.",
-    success: "Naver authentication completed and the browser session has been stored.",
-    missingParams:
-      "The Naver callback payload is incomplete. Check that the code and state parameters are present.",
-    stateMismatch: "Security check (state) mismatch — please try signing in again (CSRF protection).",
-    error: "Naver authentication could not be completed.",
+    title: "You're signed in",
+    description: "Signing you in securely with Naver. You'll be redirected shortly.",
+    loading: "Signing in",
+    success: "Signed in with Naver. Redirecting you now.",
+    missingParams: "The sign-in info is invalid. Please start over.",
+    stateMismatch: "Security check failed. Please start over.",
+    error: "Could not finish signing in with Naver. Please try again shortly.",
     openDashboard: "Open dashboard",
     backToLogin: "Back to login",
   },
   "zh-CN": {
     eyebrow: "AUTH / NAVER CALLBACK",
-    title: "Naver 回调完成页",
-    description:
-      "通过真实 `/auth/naver/callback` API 交换授权码并恢复浏览器会话。",
-    loading: "正在交换 Naver 授权码。",
-    success: "Naver 认证完成，浏览器会话已保存。",
-    missingParams: "Naver 回调参数不完整，请确认提供 code 与 state。",
-    stateMismatch: "安全校验(state)不一致 — 请重新登录(防 CSRF)。",
-    error: "无法完成 Naver 认证。",
+    title: "已登录",
+    description: "正在使用 Naver 账号安全登录，稍后将自动跳转。",
+    loading: "正在登录",
+    success: "已使用 Naver 账号登录，即将跳转。",
+    missingParams: "登录信息无效，请重新开始。",
+    stateMismatch: "安全校验失败，请重新开始。",
+    error: "无法完成 Naver 登录，请稍后重试。",
     openDashboard: "进入仪表盘",
     backToLogin: "返回登录",
   },
@@ -116,6 +132,8 @@ export function NaverCallbackWorkspaceClient({
   code,
   state,
   redirectUri,
+  providerError = null,
+  providerErrorDescription = null,
 }: NaverCallbackWorkspaceClientProps) {
   const router = useRouter();
   const labels = LABELS[locale] || LABELS["ko"];
@@ -205,8 +223,16 @@ export function NaverCallbackWorkspaceClient({
     return () => clearTimeout(timer);
   }, [requestState.status, router, locale]);
 
-  const status = hasRequiredParams ? requestState.status : "error";
-  const message = hasRequiredParams ? requestState.message : labels.missingParams;
+  // ★공급자 오류를 먼저 판정한다 — 이것이 있으면 code 가 없는 것은 **결과**이지 원인이 아니다.
+  //   종전에는 무조건 `missingParams` 를 냈고 그건 원인과 무관한 문구였다.
+  //   사용자 취소와 설정 오류는 **다음 행동이 다르므로** 갈라서 말한다.
+  const providerVerdict = classifySocialLoginError(providerError, providerErrorDescription);
+  const providerMessage = socialLoginErrorMessage(providerVerdict, locale);
+
+  const status =
+    providerVerdict.kind !== "none" ? "error" : hasRequiredParams ? requestState.status : "error";
+  const message =
+    providerMessage ?? (hasRequiredParams ? requestState.message : labels.missingParams);
 
   const feedbackClassName =
     status === "error"
