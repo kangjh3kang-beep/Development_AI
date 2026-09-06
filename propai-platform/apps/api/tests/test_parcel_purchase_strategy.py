@@ -1651,9 +1651,15 @@ def test_undecided_reason_parity_with_row_action() -> None:
       (그게 없으면 «항상 어떤 코드를 준다» 도 통과한다.)
     """
     from app.services.land_intelligence.parcel_purchase_strategy_service import (
-        ACTION_UNDECIDED, HOLDING_PERIOD_ACT, UNDECIDED_HOLDING_PERIOD, UNDECIDED_NO_ACT,
-        UNDECIDED_REASON_CODES, UNDECIDED_TOPOLOGY, UNDECIDED_TRACK_INPUT,
-        _row_action, _undecided_reason_code,
+        ACTION_UNDECIDED,
+        HOLDING_PERIOD_ACT,
+        UNDECIDED_HOLDING_PERIOD,
+        UNDECIDED_NO_ACT,
+        UNDECIDED_REASON_CODES,
+        UNDECIDED_TOPOLOGY,
+        UNDECIDED_TRACK_INPUT,
+        _row_action,
+        _undecided_reason_code,
     )
 
     # (입력, 기대코드) — 네 갈래 전수 + 대조군 둘
@@ -1711,7 +1717,8 @@ def test_undecided_by_reason_sums_and_keeps_undecided_rows(monkeypatch: pytest.M
       (스텁하면 `_EVENT_COLS` 화이트리스트가 키를 버리는지 **원리적으로 못 본다**).
     """
     from app.services.land_intelligence.parcel_purchase_strategy_service import (
-        ACTION_UNDECIDED, UNDECIDED_REASON_CODES,
+        ACTION_UNDECIDED,
+        UNDECIDED_REASON_CODES,
     )
 
     events = _capture_growth(monkeypatch)
