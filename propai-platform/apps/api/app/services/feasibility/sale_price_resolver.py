@@ -184,6 +184,7 @@ async def _sigungu5_from_address(address: str) -> str | None:
 async def _trade_sale_price_per_pyeong(
     *, dev_type: str, address: str, sigungu5: str | None = None,
     building_type: str | None = None,
+    cases_out: list[dict[str, Any]] | None = None,
 ) -> tuple[int, str, str, None, int] | None:
     """주변 실거래(MOLIT) 직접 조회 → 분양단가(원/평, 공급면적). site_id 불필요(★HIGH-1).
 
@@ -245,9 +246,24 @@ async def _trade_sale_price_per_pyeong(
         pre = None
         if prop_type == "apt":
             try:
-                pre = await _trade_per_pyeong(sigungu5, dong, "apt_presale")
-            except Exception as e:  # noqa: BLE001 — 분양권 조회 실패는 매매로 폴백(무중단)
-                logger.info("분양권 전매 조회 실패 — 매매로 폴백: %s", str(e)[:100])
+                # ★사례를 **같은 수집 루프에서** 함께 받는다(재수집 0회 — `comparables.py` 가
+                #   명문으로 요구하는 규율). 목록화·선택은 이 사례를 소비한다.
+                pre = await _trade_per_pyeong(
+                    sigungu5, dong, "apt_presale", collect_cases=cases_out is not None)
+            except TypeError as e:
+                # ★★**시그니처 불일치를 「조회 실패」로 위장하지 않는다.**
+                #   내 테스트 스텁이 `collect_cases` 를 안 받아 `TypeError` 가 났고,
+                #   그것이 `except Exception` 에 삼켜져 **분양권 경로가 조용히 죽고**
+                #   매매로 폴백했다(값이 −44% 인 채로). 락 4건이 잡았지만, 실서비스에서는
+                #   **아무도 모른 채 낮은 값이 나갔을 것**이다.
+                #   → 프로그래밍 오류는 **error 로 크게** 남긴다(무중단은 유지).
+                logger.error(
+                    "분양권 조회 시그니처 불일치 — **배선 오류**이지 조회 실패가 아니다: %s",
+                    str(e)[:140])
+                pre = None
+            except Exception as e:  # noqa: BLE001 — 조회 실패는 매매로 폴백(무중단)
+                logger.warning("분양권 전매 조회 실패 — 매매로 폴백: %s: %s",
+                               type(e).__name__, str(e)[:100])
                 pre = None
         if pre:
             pd_med, pd_n = pre["dong"]["median"], pre["dong"]["n"]
@@ -267,6 +283,9 @@ async def _trade_sale_price_per_pyeong(
                     " → 공급 평당가(신축 프리미엄 미적용 — 분양권은 이미 신축가"
                     "·물건종별 apt_presale)"
                 )
+                # ★채택한 경로의 사례만 내보낸다 — 폴백으로 내려가면 그 사례는 근거가 아니다.
+                if cases_out is not None:
+                    cases_out.extend(pre.get("cases") or [])
                 return price, "분양권 전매(MOLIT)", basis, None, p_n
 
         pp = await _trade_per_pyeong(sigungu5, dong, prop_type)

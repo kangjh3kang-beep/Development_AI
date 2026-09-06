@@ -566,7 +566,7 @@ async def test_unknown_notation_leaves_a_trail_in_the_basis(monkeypatch) -> None
         f"아는 표기에도 미등록 딱지가 붙는다(위양성): {known_note}")
 
     # ② 조회한 물건종별이 **근거 문자열까지** 실린다(폴백이 조용하지 않다)
-    async def spy_trade(sigungu5, dong, prop_type):
+    async def spy_trade(sigungu5, dong, prop_type, **kw):
         return {"dong": {"median": 3000, "n": 50}, "sigungu": {"median": 3000, "n": 50}}
 
     monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong",
@@ -597,7 +597,7 @@ async def test_building_type_reaches_molit_property_type(monkeypatch) -> None:
 
     seen: list[str] = []
 
-    async def spy_trade(sigungu5, dong, prop_type):
+    async def spy_trade(sigungu5, dong, prop_type, **kw):
         seen.append(prop_type)
         return {"dong": {"median": 3000, "n": 50}, "sigungu": {"median": 3000, "n": 50}}
 
@@ -855,7 +855,7 @@ async def test_분양권이_있으면_그것을_쓰고_신축프리미엄을_곱
 
     calls: list[str] = []
 
-    async def spy(sigungu5, dong, prop_type):
+    async def spy(sigungu5, dong, prop_type, **kw):
         calls.append(prop_type)
         if prop_type == "apt_presale":
             return {"dong": {"median": 2491, "n": 17}, "sigungu": {"median": 2400, "n": 78}}
@@ -889,7 +889,7 @@ async def test_분양권이_없거나_표본미달이면_매매로_폴백한다(
 
     calls: list[str] = []
 
-    async def spy(sigungu5, dong, prop_type):
+    async def spy(sigungu5, dong, prop_type, **kw):
         calls.append(prop_type)
         if prop_type == "apt_presale":
             return {"dong": {"median": 0, "n": 0}, "sigungu": {"median": 0, "n": 2}}  # 표본 미달
@@ -914,7 +914,7 @@ async def test_아파트가_아니면_분양권을_조회하지_않는다(monkey
 
     calls: list[str] = []
 
-    async def spy(sigungu5, dong, prop_type):
+    async def spy(sigungu5, dong, prop_type, **kw):
         calls.append(prop_type)
         return {"dong": {"median": 2000, "n": 50}, "sigungu": {"median": 2000, "n": 50}}
 
@@ -937,7 +937,7 @@ async def test_분양권_표본이_한두건이면_쓰지_않는다(monkeypatch)
     async def mk(pre_n: int):
         calls: list[str] = []
 
-        async def spy(sigungu5, dong, prop_type):
+        async def spy(sigungu5, dong, prop_type, **kw):
             calls.append(prop_type)
             if prop_type == "apt_presale":
                 return {"dong": {"median": 2491, "n": pre_n},
@@ -962,3 +962,93 @@ async def test_분양권_표본이_한두건이면_쓰지_않는다(monkeypatch)
     res, calls = await mk(spr._MIN_TRADE_SAMPLES)
     assert res is not None and res[1] == "분양권 전매(MOLIT)", (
         f"하한을 충족했는데 분양권을 안 썼다: {res[1]}")
+
+
+@pytest.mark.asyncio
+async def test_시그니처_불일치가_조회실패로_위장되지_않는다(monkeypatch) -> None:
+    """★★오늘 **네 번** 밟은 함정을 기계가 막게 한다.
+
+    `_trade_per_pyeong` 에 새 kwarg 를 넘겼는데 상대가 안 받으면 `TypeError` 가 나고,
+    그것이 `except Exception` 에 삼켜져 **분양권 경로가 조용히 죽고** 매매로 폴백한다
+    (값이 **−44%** 인 채로). 테스트에서는 락이 잡았지만 **실서비스에서는 아무도 모른다.**
+
+    ★*«조회 실패»와 «배선 오류»는 다른 사건이다* — 전자는 폴백이 정답이고,
+      후자는 **고쳐야 할 버그**다. 로그 수준이 그것을 갈라야 한다.
+    """
+    import app.services.feasibility.sale_price_resolver as spr
+
+    # ★이 모듈의 로거는 **structlog** 이라 `caplog` 이 못 잡는다(첫 판이 그래서 빨갰다).
+    #   → 로그 캡처 대신 **로거를 가로채** 관측한다. *조회기가 대상을 못 보면 「0건」이 된다.*
+    calls: list[tuple[str, str]] = []
+
+    class _Spy:
+        def error(self, msg, *a, **k): calls.append(("error", str(msg) + " " + " ".join(map(str, a))))
+        def warning(self, msg, *a, **k): calls.append(("warning", str(msg)))
+        def info(self, msg, *a, **k): calls.append(("info", str(msg)))
+        def debug(self, msg, *a, **k): calls.append(("debug", str(msg)))
+
+    monkeypatch.setattr(spr, "logger", _Spy(), raising=True)
+
+    async def old_signature(sigungu5, dong, prop_type):   # ★새 kwarg 를 안 받는다
+        return {"dong": {"median": 1391, "n": 102}, "sigungu": {"median": 1391, "n": 102}}
+
+    monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong",
+                        old_signature, raising=True)
+    res = await spr._trade_sale_price_per_pyeong(
+        dev_type="M01", address="x", sigungu5="41360", cases_out=[])
+
+    # ★무중단은 지킨다 — 값은 나온다
+    assert res is not None and res[1] == "주변 실거래(MOLIT)"
+    # ★공허진리 방지 — 로거를 실제로 가로챘는가
+    assert calls, "로거를 못 가로챘다 — 조회기 사망(이 검사는 무엇이든 통과한다)"
+    # ★★그리고 **조용하지 않다** — error 로 남고 「조회 실패」가 아니라 「배선 오류」라 말한다
+    errs = [m for lvl, m in calls if lvl == "error"]
+    assert errs, f"시그니처 불일치가 **무언 폴백**됐다 — 실서비스에서 아무도 모른다: {calls}"
+    assert any("배선" in m or "시그니처" in m for m in errs), (
+        f"사유가 「조회 실패」로 위장됐다: {errs}")
+
+
+@pytest.mark.asyncio
+async def test_채택한_경로의_사례만_내보낸다(monkeypatch) -> None:
+    """★목록화의 계약 — 폴백으로 내려가면 분양권 사례는 **근거가 아니다**.
+
+    ★그리고 **재수집 0회**여야 한다(`comparables.py` 가 명문으로 요구) —
+      `cases_out` 을 안 주면 `collect_cases=False` 로 불러 불필요한 조립을 안 한다.
+    """
+    import app.services.feasibility.sale_price_resolver as spr
+
+    seen_kw: list[bool] = []
+
+    def mk(pre_n: int):
+        async def spy(sigungu5, dong, prop_type, **kw):
+            if prop_type == "apt_presale":
+                seen_kw.append(bool(kw.get("collect_cases")))
+                return {"dong": {"median": 2491, "n": pre_n},
+                        "sigungu": {"median": 2491, "n": pre_n},
+                        "cases": [{"building_name": "빌리브센트하이", "included": True}]}
+            return {"dong": {"median": 1391, "n": 102}, "sigungu": {"median": 1391, "n": 102}}
+        return spy
+
+    # ① 분양권 채택 → 사례가 실린다
+    monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong", mk(17), raising=True)
+    cases: list = []
+    res = await spr._trade_sale_price_per_pyeong(
+        dev_type="M01", address="x", sigungu5="41360", cases_out=cases)
+    assert res[1] == "분양권 전매(MOLIT)"
+    assert cases and cases[0]["building_name"] == "빌리브센트하이", cases
+    assert seen_kw == [True], f"사례를 원하는데 collect_cases 를 안 켰다: {seen_kw}"
+
+    # ② 표본 미달로 폴백 → 사례를 **싣지 않는다**(채택 안 된 경로의 사례는 근거가 아니다)
+    seen_kw.clear()
+    monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong", mk(2), raising=True)
+    cases2: list = []
+    res2 = await spr._trade_sale_price_per_pyeong(
+        dev_type="M01", address="x", sigungu5="41360", cases_out=cases2)
+    assert res2[1] == "주변 실거래(MOLIT)"
+    assert cases2 == [], f"채택하지 않은 경로의 사례를 근거로 내보냈다: {cases2}"
+
+    # ③ ★사례를 안 원하면 **수집도 안 한다**(재수집·조립 비용 0)
+    seen_kw.clear()
+    monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong", mk(17), raising=True)
+    await spr._trade_sale_price_per_pyeong(dev_type="M01", address="x", sigungu5="41360")
+    assert seen_kw == [False], f"사례가 필요 없는데 수집했다: {seen_kw}"
