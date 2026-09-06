@@ -1828,3 +1828,59 @@ async def test_admin_health_warning_tells_the_owner_which_block_to_copy(
     )
     assert not any("주문서형" in w for w in ok_out["warnings"])
     assert ok_out["payment_mode"] == "toss"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★변이 잔재가 **커밋에 실렸다** — 산문으로 "조심하자"가 아니라 기계로 막는다
+#
+# 2026-09-06 실측: 전수 변이가 도는 동안 `git add -A` 로 커밋하는 바람에
+# `toss_payments.py:248` 의 조치 문구가 **`"__MUTATED__"` 인 채로 커밋·푸시**됐다
+# (커밋 `db9c155e0`). 저장소 규율 §B-7 이 *"커밋 먼저 → 변이 → 원복"* 을 적어 뒀는데,
+# 나는 그 순서를 **거꾸로** 밟았다.
+#
+# ★**테스트는 이것을 못 잡았다** — 진단 문구는 「비어 있지 않은지」만 단언하고
+#   `"__MUTATED__"` 는 비어 있지 않다. 그것은 옳은 설계다(산문을 단언하면 취약한 락이
+#   된다). 그러므로 **다른 축**으로 잡아야 한다: 변이 도구의 **표식 자체**를 금지한다.
+#
+# ★규율이 문서에만 있으면 지켜지지 않는다(이 저장소가 같은 형태로 이미 데였다).
+# ═══════════════════════════════════════════════════════════════════════════
+def test_no_mutation_sentinel_survives_into_shipped_source() -> None:
+    """변이 도구의 표식이 **출하되는 소스**에 남아 있지 않다.
+
+    ★`tests/_scan_guard.assert_absent` 를 쓴다 — `positive_control` 이 **필수 키워드
+      인자**라 대조군 없는 호출이 문법적으로 불가능하고, **대조군 파괴는
+      `ScannerDeadError`, 진짜 위반은 `AssertionError`** 로 갈린다(뭉치면
+      *"검사기가 죽었다"* 가 *"깨끗하다"* 로 읽힌다).
+    ★검사 범위는 **런타임 코드만**이다 — 테스트 파일에는 이 표식이 설명 목적으로
+      정당하게 등장한다(실제로 `test_comparable_sample_wiring.py:704` 에 있다).
+      범위를 넓히면 그 정당한 등장이 위양성이 된다.
+    """
+    import sys
+
+    root = _API.parents[1]  # propai-platform
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from tests._scan_guard import assert_absent
+
+    targets = sorted(
+        list((_API / "app/services/billing").glob("*.py"))
+        + [_API / "routers/billing.py"]
+    )
+    assert len(targets) >= 5, "모집단이 비었다 — 공허한 초록 방지"
+    # ★파일마다 따로 부르지 않고 **이어 붙여** 한 번에 검사한다.
+    #   빈 `__init__.py` 처럼 대조군이 원리적으로 없는 파일이 섞이면
+    #   `ScannerDeadError`(검사기 사망)가 나는데, 그것은 진짜 사망이 아니라
+    #   **내 대조군 선택이 틀린 것**이다. (실제로 그렇게 한 번 빨개졌다 —
+    #   도구가 「위반 0」과 「검사기 죽음」을 다른 예외로 가르기 때문에 즉시 드러났다)
+    blob = "\n".join(f.read_text(encoding="utf-8") for f in targets)
+    assert_absent(
+        blob,
+        pattern=r"__MUTATED__",
+        # ★대조군: 이 모집단에 **반드시** 있는 것 — 이 PR 이 만든 함수 이름.
+        #   없으면 경로·수집이 틀린 것이지 "깨끗한" 것이 아니다.
+        positive_control=r"def key_diagnosis",
+        reason=(
+            "런타임 결제 코드에 변이 도구의 표식이 남아 커밋됐다"
+            "(§B-7: 커밋 먼저 → 변이 → 원복. 2026-09-06 에 실제로 어겼다)"
+        ),
+    )

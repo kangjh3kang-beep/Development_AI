@@ -245,7 +245,7 @@ KEY_DIAGNOSIS_COPY: dict[str, tuple[str, str, str]] = {
     "secret_slot_has_client_key": (
         "error",
         "시크릿 키 칸에 클라이언트 키가 들어 있습니다. 결제 승인이 전부 거절됩니다.",
-        "__MUTATED__",
+        "TOSS_SECRET_KEY 에 시크릿 키를 넣으세요(클라이언트 키와 다른 값입니다).",
     ),
     "client_key_malformed": (
         "error",
