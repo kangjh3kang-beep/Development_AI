@@ -18,6 +18,7 @@ import {
   FileText,
 } from "lucide-react";
 import { dynamicMap } from "@/components/common/MapShell";
+import { PremiseAuditNotice, type PremiseAudit } from "@/components/ui/PremiseAuditNotice";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import {
@@ -66,6 +67,10 @@ type Scenario = {
   status?: string; disclosure?: string;
   recommendations?: unknown[];
   top3?: Record<string, unknown> | null;
+  /** ★전제 감사 — 「검사했고 깨끗함」과 「검사를 못 함」을 가르는 축을 담는다.
+   *  `checked=0` 이면 「위반 없음」이 **공허**하고, `structurally_vacuous` 는
+   *  이 경로에서 **원리적으로 아무것도 못 가르는** 관계들이다. */
+  premise_audit?: PremiseAudit | null;
 };
 type IntegratedResp = {
   parcel_count?: number; special_count?: number;
@@ -419,6 +424,12 @@ export default function MultiParcelPage() {
                 ) : (
                   <p className="text-[11px] text-[var(--text-hint)]">시나리오 정보가 없습니다.</p>
                 )}
+                {/* ★★전제 감사 고지 — **공용 렌더러를 재사용**한다(새로 만들지 않는다).
+                    위반 자체는 위 `disclosure`·경고목록이 이미 말하므로, 이 상자가 더하는 값은
+                    「검사를 **못 했다**」(`failed`) · 「판별력이 **비어 있다**」(`vacuous`·`partial`)
+                    세 갈래다 — 그 셋이 종전엔 **화면에서 「깨끗함」과 같은 침묵**이었다.
+                    ★`clean` 이면 아무것도 그리지 않는다(정상에 배지를 늘리지 않는다). */}
+                <PremiseAuditNotice audit={scn?.premise_audit} />
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Link href={proj("permit")} className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)] transition hover:border-[var(--accent-strong)]">개발방식·인허가 상세 <ArrowRight className="size-3" aria-hidden /></Link>
                   <Link href={proj("canvas")} className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)] transition hover:border-[var(--accent-strong)]">중앙분석센터(전탭) <ArrowRight className="size-3" aria-hidden /></Link>
