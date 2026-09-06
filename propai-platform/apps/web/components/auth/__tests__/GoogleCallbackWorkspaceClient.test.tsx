@@ -1,6 +1,9 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { GoogleCallbackWorkspaceClient } from "@/components/auth/GoogleCallbackWorkspaceClient";
+import {
+  GoogleCallbackWorkspaceClient,
+  LABELS,
+} from "@/components/auth/GoogleCallbackWorkspaceClient";
 import { apiClient } from "@/lib/api-client";
 
 const { pushMock, replaceMock } = vi.hoisted(() => ({
@@ -25,12 +28,21 @@ vi.mock("@/lib/api-client", () => ({
   apiClient: { post: vi.fn() },
 }));
 
-const SUCCESS = "Google authentication completed and the browser session has been stored.";
-const STATE_MISMATCH =
-  "Security check (state) mismatch — please try signing in again (CSRF protection).";
-const MISSING = "The Google callback payload is incomplete. Check that the code parameter is present.";
+const EN = LABELS.en;
+const SUCCESS = EN.success;
+const STATE_MISMATCH = EN.stateMismatch;
+const MISSING = EN.missingParams;
 
 describe("GoogleCallbackWorkspaceClient", () => {
+  // ★파생은 자기지시라 공허해질 수 있다 — 셋이 모두 ""가 되면 어떤 배선이든 통과한다.
+  //   세 상태를 가르는 것이 이 문구들이므로, 같아지는 순간 판별력이 0이 된다.
+  it("기대 문구가 비어 있지 않고 서로 다르다 (공허 진리 방지)", () => {
+    for (const [k, v] of Object.entries({ SUCCESS, STATE_MISMATCH, MISSING })) {
+      expect(v, `${k} 가 비었다`).toBeTruthy();
+    }
+    expect(new Set([SUCCESS, STATE_MISMATCH, MISSING]).size).toBe(3);
+  });
+
   beforeEach(() => {
     window.localStorage.clear();
     window.sessionStorage.clear();
