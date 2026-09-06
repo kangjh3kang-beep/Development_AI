@@ -168,6 +168,24 @@ CATALOG: list[dict[str, Any]] = [
      "secret": True, "kind": "text", "guide_url": "https://developers.tosspayments.com/my/api-keys",
      "desc": "같은 화면의 **시크릿 키**. 결제 승인·취소에 쓰이며 절대 외부에 노출하면 안 됩니다. "
              "★클라이언트 키와 같은 환경(테스트/라이브)의 짝이어야 합니다."},
+
+    # ── 무통장입금(계좌이체) ────────────────────────────────────────────────
+    # ★왜 금고인가: 계좌번호와 **예금주 성명**은 개인정보다. 소스에 넣으면 git 이력에
+    #   **영구히** 남아 사실상 지울 수 없다. 그리고 은행을 바꿀 때 재배포가 필요해진다.
+    # ★`secret: False` — 계좌 안내는 **사용자에게 보여 줘야** 하므로 비밀이 아니다.
+    #   다만 API 는 **로그인한 사용자에게만** 내보낸다(성명이 개인정보다).
+    # ★세 항목이 **모두** 채워져야 켜진다. 부분 정보로 안내하면 사용자가 **엉뚱한 곳으로
+    #   송금**하고 그것은 되돌릴 수 없다 — `bank_transfer.diagnosis()` 가 그것을 막는다.
+    {"name": "BANK_TRANSFER_BANK_NAME", "label": "입금 은행명", "group": "무통장입금(계좌이체)",
+     "secret": False, "kind": "text",
+     "desc": "예: 새마을금고. 충전 화면의 입금 안내에 그대로 표시됩니다."},
+    {"name": "BANK_TRANSFER_ACCOUNT_NO", "label": "입금 계좌번호", "group": "무통장입금(계좌이체)",
+     "secret": False, "kind": "text",
+     "desc": "숫자와 하이픈만(8~20자). ★한 자리만 틀려도 사용자가 남의 계좌로 송금하게 되고 "
+             "되돌릴 수 없으니, 저장 후 화면에 표시된 값을 **다시 확인**하세요."},
+    {"name": "BANK_TRANSFER_HOLDER", "label": "예금주", "group": "무통장입금(계좌이체)",
+     "secret": False, "kind": "text",
+     "desc": "통장에 표기된 예금주명과 **정확히 같아야** 사용자가 입금 화면에서 확인할 수 있습니다."},
 ]
 
 _CATALOG_BY_NAME = {c["name"]: c for c in CATALOG}

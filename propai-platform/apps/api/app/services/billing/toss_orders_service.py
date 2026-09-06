@@ -441,6 +441,19 @@ async def confirm_toss_payment(
                 receipt_id=unknown_receipt or requested_receipt,
                 order_no=order_no,
             ) from e
+        # ★재조회로 살아 돌아온 결제도 **금액을 대조한다**(형제 `reconcile_order` 와 같은 문장).
+        #   이 줄이 없으면 다른 주문의 소액 결제 `paymentKey` 로 고액 주문이 지급될 수 있다.
+        if not vendor_amount_matches(payment, server_amount):
+            await payment_receipts.record(
+                event=payment_receipts.EVENT_BLOCKED,
+                order_id=order_id, order_no=order_no, user_id=str(current_user_id),
+                payment_key=payment_key, amount_krw=float(server_amount),
+                toss_code=CODE_AMOUNT_MISMATCH,
+                toss_message=f"재조회 {payment.get('totalAmount')} ≠ 저장 {server_amount}",
+                raw=payment,
+            )
+            msg, fix, _ = _remediation_for(CODE_AMOUNT_MISMATCH, "")
+            raise PaymentRejectedError(CODE_AMOUNT_MISMATCH, msg, remediation=fix) from e
         await payment_receipts.record(
             event=payment_receipts.EVENT_RECONCILED,
             order_id=order_id,
@@ -567,6 +580,28 @@ async def confirm_toss_payment(
     )
     result["already_applied"] = False
     return result
+
+
+def vendor_amount_matches(payment: dict[str, Any], server_amount_krw: float) -> bool:
+    """벤더가 말하는 결제금액이 **우리 서버 저장액**과 같은가.
+
+    ## 왜 공용 함수인가 (§29 형제 불일치 — 2026-09-06 실측)
+
+    이 대조는 `reconcile_order` 에는 **있었고** `confirm_toss_payment` 에는 **없었다**
+    (`totalAmount` 가 파일 전체에서 `reconcile_order` 안에만 3회 등장 · confirm 경로 **0회**).
+    한쪽만 있는 검증은 **없는 것과 같다** — 결함은 검증이 없는 쪽으로 흐른다.
+
+    ★특히 위험한 자리는 `_try_resolve()` 다. 그 함수는 **사용자가 보낸 `paymentKey`** 로
+      조회한 Payment 객체를 그대로 돌려주는데, 그것이 **어느 주문의 것인지·얼마인지**
+      아무도 묻지 않은 채 지급으로 흘렀다. 승인 요청(`confirm`)은 서버 금액을 실어 보내
+      벤더가 대신 걸러 주지만, **재조회(`get_payment`)에는 그 방어가 없다** —
+      벤더에게 금액을 말하지 않고 그냥 묻기 때문이다.
+
+    ★금액을 인덱스에 위임하지 않는다. 종전에 이 자리를 막던 유일한 것은
+      `ux_coin_orders_provider_ref` 부분 유니크 인덱스였는데, 그것은 **무결성 장치이지
+      금액 검증 장치가 아니다**(어느 주문에도 안 묶인 `DONE` 결제가 있으면 뚫린다).
+    """
+    return int(payment.get("totalAmount") or 0) == int(round(float(server_amount_krw)))
 
 
 async def _try_resolve(*, payment_key: str, order_id: str) -> dict[str, Any] | None:
@@ -963,7 +998,10 @@ async def reconcile_order(
     row = (
         await db.execute(
             text(
-                "SELECT id, user_id, order_no, amount_krw, status, provider, provider_ref"
+                # ★`refunded_krw` 를 반드시 읽는다 — 이것을 안 읽으면 **정당한 부분환불 뒤에
+                #   전액을 한 번 더 환수**한다(2026-09-06 실측 결함).
+                "SELECT id, user_id, order_no, amount_krw, status, provider, provider_ref,"
+                "       COALESCE(refunded_krw, 0) AS refunded_krw, paid_at"
                 "  FROM coin_orders WHERE id = CAST(:oid AS uuid)"
             ),
             {"oid": order_id},
@@ -997,7 +1035,7 @@ async def reconcile_order(
             toss_code=vendor_status, raw=payment,
         )
         # ★금액 대조 — 재조회 결과라도 **서버 저장액과 다르면 지급하지 않는다.**
-        if int(payment.get("totalAmount") or 0) != int(round(float(row["amount_krw"]))):
+        if not vendor_amount_matches(payment, float(row["amount_krw"])):
             await payment_receipts.record(
                 event=payment_receipts.EVENT_BLOCKED, order_id=order_id, order_no=order_no,
                 user_id=owner, payment_key=vendor_key, toss_code=CODE_AMOUNT_MISMATCH,
@@ -1023,39 +1061,106 @@ async def reconcile_order(
     # ── ② 벤더가 승인을 거둬들였는데 우리는 지급 상태 → 환수한다 ────────────
     #     ★법령 렌즈 실측: 가상계좌 **입금 오류**는 `DONE → WAITING_FOR_DEPOSIT` 로
     #       되돌아간다(v1.5+). 이걸 처리하지 않으면 **입금 오류가 무료 코인이 된다.**
-    if our_status == "paid" and vendor_status in _REVOKED_STATUSES:
+    if our_status == "paid" and vendor_status in _ALL_REVOKING_STATUSES:
+        # ── 환수액은 **상태 이름이 아니라 금액에서 파생**한다 ──────────────────
+        #
+        # ## 왜 (2026-09-06 실측 · 원문 4줄로 확증한 결함)
+        #
+        # 종전 코드는 `_REVOKED_STATUSES` 라는 **상태 목록**에 걸리면 `row["amount_krw"]`
+        # (=주문 **전액**)를 환수했고, `refunded_krw` 를 **한 번도 읽지 않았다.**
+        # 그런데 부분환불은 `status` 를 `paid` 로 **남긴다**(`:832` 의 CASE 가 전액일 때만
+        # 전환한다). 그리고 `PARTIAL_CANCELED` 가 그 목록에 들어 있었다. 그래서:
+        #
+        #     10,000원 결제 → 3,000원 부분환불(정상) → 토스가 취소 웹훅을 보낸다
+        #     → `our_status=='paid'` ∧ `PARTIAL_CANCELED ∈ 목록` → **10,000원 전액 환수**
+        #
+        # 사용자는 3,000원만 돌려받고 **10,000원어치 코인을 잃는다.** 공격자가 필요 없다 —
+        # **정상 흐름이 스스로 발화**하고, 관리자의 「바로잡기」 버튼도 같은 경로를 탄다.
+        #
+        # ## 처방 — 목록형을 버리고 **벤더 잔액과 우리 잔액의 차**로 판정한다
+        #
+        #     우리가 유효하다고 보는 액   = amount_krw - refunded_krw
+        #     벤더가 유효하다고 보는 액   = balanceAmount (부분취소) / 0 (전면 철회)
+        #     환수액                      = 그 차이 (음수면 환수 없음)
+        #
+        # ★이렇게 하면 새 상태값이 생겨도 **금액이 판정한다** — 목록이 상한이 되지 않는다.
+        expected_remaining = float(row["amount_krw"]) - float(row["refunded_krw"] or 0)
+        vendor_remaining = _vendor_remaining_krw(payment, vendor_status)
+
+        if vendor_remaining is None:
+            # ★**모르는 것은 0이 아니다.** 부분취소인데 `balanceAmount` 가 없으면 환수액을
+            #   계산할 수 없다 — 그때 전액을 빼는 것이 바로 위 결함이었다. 사람에게 넘긴다.
+            await payment_receipts.record(
+                event=payment_receipts.EVENT_BLOCKED, order_id=order_id, order_no=order_no,
+                user_id=owner, payment_key=vendor_key, toss_code=vendor_status, raw=payment,
+                toss_message="부분취소 잔액(balanceAmount)을 알 수 없어 환수액을 계산할 수 없습니다.",
+            )
+            return {
+                "order_id": order_id, "order_no": order_no, "action": "clawback_undetermined",
+                "vendor_status": vendor_status, "our_status": our_status,
+                "note": "벤더 잔액 미상 — 관리자 확인이 필요합니다.",
+            }
+
+        claw = expected_remaining - vendor_remaining
+        if claw <= 0:
+            # 이미 맞다 — 부분환불이 정확히 반영된 정상 상태다(환수할 것이 없다).
+            return {
+                "order_id": order_id, "order_no": order_no, "action": "already_consistent",
+                "our_status": our_status, "vendor_status": vendor_status,
+                "expected_remaining_krw": expected_remaining,
+                "vendor_remaining_krw": vendor_remaining,
+            }
+
+        # ★**실제로 빠진 액수**를 받아 그것으로 원장을 쓴다. 종전엔 차감이 `GREATEST(0, …)`
+        #   로 잘리는데 원장에는 **무조건 전액**을 적어 `coin_ledger_events` 합 ≠ `topup_krw`
+        #   가 됐다(같은 결함의 두 번째 얼굴).
         clawed = (
             await db.execute(
                 text(
-                    "UPDATE public.users"
-                    "   SET topup_krw = GREATEST(0, COALESCE(topup_krw,0) - :a),"
-                    "       billing_budget_krw = COALESCE(monthly_base_krw,0)"
-                    "                          + GREATEST(0, COALESCE(topup_krw,0) - :a)"
-                    " WHERE id = :u RETURNING COALESCE(topup_krw,0)"
+                    "WITH prev AS (SELECT COALESCE(topup_krw,0) AS b FROM public.users WHERE id = :u),"
+                    "     upd AS ("
+                    "       UPDATE public.users"
+                    "          SET topup_krw = GREATEST(0, COALESCE(topup_krw,0) - :a),"
+                    "              billing_budget_krw = COALESCE(monthly_base_krw,0)"
+                    "                                 + GREATEST(0, COALESCE(topup_krw,0) - :a)"
+                    "        WHERE id = :u RETURNING COALESCE(topup_krw,0) AS after_krw)"
+                    " SELECT upd.after_krw, prev.b - upd.after_krw AS applied_krw FROM upd, prev"
                 ),
-                {"a": float(row["amount_krw"]), "u": owner},
+                {"a": float(claw), "u": owner},
             )
         ).first()
+        applied = float(clawed[1]) if clawed else 0.0
         await coin_ledger_service.append_event(
             db=db, user_id=owner, entry_type="order_refund_reverted",
-            amount_krw=-float(row["amount_krw"]),
-            description=f"벤더 승인 철회로 환수(주문 {order_no}, {vendor_status})",
+            amount_krw=-applied,
+            description=(
+                f"벤더 승인 철회로 환수(주문 {order_no}, {vendor_status};"
+                f" 대상 {claw:.0f}원 중 실제 {applied:.0f}원)"
+            ),
             ref_type="coin_order", ref_id=order_id, created_by=actor_id,
         )
+        # ★**`paid_at` 을 지우지 않는다.** 형제(`coin_orders_service.py:317-319`)가
+        #   *"진짜 잠금은 `paid_at IS NULL` 이다 — 한 번이라도 결제가 성립한 주문은
+        #   구조적으로 이 절에 들어올 수 없다"* 고 **선언**하는데, 종전 이 줄이 그
+        #   전제를 지워 전자상거래법 시행령 §6①(청약철회 기록 **5년 보존**)의 대상 주문을
+        #   즉시 파기 대상으로 재분류했다. 선언이 참이 되려면 형제가 그것을 안 건드려야 한다.
         await db.execute(
-            text("UPDATE coin_orders SET status='pending', paid_at=NULL WHERE id=CAST(:oid AS uuid)"),
+            text("UPDATE coin_orders SET status='pending' WHERE id=CAST(:oid AS uuid)"),
             {"oid": order_id},
         )
         await db.commit()
         await payment_receipts.record(
             event=payment_receipts.EVENT_RECONCILED, order_id=order_id, order_no=order_no,
-            user_id=owner, payment_key=vendor_key, amount_krw=float(row["amount_krw"]),
+            user_id=owner, payment_key=vendor_key, amount_krw=applied,
             toss_code=vendor_status, raw=payment,
             toss_message="★벤더가 승인을 철회 — 코인 환수",
         )
         return {
             "order_id": order_id, "order_no": order_no, "action": "clawed_back",
             "vendor_status": vendor_status,
+            "clawed_back_krw": applied,
+            "expected_remaining_krw": expected_remaining,
+            "vendor_remaining_krw": vendor_remaining,
             "remaining_topup_krw": float(clawed[0]) if clawed else None,
         }
 
@@ -1065,8 +1170,39 @@ async def reconcile_order(
     }
 
 
-#: ★벤더가 승인을 **거둬들인** 상태 — 우리가 지급했다면 환수해야 한다.
-_REVOKED_STATUSES = frozenset({"CANCELED", "PARTIAL_CANCELED", "WAITING_FOR_DEPOSIT", "ABORTED", "EXPIRED"})
+#: ★벤더가 승인을 **통째로** 거둬들인 상태 — 벤더 쪽 유효 잔액이 **0** 이다.
+#:  `PARTIAL_CANCELED` 는 **여기 없다**: 부분취소는 잔액이 남으므로 전면 철회가 아니다.
+#:  (2026-09-06 — 이 집합에 그것이 들어 있어서 정당한 부분환불 뒤 전액이 재환수됐다)
+_REVOKED_STATUSES = frozenset({"CANCELED", "WAITING_FOR_DEPOSIT", "ABORTED", "EXPIRED"})
+
+#: 일부만 취소된 상태 — 잔액은 벤더의 `balanceAmount` 가 말한다.
+_PARTIALLY_REVOKED_STATUSES = frozenset({"PARTIAL_CANCELED"})
+
+#: 환수 여부를 **검토해야 하는** 상태 전체(둘의 합집합 — 파생형이라 한쪽만 늘려도 따라온다).
+_ALL_REVOKING_STATUSES = _REVOKED_STATUSES | _PARTIALLY_REVOKED_STATUSES
+
+
+def _vendor_remaining_krw(payment: dict[str, Any], vendor_status: str) -> float | None:
+    """벤더가 **아직 유효하다고 보는 금액**. 알 수 없으면 `None`(★0이 아니다).
+
+    · 전면 철회(`CANCELED`·`EXPIRED`·`ABORTED`·`WAITING_FOR_DEPOSIT`) → **0**
+    · 부분취소(`PARTIAL_CANCELED`) → `balanceAmount`. 그 값이 없거나 숫자가 아니면
+      **미상**이다 — 미상을 0으로 취급하면 전액을 빼게 되고, 그것이 바로 이 봉합의 대상이다.
+    """
+    if vendor_status in _REVOKED_STATUSES:
+        return 0.0
+    raw = payment.get("balanceAmount")
+    # ★**이중 가드다**(전수 변이 실측 2026-09-06 · `[72/163] 조건무력화 ★생존`).
+    #   이 줄을 지워도 아래 `float(None)` 이 `TypeError` 로 같은 `except` 에 걸려
+    #   **결과가 같다.** 그래도 남겨 두는 이유는 「없음」과 「형식 불량」이 **다른 사실**임을
+    #   읽는 사람에게 보이기 위해서다. 생존이 곧 구멍은 아니므로 여기 적어 둔다
+    #   (변이 점수를 부풀리려고 공허한 단언을 추가하지 않는다).
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 async def _fetch_payment(*, payment_key: str | None, order_id: str) -> dict[str, Any] | None:

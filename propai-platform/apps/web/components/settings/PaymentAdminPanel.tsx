@@ -70,7 +70,24 @@ type RecentOrder = {
   refundable_krw: number;
   status: string;
   provider: string | null;
+  /** ★통장 내역과 맞추는 키. 마스킹하지 않는다 — 마스킹하면 대사가 불가능하다. */
+  depositor_name: string | null;
   paid_at: string | null;
+};
+
+/** 입금 확인 대기 — ★혼재 목록과 **분리**한다(유료 주문에 밀려 사라지지 않게). */
+type AwaitingDeposit = {
+  total: number;
+  /** `true` 면 목록이 잘렸다. ★절단을 숨기면 "다 처리했다"는 거짓 안심이 생긴다. */
+  truncated: boolean;
+  items: {
+    id: string;
+    order_no: string;
+    email_masked: string;
+    amount_krw: number;
+    depositor_name: string | null;
+    created_at: string | null;
+  }[];
 };
 
 type Revenue = {
@@ -81,6 +98,7 @@ type Revenue = {
   top_payers: PayerRow[];
   unresolved: Unresolved[];
   recent_orders: RecentOrder[];
+  awaiting_deposit?: AwaitingDeposit;
 };
 
 const krw = (n: number | null | undefined) =>
@@ -380,6 +398,67 @@ export function PaymentAdminPanel() {
           </div>
         ) : null}
 
+        {rev?.awaiting_deposit && rev.awaiting_deposit.total > 0 ? (
+          <div className="mt-5" data-testid="awaiting-deposit">
+            <h3 className="text-sm font-semibold text-[var(--text-secondary)]">
+              입금 확인 대기 · {rev.awaiting_deposit.total}건
+              {rev.awaiting_deposit.truncated ? (
+                // ★잘린 것을 **말한다**. 숨기면 "다 처리했다"로 오독된다.
+                <span className="ml-2 text-xs font-normal text-[var(--status-warning)]">
+                  (목록은 {rev.awaiting_deposit.items.length}건만 표시 — 잘렸습니다)
+                </span>
+              ) : null}
+            </h3>
+            <p className="mt-1 text-xs text-[var(--text-tertiary)]">
+              통장 입출금 내역의 <strong>입금자명 · 금액</strong>과 아래 값을 대조한 뒤 승인하세요.
+              승인하면 즉시 코인이 지급되며 되돌리려면 별도 환불이 필요합니다.
+            </p>
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full min-w-[620px] text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--line)] text-left text-xs text-[var(--text-tertiary)]">
+                    <th className="py-2 pr-3 font-medium">주문번호</th>
+                    <th className="py-2 pr-3 font-medium">입금자명</th>
+                    <th className="py-2 pr-3 font-medium">금액</th>
+                    <th className="py-2 pr-3 font-medium">주문일시</th>
+                    <th className="py-2 font-medium">처리</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--line)]">
+                  {rev.awaiting_deposit.items.map((o) => (
+                    <tr key={o.id}>
+                      <td className="py-2 pr-3 font-mono text-xs">{o.order_no}</td>
+                      <td className="py-2 pr-3 font-semibold" data-testid="awaiting-depositor">
+                        {o.depositor_name ?? "-"}
+                      </td>
+                      <td className="py-2 pr-3">{krw(o.amount_krw)}</td>
+                      <td className="py-2 pr-3 text-xs text-[var(--text-tertiary)]">
+                        {o.created_at ? new Date(o.created_at).toLocaleString("ko-KR") : "-"}
+                      </td>
+                      <td className="py-2">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() =>
+                            void manualConfirm({
+                              id: o.id,
+                              order_no: o.order_no,
+                              amount_krw: o.amount_krw,
+                            } as RecentOrder)
+                          }
+                          className="rounded-full border border-[var(--accent-strong)] px-3 py-1 text-xs font-semibold text-[var(--accent-strong)] disabled:opacity-50"
+                        >
+                          입금 확인
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
+
         {rev && rev.recent_orders.length > 0 ? (
           <div className="mt-5" data-testid="recent-orders">
             <h3 className="text-sm font-semibold text-[var(--text-secondary)]">
@@ -391,6 +470,7 @@ export function PaymentAdminPanel() {
                   <tr className="border-b border-[var(--line)] text-left text-xs text-[var(--text-tertiary)]">
                     <th className="py-2 pr-3 font-medium">주문번호</th>
                     <th className="py-2 pr-3 font-medium">사용자</th>
+                    <th className="py-2 pr-3 font-medium">입금자명</th>
                     <th className="py-2 pr-3 font-medium">결제</th>
                     <th className="py-2 pr-3 font-medium">환불</th>
                     <th className="py-2 pr-3 font-medium">상태</th>
@@ -402,6 +482,7 @@ export function PaymentAdminPanel() {
                     <tr key={o.id}>
                       <td className="py-2 pr-3 font-mono text-xs">{o.order_no}</td>
                       <td className="py-2 pr-3 font-mono text-xs">{o.email_masked}</td>
+                      <td className="py-2 pr-3 text-xs">{o.depositor_name ?? "-"}</td>
                       <td className="py-2 pr-3">{krw(o.amount_krw)}</td>
                       <td className="py-2 pr-3">
                         {o.refunded_krw > 0 ? krw(o.refunded_krw) : "-"}

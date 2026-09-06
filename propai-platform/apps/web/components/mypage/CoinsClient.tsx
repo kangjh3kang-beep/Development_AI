@@ -52,9 +52,36 @@ type PackagesResponse = {
   custom: { min_krw: number; max_krw: number; unit_krw: number };
 };
 
+/** 무통장입금 안내. ★`enabled=false` 면 `account` 는 **null 이다** — 부분 정보는 오지 않는다
+ *  (계좌를 한 자리라도 틀리게 안내하면 사용자가 남의 계좌로 송금하고, 되돌릴 수 없다). */
+type BankTransferConfig = {
+  enabled: boolean;
+  account: { bank_name: string; account_no: string; holder: string } | null;
+  guide: string | null;
+  notice: string | null;
+};
+
+/**
+ * 응답에서 **쓸 수 있는 결제 수단 목록**을 얻는다.
+ *
+ * ★**배포 창 회귀 방어**(2026-09-06 실측): 구 서버 — 또는 캐시된 응답 — 은
+ *   `payment_methods` 를 주지 않는다. 그때 목록을 비워 두면 **결제 버튼이 전부 사라진다.**
+ *   기존 프론트 테스트 2건이 정확히 그 상태를 재현해 빨개졌다(테스트가 배포 창을 대신 쟀다).
+ *
+ * ★단일 출처는 **서버**다. 이 함수는 그 값이 **없을 때**의 복원일 뿐이고, 복원 규칙은
+ *   결정적이다: `manual_only` 는 「수단 없음」을 뜻하므로 빈 목록으로 옮긴다.
+ */
+export function methodsFromResponse(mode?: string, methods?: string[]): string[] {
+  if (Array.isArray(methods)) return methods;
+  if (!mode || mode === "manual_only") return [];
+  return [mode];
+}
+
 type Order = {
   id: string;
   order_no: string;
+  /** 무통장입금 대사 키 — 사용자가 **어떤 이름으로 입금해야 하는지**. */
+  depositor_name?: string | null;
   amount_krw: number;
   coin_krw: number;
   status: string;
@@ -94,9 +121,15 @@ function resolveErrorMessage(error: unknown, fallback: string): string {
 
 export function CoinsClient({ locale }: { locale: Locale }) {
   const [packages, setPackages] = useState<PackagesResponse | null>(null);
-  // ★결제 경로(simulated=데모 self-confirm 가능 / manual_only=관리자 확정만). 프로덕션에서
-  //   100% 실패하는 '결제 완료 처리' 버튼을 감추기 위한 게이트(성장루프 MEDIUM 수렴).
-  const [paymentMode, setPaymentMode] = useState<string>("manual_only");
+  // ★결제 경로는 **목록 하나**로만 들고 있는다.
+  //   종전에는 `paymentMode`(단일 문자열) 상태도 함께 뒀는데, 소비처를 전부 목록 파생으로
+  //   옮기고 나니 **아무도 안 읽는 죽은 값**이 됐다(CI 린트 래칫이 `0 → 1` 로 잡았다).
+  //   상태를 남겨 두면 다음 사람이 그것을 읽고 **목록과 갈린 판정**을 하게 된다 —
+  //   이 저장소가 반복해 데인 「두 출처」 형태다.
+  const [paymentMethods, setPaymentMethods] = useState<string[]>([]);
+  const [bankConfig, setBankConfig] = useState<BankTransferConfig | null>(null);
+  // 실제 입금자명 — 비우면 서버가 **가입자명**을 쓴다(종전 동작).
+  const [depositorName, setDepositorName] = useState<string>("");
   const [selected, setSelected] = useState<string>("starter");
   const [customAmount, setCustomAmount] = useState<string>("");
   const [orders, setOrders] = useState<Order[]>([]);
@@ -119,6 +152,14 @@ export function CoinsClient({ locale }: { locale: Locale }) {
   // ★요청 세대 카운터 — 필터 연속 전환 시 늦게 도착한 이전 요청 응답이 최신을 덮어쓰는 경합을
   //   차단한다(성장루프 LOW 수렴, Overview/Usage의 active 가드와 동일 취지).
   const reqSeqRef = useRef(0);
+
+  // ★게이트는 **목록**으로 판정한다. 종전처럼 `paymentMode === "toss"` 로 보면
+  //   무통장입금이 첫 항목일 때 카드 버튼이 사라진다(병존이 깨진다).
+  const hasToss = paymentMethods.includes("toss");
+  const hasBank = paymentMethods.includes("bank_transfer");
+  const hasSimulated = paymentMethods.includes("simulated");
+  // ★`enabled` 가 아니면 `account` 는 null 이다 — 부분 정보로 안내하지 않는다.
+  const bankAccount = bankConfig?.enabled ? bankConfig.account : null;
 
   const reload = useCallback(async () => {
     const myReq = ++reqSeqRef.current;
@@ -158,23 +199,34 @@ export function CoinsClient({ locale }: { locale: Locale }) {
 
   useEffect(() => {
     void apiClient
-      .get<TossConfig>("/billing/payments/toss/config", { useMock: false })
+      .get<TossConfig & { payment_methods?: string[] }>("/billing/payments/toss/config", {
+        useMock: false,
+      })
       .then((c) => {
         setTossConfig(c);
         // ★단일 출처 — 설정 응답의 payment_mode 를 그대로 쓴다(별도 판정 금지).
-        if (c?.payment_mode) setPaymentMode(c.payment_mode);
+        setPaymentMethods(methodsFromResponse(c?.payment_mode, c?.payment_methods));
       })
       .catch(() => {
         /* 설정 조회 실패는 치명이 아니다 — 결제 버튼이 안 뜰 뿐이고, 그 사실은 화면에 보인다. */
       });
     apiClient
-      .get<PackagesResponse & { payment_mode?: string }>("/billing/packages", { useMock: false })
+      .get<PackagesResponse & { payment_mode?: string; payment_methods?: string[] }>(
+        "/billing/packages",
+        { useMock: false },
+      )
       .then((p) => {
         setPackages(p);
-        if (p?.payment_mode) setPaymentMode(p.payment_mode);
+        setPaymentMethods(methodsFromResponse(p?.payment_mode, p?.payment_methods));
         setPackagesError(false);
       })
       .catch(() => setPackagesError(true));
+    apiClient
+      .get<BankTransferConfig>("/billing/payments/bank-transfer/config", { useMock: false })
+      .then((b) => setBankConfig(b))
+      .catch(() => {
+        /* 안내 조회 실패는 치명이 아니다 — 계좌 구역이 안 뜰 뿐이고 그 사실이 화면에 보인다. */
+      });
   }, []);
 
   useEffect(() => {
@@ -185,21 +237,36 @@ export function CoinsClient({ locale }: { locale: Locale }) {
     setBusy(true);
     setNotice(null);
     try {
-      const body: { package_key: string; amount_krw?: number } = { package_key: selected };
+      const body: {
+        package_key: string;
+        amount_krw?: number;
+        depositor_name?: string;
+      } = { package_key: selected };
       if (selected === "custom") body.amount_krw = Number(customAmount || 0);
+      // 비우면 보내지 않는다 — 서버가 가입자명을 쓴다(종전 동작과 동일).
+      if (depositorName.trim()) body.depositor_name = depositorName.trim();
       const order = await apiClient.post<Order & { payment_mode?: string }>(
         "/billing/orders",
         { body, useMock: false },
       );
       // ★안내문과 '결제 완료 처리' 버튼 게이트를 동일 출처(주문 응답 payment_mode)로 통일 —
       //   packages 조회가 실패해도 안내와 버튼 노출이 어긋나지 않게 한다(성장루프 LOW 수렴).
-      if (order.payment_mode) setPaymentMode(order.payment_mode);
+      setPaymentMethods(
+        methodsFromResponse(
+          order.payment_mode,
+          (order as { payment_methods?: string[] }).payment_methods,
+        ),
+      );
       setNotice({
         kind: "info",
+        // ★안내문을 **계좌 설정에서 파생**시킨다. 종전 문구는 *"계좌이체 후 관리자 확인"* 이라
+        //   말하면서 **어느 계좌인지 말하지 않았다** — 사용자가 그 말로 할 수 있는 일이 없다.
         text:
           order.payment_mode === "simulated"
             ? `주문 ${order.order_no}이 생성되었습니다. 아래 결제내역에서 '결제 완료 처리'를 눌러 충전을 완료하세요(데모 환경).`
-            : `주문 ${order.order_no}이 생성되었습니다. 온라인 결제 연동 준비 중이므로, 계좌이체 후 관리자 확인(k3880@kakao.com)으로 충전됩니다.`,
+            : bankAccount
+              ? `주문 ${order.order_no} 생성 완료. ${bankAccount.bank_name} ${bankAccount.account_no}(${bankAccount.holder})로 ${formatKrw(order.amount_krw)}을 입금해 주세요. 입금자명: ${order.depositor_name ?? depositorName.trim() ?? ""}`
+              : `주문 ${order.order_no}이 생성되었습니다. 결제 수단이 아직 설정되지 않아 관리자 확인 후 충전됩니다.`,
       });
       await reload();
     } catch (error) {
@@ -448,7 +515,7 @@ export function CoinsClient({ locale }: { locale: Locale }) {
         ) : null}
         {/* ★결제 경로에 따라 **다른 버튼**을 낸다 — 죽은 버튼을 보여 주지 않는다.
             (프로덕션에서 항상 501 이 나는 버튼을 감추는 기존 규율과 같은 취지) */}
-        {paymentMode === "toss" ? (
+        {hasToss ? (
           <div className="mt-4" data-testid="toss-pay">
             <button
               type="button"
@@ -469,7 +536,74 @@ export function CoinsClient({ locale }: { locale: Locale }) {
               즉시 잔액에 반영됩니다.
             </p>
           </div>
-        ) : (
+        ) : null}
+
+        {/* ★무통장입금 — 카드와 **함께** 뜬다(배타가 아니다).
+            계좌가 완전할 때만 나타난다: 부분 정보로 안내하면 사용자가 엉뚱한 곳에
+            송금하고 그것은 되돌릴 수 없다(서버가 `enabled=false` 면 account 를 안 준다). */}
+        {hasBank && bankAccount ? (
+          <div className="mt-4" data-testid="bank-transfer-pay">
+            <div className="rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--surface)] p-4">
+              <p className="text-sm font-semibold text-[var(--text-primary)]">무통장입금</p>
+              <dl className="mt-2 space-y-1 text-sm text-[var(--text-secondary)]">
+                <div className="flex gap-2">
+                  <dt className="w-16 shrink-0 text-[var(--text-tertiary)]">은행</dt>
+                  <dd data-testid="bank-name">{bankAccount.bank_name}</dd>
+                </div>
+                <div className="flex gap-2">
+                  <dt className="w-16 shrink-0 text-[var(--text-tertiary)]">계좌번호</dt>
+                  {/* ★`select-all` — 손으로 옮겨 적다가 한 자리를 틀리면 되돌릴 수 없다. */}
+                  <dd className="select-all font-mono font-semibold" data-testid="bank-account-no">
+                    {bankAccount.account_no}
+                  </dd>
+                </div>
+                <div className="flex gap-2">
+                  <dt className="w-16 shrink-0 text-[var(--text-tertiary)]">예금주</dt>
+                  <dd data-testid="bank-holder">{bankAccount.holder}</dd>
+                </div>
+              </dl>
+              <div className="mt-3">
+                <label
+                  htmlFor="depositor-name"
+                  className="text-xs text-[var(--text-tertiary)]"
+                >
+                  입금자명(다를 때만 입력) — 비우면 가입자명으로 확인합니다
+                </label>
+                <input
+                  id="depositor-name"
+                  type="text"
+                  maxLength={20}
+                  value={depositorName}
+                  onChange={(e) => setDepositorName(e.target.value)}
+                  placeholder="예: (주)사통팔땅"
+                  className="mt-1 block w-56 rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--surface-strong)] px-3.5 py-2.5 text-sm text-[var(--text-primary)]"
+                />
+              </div>
+              {bankConfig?.guide ? (
+                <p className="mt-2 text-xs leading-5 text-[var(--text-tertiary)]">
+                  {bankConfig.guide}
+                </p>
+              ) : null}
+              {bankConfig?.notice ? (
+                // ★즉시 충전이 아니라는 사실을 **입금 전에** 말한다.
+                <p className="mt-1 text-xs font-semibold leading-5 text-[var(--status-warning)]">
+                  {bankConfig.notice}
+                </p>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void createOrder()}
+              className="mt-3 rounded-full bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+            >
+              무통장입금 주문 만들기
+            </button>
+          </div>
+        ) : null}
+
+        {/* 어떤 수단도 없을 때 — 종전 동작 그대로(회귀 0). */}
+        {!hasToss && !hasBank ? (
           <>
             <button
               type="button"
@@ -484,7 +618,7 @@ export function CoinsClient({ locale }: { locale: Locale }) {
               확인되면 잔액에 반영됩니다.
             </p>
           </>
-        )}
+        ) : null}
       </section>
 
       {/* 결제내역(주문) */}
@@ -538,7 +672,7 @@ export function CoinsClient({ locale }: { locale: Locale }) {
                         <span className="flex gap-2">
                           {/* '결제 완료 처리'(self-confirm)는 시뮬레이션 모드에서만 노출 —
                               프로덕션(manual_only)에선 항상 501이라 죽은 버튼이 되므로 감춘다. */}
-                          {paymentMode === "simulated" ? (
+                          {hasSimulated ? (
                             <button
                               type="button"
                               disabled={busy}
@@ -567,7 +701,10 @@ export function CoinsClient({ locale }: { locale: Locale }) {
                             {receiptsFor === o.id ? "내역 닫기" : "처리내역"}
                           </button>
                           {/* ★환불은 결제 경로가 토스이고 아직 환불되지 않은 건에만. */}
-                          {o.status === "paid" && paymentMode === "toss" ? (
+                          {/* ★환불 가능 여부는 **현재 모드**가 아니라 **그 주문이 어떻게
+                              결제됐는지**가 정한다. 병존에서는 모드로 판정하면 무통장입금
+                              주문에 토스 환불 버튼이 뜨고, 누르면 서버가 실패한다. */}
+                          {o.status === "paid" && o.provider === "toss" ? (
                             <button
                               type="button"
                               disabled={busy}
