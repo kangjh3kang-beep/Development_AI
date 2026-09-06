@@ -1192,6 +1192,11 @@ def _vendor_remaining_krw(payment: dict[str, Any], vendor_status: str) -> float 
     if vendor_status in _REVOKED_STATUSES:
         return 0.0
     raw = payment.get("balanceAmount")
+    # ★**이중 가드다**(전수 변이 실측 2026-09-06 · `[72/163] 조건무력화 ★생존`).
+    #   이 줄을 지워도 아래 `float(None)` 이 `TypeError` 로 같은 `except` 에 걸려
+    #   **결과가 같다.** 그래도 남겨 두는 이유는 「없음」과 「형식 불량」이 **다른 사실**임을
+    #   읽는 사람에게 보이기 위해서다. 생존이 곧 구멍은 아니므로 여기 적어 둔다
+    #   (변이 점수를 부풀리려고 공허한 단언을 추가하지 않는다).
     if raw is None:
         return None
     try:

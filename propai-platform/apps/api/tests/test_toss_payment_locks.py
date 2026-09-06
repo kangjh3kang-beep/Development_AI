@@ -1268,6 +1268,11 @@ async def test_partial_refund_is_not_a_second_clawback(
     assert out["action"] == "already_consistent", out
     assert not any("WITH prev AS" in s for s in db.sql), "환수 UPDATE 가 실행됐다"
     assert ledger == [], "환수하지 않았는데 원장에 기록이 생겼다"
+    # ★「환수 안 함」에도 **판정 근거**가 실려야 한다 — 없으면 관리자가 옳은지 알 수 없다
+    #   (전수 변이에서 이 두 줄의 삭제가 생존했다: `[34,36,38/163]`).
+    assert out["expected_remaining_krw"] == 7_000.0
+    assert out["vendor_remaining_krw"] == 7_000.0
+    assert out["our_status"] == "paid" and out["vendor_status"] == "PARTIAL_CANCELED"
 
 
 @pytest.mark.asyncio
