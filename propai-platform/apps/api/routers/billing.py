@@ -270,6 +270,9 @@ async def list_packages(settings: Settings = Depends(get_settings)):
         },
         # ★단일 리졸버 — 세 번째 값(`toss`)이 생겨도 여기가 갈라지지 않는다.
         "payment_mode": resolve_payment_mode(settings),
+        # ★병존 — 화면이 카드와 무통장입금을 **함께** 제시할 수 있어야 한다.
+        #   `payment_mode` 는 이 목록의 첫 항목이다(두 출처가 아니다).
+        "payment_methods": resolve_payment_methods(settings),
     }
 
 
@@ -278,6 +281,12 @@ class CreateOrderRequest(BaseModel):
     # custom일 때만 사용 — 프리셋 키면 무시(금액은 서버 결정). plain float — nan/inf/음수는
     # resolve_order_amount의 isfinite+범위검증이 400으로 차단(pydantic echo 직렬화 버그 회피).
     amount_krw: float | None = Field(default=None)
+    #: 무통장입금 **실제 입금자명**(선택).
+    #: ★비우면 종전대로 **가입자명**을 쓴다(회귀 0). 회사·가족 명의로 입금하는 사람만 적는다.
+    #:   이것이 없으면 관리자가 은행 입출금 내역과 주문을 **대사할 수 없다**.
+    #: ★길이 상한은 은행 입금자명 표기 한도를 넘지 않는 선(20자)으로 둔다 — 더 길면
+    #:   통장에 잘려 찍혀서 어차피 대사에 쓸 수 없다.
+    depositor_name: str | None = Field(default=None, max_length=20)
 
 
 @router.get("/orders")
@@ -317,6 +326,7 @@ async def create_order(
         order = await coin_orders_service.create_order(
             db, user_id=str(current.user_id), tenant_id=str(current.tenant_id),
             package_key=req.package_key, amount_krw=req.amount_krw,
+            depositor_name=req.depositor_name,
         )
     except coin_orders_service.PendingCapExceededError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
@@ -324,6 +334,7 @@ async def create_order(
         raise HTTPException(status_code=400, detail=str(e)) from None
     # 프론트가 다음 행동을 정직하게 안내하도록 결제 경로 상태를 함께 반환.
     order["payment_mode"] = resolve_payment_mode(settings)
+    order["payment_methods"] = resolve_payment_methods(settings)
     return order
 
 
@@ -494,6 +505,7 @@ async def export_my_coin_ledger(
 #   ③ **모르는 것은 모른다고 말한다** — 미확정을 실패로 접지 않는다
 # ═════════════════════════════════════════════════════════════════════════════
 from app.services.billing import (  # noqa: E402
+    bank_transfer,
     payment_receipts,
     revenue_service,
     toss_orders_service,
@@ -512,11 +524,44 @@ def resolve_payment_mode(settings: Settings) -> str:
       (`POST /orders/{id}/confirm` 한 번에 무료 충전). 그래서 **토스가 우선**이고,
       토스가 켜지면 시뮬레이션은 **꺼진 것으로 취급**한다.
     """
-    if toss_payments.is_configured():
-        return "toss"
-    if settings.billing_simulated_payments:
-        return "simulated"
-    return "manual_only"
+    m = resolve_payment_methods(settings)
+    return m[0] if m else "manual_only"
+
+
+def resolve_payment_methods(settings: Settings) -> list[str]:
+    """지금 **쓸 수 있는 결제 수단 전부** — 우선순위 순. ★이것이 유일한 계산처다.
+
+    ## 왜 목록인가 (2026-09-06)
+
+    종전에는 단일 문자열이라 **카드와 무통장입금을 동시에 제시할 수 없었다.** 국내 서비스
+    표준은 둘을 함께 주는 것이고, 그래야 PG 장애 때도 충전 경로가 살아 있다.
+
+    ★**`payment_mode` 는 여기서 파생**된다(`m[0]`). 두 곳에서 따로 계산하면 반드시 갈리고,
+      갈린 쪽이 화면이면 사용자가 **못 쓰는 버튼**을 누르게 된다.
+
+    ## ★#1005 가 세운 무료충전 방어를 그대로 옮긴다
+
+    `simulated` 는 `POST /orders/{id}/confirm` 한 번으로 **결제 없이 코인을 만든다.**
+    그래서 두 겹으로 닫는다:
+
+      · **실수단이 하나라도 있으면** 후보에서 뺀다(실결제 경로와 공존 금지)
+      · **토스 키가 존재하면**(짝이 틀려 못 쓰더라도) 후보에서 뺀다 —
+        키가 있다는 것은 소유자가 실결제를 의도했다는 뜻이고, 설정 오류가
+        **무료 충전으로 강등되어서는 안 된다**.
+
+    ★목록화가 그 방어를 되살리지 못하게 하는 것이 이 함수의 가장 중요한 계약이다
+      (같은 PR 안에서 자기가 고친 결함을 재발시키는 형태를 막는다).
+    """
+    methods: list[str] = []
+    # 키가 있다는 사실 자체가 「실결제 의도」의 표식이다 — 짝이 맞는지와 별개로 기억한다.
+    toss_present = toss_payments.is_configured()
+    if toss_present and toss_payments.key_pairing_ok():
+        methods.append("toss")
+    if bank_transfer.is_configured():
+        methods.append("bank_transfer")
+    if not methods and not toss_present and settings.billing_simulated_payments:
+        methods.append("simulated")
+    return methods
 
 
 class TossConfirmRequest(BaseModel):
@@ -596,12 +641,52 @@ async def toss_config(
     ★경로가 `/billing/` 아래라 서비스워커의 `API_NO_STORE_PATTERNS` 에 걸려 캐시되지 않는다
       — 키를 교체했는데 옛 키가 재생되는 사고를 막는다(보안 렌즈 M6 실측).
     """
-    mode = resolve_payment_mode(settings)
+    methods = resolve_payment_methods(settings)
+    mode = methods[0] if methods else "manual_only"
+    toss_on = "toss" in methods
     return {
         "payment_mode": mode,
-        "client_key": toss_payments.client_key() if mode == "toss" else None,
+        "payment_methods": methods,
+        "client_key": toss_payments.client_key() if toss_on else None,
         # ★테스트 키면 실제 결제가 일어나지 않는다 — 화면이 그것을 크게 알려야 한다.
-        "test_mode": toss_payments.is_test_mode() if mode == "toss" else None,
+        "test_mode": toss_payments.is_test_mode() if toss_on else None,
+    }
+
+
+@router.get("/payments/bank-transfer/config")
+async def bank_transfer_config(
+    current: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """무통장입금 안내 — **어디로 · 어떤 이름으로** 보내면 되는지.
+
+    ## ★왜 로그인이 필요한가
+
+    계좌번호 자체는 비밀이 아니지만 **예금주 성명은 개인정보**다. 비로그인에 공개하면
+    크롤러가 수집한다. 토스 `config` 와 **같은 게이트**를 쓴다(형제와 어긋나지 않게).
+
+    ## ★왜 부분 정보를 안 주나
+
+    계좌번호를 한 자리 틀리게 안내하면 사용자는 **남의 계좌로 송금**하고 그것은
+    **되돌릴 수 없다.** 그래서 세 항목이 모두 있고 형식이 옳을 때만 안내하고,
+    아니면 `enabled: false` 로 **아무 값도 주지 않는다**(`bank_transfer.account_info()`).
+    """
+    enabled = "bank_transfer" in resolve_payment_methods(settings)
+    info = bank_transfer.account_info() if enabled else None
+    return {
+        "enabled": enabled,
+        "account": info,
+        # ★대사 키는 **입금자명 + 금액 + 주문번호** 셋이다. 하나로는 동명이인·동일금액에서
+        #   갈리지 않는다. 화면이 이 문장을 그대로 보여 준다.
+        "guide": (
+            "입금자명은 주문에 적은 이름과 「같아야」 확인이 빠릅니다. "
+            "이름이 다르면 충전 화면에서 실제 입금자명을 적어 주세요."
+        ) if enabled else None,
+        # 사람이 확인하므로 즉시 반영이 아니다 — 그 사실을 **미리** 말한다.
+        "notice": (
+            "입금이 확인되면 관리자 승인 후 코인이 충전됩니다(영업시간 기준 확인). "
+            "입금 후에도 주문은 잠시 「결제대기」로 보입니다."
+        ) if enabled else None,
     }
 
 
@@ -617,7 +702,9 @@ async def confirm_toss(
     ★`amount` 를 받지만 **토스로 보내는 값은 서버 저장값**이다.
     ★활성계정 가드는 다른 코인 변이와 **같은 통로**를 쓴다(형제와 어긋나지 않게).
     """
-    if resolve_payment_mode(settings) != "toss":
+    # ★단일값이 아니라 **목록**으로 판정한다 — 무통장입금이 우선순위 앞에 와도
+    #   카드 경로가 죽으면 안 된다(병존의 핵심).
+    if "toss" not in resolve_payment_methods(settings):
         raise HTTPException(status_code=501, detail="카드 결제가 설정되지 않았습니다.")
     oid = _valid_uuid_or_404(req.order_id)
     await _require_active_user(db, current)
@@ -669,7 +756,9 @@ async def refund_my_order(
     이미 쓴 코인은 환불하지 않는다(없는 것을 돌려줄 수 없다). 그 경우 사유와 함께
     거절하고 고객센터로 안내한다 — 조용히 적게 환불하면 사용자가 모른다.
     """
-    if resolve_payment_mode(settings) != "toss":
+    # ★단일값이 아니라 **목록**으로 판정한다 — 무통장입금이 우선순위 앞에 와도
+    #   카드 경로가 죽으면 안 된다(병존의 핵심).
+    if "toss" not in resolve_payment_methods(settings):
         raise HTTPException(status_code=501, detail="카드 결제가 설정되지 않았습니다.")
     oid = _valid_uuid_or_404(order_id)
     await _require_active_user(db, current)
@@ -760,10 +849,16 @@ async def admin_payment_health(
     await _require_super_admin(db, current)
     cfg = toss_payments.config_status()
     warnings: list[str] = []
-    if cfg["configured"] and not cfg["key_pairing_ok"]:
-        warnings.append(
-            "★클라이언트 키와 시크릿 키가 다른 환경(테스트/라이브)입니다 — 결제가 거절됩니다."
-        )
+    # ★진단을 **`warnings` 에 실어 보낸다** — 화면은 `warnings` 만 렌더한다
+    #   (`PaymentAdminPanel.tsx:226`). 새 필드를 만들어 두고 화면이 안 읽으면 그것은
+    #   소비처 0이고, 관리자는 여전히 못 고친다.
+    # ★종전 문구는 이제 **거짓말이 된다**: `key_pairing_ok=false` 의 사유가 환경 혼용
+    #   하나가 아니기 때문이다(역할 뒤바뀜·계열 불일치·형식 오류). 「계열이 틀렸다」를
+    #   *"테스트/라이브가 다릅니다"* 로 안내하면 소유자를 **틀린 곳으로 보낸다** —
+    #   그 사람은 test/live 만 계속 확인하게 된다.
+    diag = cfg["key_diagnosis"]
+    if cfg["configured"] and not diag["ok"]:
+        warnings.append(f"★{diag['message']} → {diag['action']}")
     if cfg["configured"] and cfg["test_mode"]:
         warnings.append("★테스트 키를 사용 중입니다 — 실제 결제가 일어나지 않습니다.")
     if settings.billing_simulated_payments:
@@ -775,8 +870,16 @@ async def admin_payment_health(
         warnings.append(
             "결제 키가 설정되지 않았습니다. 관리자 > API 키 > 「결제(PG)」에서 등록하세요."
         )
+    # ★무통장입금도 **같은 화면**이 진단한다 — 두 수단을 두 화면에서 보면 하나를 잊는다.
+    bank_diag = bank_transfer.diagnosis()
+    if bank_diag["code"] == "incomplete":
+        # 부분 설정은 **장애**다: 그 상태로 안내하면 사용자가 엉뚱한 곳에 송금한다.
+        warnings.append(f"★{bank_diag['message']} → {bank_diag['action']} "
+                        f"({' · '.join(bank_diag['problems'])})")
     return {
         **cfg,
+        "bank_transfer": bank_diag,
+        "payment_methods": resolve_payment_methods(settings),
         "payment_mode": resolve_payment_mode(settings),
         "simulated_payments_enabled": bool(settings.billing_simulated_payments),
         "warnings": warnings,
@@ -800,6 +903,9 @@ async def admin_revenue(
         "top_payers": await revenue_service.top_payers(db, days=d),
         # ★관리자가 환불을 집행하는 목록. 이게 없으면 관리자 환불 API 는 도달 불가다.
         "recent_orders": await revenue_service.recent_orders(db, days=d),
+        # ★무통장입금 **입금 확인 대기** — 혼재 목록에 섞으면 유료 주문에 밀려 사라진다.
+        #   관리자가 안 누르면 사용자 돈은 들어왔는데 코인이 안 나간다.
+        "awaiting_deposit": await revenue_service.awaiting_deposit(db, days=d),
         # ★매출과 **같은 응답**에 미해결 건을 싣는다 — 따로 두면 아무도 안 본다.
         "unresolved": await payment_receipts.list_unresolved(db, limit=50),
     }
