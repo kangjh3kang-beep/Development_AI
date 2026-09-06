@@ -14,8 +14,11 @@
  *   **값이 없으면 키를 만들지 않는다** — 키가 생기는 순간 계산 경로가 바뀌기 때문이다.
  */
 
-/** 1평 = 3.3058㎡. ★이 리터럴은 이 파일에만 있어야 한다(락이 전수로 감시). */
-const SQM_PER_PYEONG = 3.3058;
+// ★★**두 벌이었다.** 여기 `3.3058` 을 새로 두었는데 `formatters.PYEONG_SQM` 에
+//   **`3.305785`** 가 이미 있었다. 그리고 내 SSOT 락이 **`3.3058` 리터럴만** 감시해
+//   다른 표기의 정본을 **못 봤다** — *«목록은 곧 상한»* 이 상수 표기에도 적용된다.
+//   → 정본을 재사용한다. 이 파일에는 이제 그 리터럴이 없다.
+import { PYEONG_SQM as SQM_PER_PYEONG } from "@/lib/formatters";
 
 /** 평당(원/평) → ㎡당(원/㎡). **유일한 변환 지점.** */
 export function perPyeongToPerSqm(perPyeong: number): number {
@@ -34,7 +37,21 @@ export interface ConstructionCostInputs {
   unit_cost_per_pyeong?: number | null;
   /** 총공사비 직접입력(원). 주면 위 산출을 **전부 대체**한다. */
   construction_cost_override_won?: number | null;
+  /** ★기타경비 항목별 직접입력. **키를 안 만들면** 백엔드가 그 항목 몫의 표준분을 남긴다. */
+  marketing_cost_won?: number | null;
+  management_cost_won?: number | null;
+  reserve_cost_won?: number | null;
+  /** ★토지비 직접입력(총액·원). 공사비 override 와 **축이 다르다** — 함께 실린다. */
+  land_cost_override_won?: number | null;
 }
+
+/** 기타경비 항목 — 백엔드 `_OTHER_ITEM_SHARE` 의 키와 **같아야** 한다(락이 대조). */
+const OTHER_COST_KEYS = [
+  "marketing_cost_won", "management_cost_won", "reserve_cost_won",
+] as const;
+
+/** ★공사비 override 와 **동시에** 실려야 하는 축들 — 조기 return 이 삼키면 안 된다. */
+const INDEPENDENT_KEYS = [...OTHER_COST_KEYS, "land_cost_override_won"] as const;
 
 const pos = (v: unknown): number | null => {
   const n = typeof v === "number" ? v : Number(v);
@@ -58,6 +75,10 @@ export function buildConstructionParams(
     // 직접입력이 있으면 **그것만** 보낸다 — 산출 축을 같이 보내면 어느 것이 쓰였는지
     // 사후에 못 가른다(백엔드는 override 를 먼저 보고 즉시 반환한다).
     out.construction_cost_override_won = override;
+    for (const k of INDEPENDENT_KEYS) {
+      const v = pos(inp[k]);
+      if (v != null) out[k] = Math.round(v);   // ★축이 달라 함께 보낸다
+    }
     return out;
   }
 
@@ -71,6 +92,13 @@ export function buildConstructionParams(
 
   const perPyeong = pos(inp.unit_cost_per_pyeong);
   if (perPyeong != null) out.unit_cost_per_sqm = perPyeongToPerSqm(perPyeong);
+
+  // ★기타경비는 **직접입력(override)이 있어도 함께** 보낸다 — 공사비 override 는
+  //   공사비 산출만 대체하고 기타경비와는 축이 다르다.
+  for (const k of INDEPENDENT_KEYS) {
+    const v = pos(inp[k]);
+    if (v != null) out[k] = Math.round(v);
+  }
 
   return out;
 }
