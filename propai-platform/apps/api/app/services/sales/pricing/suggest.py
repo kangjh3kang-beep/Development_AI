@@ -433,6 +433,17 @@ async def suggest_base_price(
         ev_block = {"evidence": [], "legal_refs": [], "provenance": [], "trust": None}
 
     # ── 청약홈 주변 분양가 참고·교차검증(★앵커 아님 — 가격 tiers 무변경). 과대표시 방지 위해 '참고'로만. ──
+    # ★★**위험은 양방향이다**(2026-09-06 실측으로 추가). 종전 주석은 «과대표시 방지» 만
+    #   적었는데, **과소표시 위험이 실재하고 더 컸다**:
+    #       남양주 화도읍 마석우리 · 공급 평당(만원)
+    #         실거래 앵커      1,200
+    #         분양권 전매      1,827
+    #         실제 분양(관측)  1,804   → 종전 앵커는 **-33.5%**
+    #   사용자가 «주변 신축 분양이 평당 2,000에 육박하는데 왜 1,200인가» 로 신고했다.
+    #   ★**과대를 막으려다 과소를 만들었다** — §D-19(경계는 양방향)의 다른 얼굴이다.
+    #   ★현재 조치: **site 미연결 경로(2순위)** 는 분양권 전매를 앵커로 삼아 오차 1.3%.
+    #     이 경로(site 연결)의 앵커 변경은 **도메인·사업 결정**이라 보류하고
+    #     `tests/test_presale_anchor_ledger.py` 가 부채로 드러낸다.
     nearby_presale = await _nearby_presale_reference(sigungu5)
     if nearby_presale.get("available") and nearby_presale.get("price_range_man"):
         pr = nearby_presale["price_range_man"]
