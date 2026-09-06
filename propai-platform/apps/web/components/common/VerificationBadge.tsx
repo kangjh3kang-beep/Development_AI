@@ -53,6 +53,7 @@ export function VerificationBadge({
   context,
   autoRun = true,
   ledgerHash,
+  output,
 }: {
   analysisType: string;
   context: Record<string, unknown> | null;
@@ -62,8 +63,15 @@ export function VerificationBadge({
    * 있으면 피드백 조인키로 그대로 전달, 없으면 content_hash 자체를 보내지 않는다.
    */
   ledgerHash?: string;
+  /** ★LLM 산출을 **생산자가 선언**한다. 주면 키 이름으로 추측하지 않는다.
+   *  왜: 아래 폴백은 손목록 12키라 목록 밖 서술(`valuation_narrative` 등)을
+   *  `source` 로 오분류하고, 아무것도 안 걸리면 `source === output` 이 되어
+   *  **검증기가 분석을 자기 자신과 대조**한다(2026-09-05 실측: desk_appraisal 30키 중 0개). */
+  output?: Record<string, unknown>;
 }) {
   const [loading, setLoading] = useState(false);
+  // ★판정 불가(=LLM 산출을 특정할 수 없음). 점수 대신 그 사실을 표시한다.
+  const [undecidable, setUndecidable] = useState(false);
   const [result, setResult] = useState<VerifyResult | null>(null);
   const [open, setOpen] = useState(false);
 
@@ -97,12 +105,17 @@ export function VerificationBadge({
         if (LLM_OUTPUT_KEYS.has(k) || k.endsWith("_interpretation")) out[k] = v;
         else src[k] = v;
       }
-      const hasSplit = Object.keys(out).length > 0 && Object.keys(src).length > 0;
+      const declared = output && Object.keys(output).length > 0;
+      const hasSplit = declared || (Object.keys(out).length > 0 && Object.keys(src).length > 0);
+      // ★못 재면 판정하지 않는다 — source===output 으로 부르면 「원본 근거 충실도」가
+      //   구조적으로 공허해지고, 그 수가 화면에 「근거 N%」로 나간다.
+      if (!hasSplit) { setUndecidable(true); return; }
+      setUndecidable(false);
       const r = await apiClient.post<VerifyResult>("/verify/analysis", {
         body: {
           analysis_type: analysisType,
-          source: hasSplit ? src : context,
-          output: hasSplit ? out : context,
+          source: declared ? context : src,
+          output: declared ? output! : out,
         },
         useMock: false, timeoutMs: 80000,
       });
@@ -113,7 +126,7 @@ export function VerificationBadge({
     } finally {
       setLoading(false);
     }
-  }, [analysisType, context, cacheKey]);
+  }, [analysisType, context, cacheKey, output]);
 
   // 자동 실행(캐시 우선)
   useEffect(() => {
@@ -144,11 +157,22 @@ export function VerificationBadge({
             <ShieldCheck className="size-3.5" aria-hidden /> AI 검증 <span className="font-normal text-[var(--text-hint)]">(데이터 오류 감지·계산 재검증·규칙 검사)</span>
           </span>
           {loading && <span className="text-[11px] text-[var(--text-hint)]">검증 중…</span>}
-          {meta && (
+          {/* ★판정 불가 — 검증 대상(AI 서술)을 특정할 수 없으면 **수를 보여 주지 않는다**.
+              자기대조 결과를 「근거 N%」로 내보내면 그 수는 구조적으로 공허하다. */}
+          {undecidable && !loading && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--line)] px-2 py-0.5 text-[11px] font-bold text-[var(--text-hint)]"
+              title="이 분석에는 검증할 AI 서술이 따로 없어 근거 대조를 수행하지 않았습니다(계산 결과를 자기 자신과 대조하지 않습니다)."
+              data-testid="verify-undecidable"
+            >
+              AI 서술 없음 · 판정 안 함
+            </span>
+          )}
+          {meta && !undecidable && (
             <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${meta.cls}`}>
               <meta.icon className="size-3.5" aria-hidden /> {meta.label}
               {(result?.issues?.length ?? 0) > 0 && ` · ${result!.issues.length}건`}
-              {result?.grounded_score != null && ` · 근거 ${result.grounded_score}%`}
+              {result?.grounded_score != null && ` · AI 서술의 원본 근거 ${result.grounded_score}%`}
               {(result?.calc_checks?.length ?? 0) > 0 &&
                 ` · 계산 ${result!.calc_checks!.filter((c) => c.ok).length}/${result!.calc_checks!.length}`}
             </span>
