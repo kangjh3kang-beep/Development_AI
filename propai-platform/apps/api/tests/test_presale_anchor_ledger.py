@@ -138,13 +138,34 @@ def test_신축_축이_집계기에_실재하고_경계가_10년이다() -> None
         f"신축 경계가 {_RECENT_BUILD_YEARS}년으로 바뀌었다 — 실측(10↔11년 사이 급락)을 "
         "다시 확인하고 근거를 갱신하라")
     src = _SUGGEST.read_text(encoding="utf-8")
-    # ★★`"recent_dong"` 은 **주석에도** 있어 키를 지워도 통과했다(변이 SURVIVED).
-    #   → **반환 dict 조립 블록**으로 모집단을 좁힌다.
-    ret_at = src.find('"recent_dong"', src.find('result: dict[str, Any] = {'))
-    assert ret_at > 0, "신축 축이 **반환 dict** 에 없다 — 소비처가 못 읽는다"
-    ret_block = src[src.find('result: dict[str, Any] = {'):ret_at + 400]
+    # ★★소스 문자열로 두 번 잠갔는데 두 번 다 뚫렸다(주석에도 같은 낱말이 있어서).
+    #   *«소스 검사는 주석에 뚫린다»* — 이 저장소가 명문으로 적어 둔 그것이다.
+    #   → **행위로** 잠근다: 집계기를 실제로 돌려 **반환 키를 본다.**
+    import asyncio
+
+    from app.services.sales.pricing.suggest import _trade_per_pyeong
+
+    class _Stub:
+        async def get_transactions(self, *a, **k):
+            return []
+
+    import app.services.sales.pricing.suggest as _sug
+    orig = None
+    try:
+        from apps.api.integrations import molit_client as _mc
+        orig = _mc.MolitClient
+        _mc.MolitClient = lambda *a, **k: _Stub()  # type: ignore[assignment]
+        out = asyncio.run(_trade_per_pyeong("41360", "마석우리", "apt"))
+    finally:
+        if orig is not None:
+            _mc.MolitClient = orig  # type: ignore[assignment]
+
     for k in ("recent_dong", "recent_sigungu", "recent_build_years"):
-        assert f'"{k}"' in ret_block, f"신축 축 `{k}` 이 **반환값에서** 사라졌다"
+        assert k in out, f"신축 축 `{k}` 이 **반환값에 없다** — 소비처가 못 읽는다: {sorted(out)}"
+    # ★기존 키도 살아 있다(무회귀)
+    for k in ("dong", "sigungu"):
+        assert k in out, f"기존 축 `{k}` 이 사라졌다"
+    assert out["recent_build_years"] == _sug._RECENT_BUILD_YEARS
     # ★기존 키는 살아 있다(무회귀 — 소비처가 깨지면 안 된다)
     for k in ("dong", "sigungu"):
         assert f'"{k}":' in src, f"기존 축 `{k}` 이 사라졌다"
