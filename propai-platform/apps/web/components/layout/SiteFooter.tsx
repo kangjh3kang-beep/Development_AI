@@ -112,11 +112,13 @@ export function SiteFooter({ locale, compact = false }: SiteFooterProps) {
               개인정보처리방침
             </Link>
           </p>
-          <p className="mt-2 text-[var(--text-hint)]">
-            &copy; 2026 {b.companyName}. All rights reserved.
-          </p>
         </div>
       </div>
+      {/* ★저작권 표기는 **법정 사업자 표기가 아니다** — 같은 상호 문자열을 쓰지만 목적이 다르다.
+          표기 영역 안에 두면 이 줄이 사업자 표기의 상호 삭제를 가린다(변이로 실증). */}
+      <p className="mx-auto max-w-6xl mt-4 text-xs text-[var(--text-hint)]">
+        &copy; 2026 {b.companyName}. All rights reserved.
+      </p>
     </footer>
   );
 }
