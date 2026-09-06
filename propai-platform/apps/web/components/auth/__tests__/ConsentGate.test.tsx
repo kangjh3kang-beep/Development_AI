@@ -35,6 +35,19 @@ describe("ConsentGate", () => {
     expect(screen.queryByText(CHILD)).toBeNull();
   });
 
+  it("★조회가 끝나기 전에는 본문을 노출하지 않는다", () => {
+    // ★유일하게 가르는 입력 — **끝나지 않는** 조회. 이미 끝난 조회로는
+    //   findBy* 가 기다려 주기 때문에 「모르는 동안 통과」를 볼 수 없다(변이 SURVIVED 로 실증).
+    vi.mocked(apiClient.get).mockReturnValue(new Promise(() => {}) as never);
+    render(
+      <ConsentGate locale="ko" pathname="/ko/projects" authed>
+        <div>{CHILD}</div>
+      </ConsentGate>,
+    );
+    expect(screen.queryByText(CHILD)).toBeNull();
+    expect(screen.queryByTestId("consent-gate")).toBeNull();
+  });
+
   it("★동의 완료면 본문을 그대로 보인다(과잉 차단 방지)", async () => {
     vi.mocked(apiClient.get).mockResolvedValue({ consent_pending: false });
     render(

@@ -107,7 +107,13 @@ export function ConsentGate({
     };
   }, [exempt, pathname]);
 
-  if (exempt || pending !== true) return <>{children}</>;
+  if (exempt) return <>{children}</>;
+  // ★아직 모르는 동안(null)은 **본문을 내지 않는다.** `pending !== true` 로 쓰면
+  //   null 이 false 와 같이 취급돼 조회가 끝나기 전에 보호 자원이 잠깐 노출된다
+  //   (2026-09-06 변이로 실증: 초기값을 false 로 바꾸는 변이가 SURVIVED 했다 —
+  //    테스트가 findBy* 로 **기다려 줘서** 그 순간을 못 봤다).
+  if (pending === null) return null;
+  if (pending === false) return <>{children}</>;
 
   async function submit() {
     setError(null);
