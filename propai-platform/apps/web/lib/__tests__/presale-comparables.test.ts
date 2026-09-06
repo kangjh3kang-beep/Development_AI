@@ -100,7 +100,9 @@ describe("배선 — 수지 폼이 실제로 쓰는가", () => {
     expect(block, "onPick 이 avg_sale_price_per_pyeong 을 안 바꾼다")
       .toContain("avg_sale_price_per_pyeong: won");
     // ③ ★근거를 남긴다
-    expect(code, "어느 사례에서 온 값인지 화면에 안 남는다").toContain("picked-basis");
+    // ★부분 문자열로 잠그면 `picked-basis-x` 같은 변형이 통과한다(실측 SURVIVED).
+    //   **경계를 건다** — 따옴표까지 포함해 정확한 testid 를 요구한다.
+    expect(code, "어느 사례에서 온 값인지 화면에 안 남는다").toContain('"picked-basis"');
     // ④ ★라벨이 **면적 기준**을 말한다(전용/공급 혼동이 이번 신고의 절반)
     expect(code, "분양가 라벨이 공급 기준임을 말하지 않는다").toContain("평당 분양가(공급)");
   });
