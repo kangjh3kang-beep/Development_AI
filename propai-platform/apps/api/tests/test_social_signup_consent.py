@@ -210,3 +210,42 @@ class TestBackfillIsNotAutoApplied:
         src = p.read_text(encoding="utf-8")
         assert "BACKFILL_SQL" in src
         assert "사용자 승인" in src
+
+
+class TestAppActuallyBoots:
+    """★「테스트가 통과한다」와 「앱이 뜬다」는 다른 축이다.
+
+    2026-09-06 실측: `POST /me/consents` 에 `-> None` 을 붙였더니 이 파일의
+    `from __future__ import annotations` 때문에 그것이 **문자열 "None"** 이 되고,
+    FastAPI 가 response_model 로 읽어 `Status code 204 must not have a response body`
+    로 **앱 기동 자체가 실패**했다 — CI 가 9 failed · **295 errors**(전 스위트 오염).
+    내 단위 테스트는 앱을 안 띄우므로 **전부 초록이었다.**
+
+    ★그리고 다른 파일의 형제(`-> None`)를 보고 맞춘 것이 오판이었다 —
+      **같은 파일의 형제** `/account/withdraw` 가 이미 `Response(status_code=204)` 였다(§29).
+    """
+
+    def test_앱이_뜨고_동의_라우트가_204로_등록된다(self):
+        from apps.api.main import app
+
+        # ★대조군 — 라우트가 아예 없으면 「204 위반 0건」은 공허하다
+        posts = [
+            r
+            for r in app.routes
+            if getattr(r, "path", "").endswith("/auth/me/consents")
+            and "POST" in (getattr(r, "methods", None) or set())
+        ]
+        assert posts, "POST /auth/me/consents 라우트가 없다 — 판정 불가"
+        for r in posts:
+            assert r.status_code == 204, f"{r.path} status={r.status_code}"
+
+    def test_204_라우트는_응답모델을_갖지_않는다(self):
+        """★이것이 기동을 깨뜨린 실제 조건이다 — 상태코드가 아니라 response_model."""
+        from apps.api.main import app
+
+        bad = [
+            (r.path, r.status_code)
+            for r in app.routes
+            if getattr(r, "status_code", None) == 204 and getattr(r, "response_model", None)
+        ]
+        assert bad == [], f"204 인데 response_model 을 가진 라우트: {bad}"

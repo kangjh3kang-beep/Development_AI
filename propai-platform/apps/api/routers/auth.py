@@ -637,7 +637,13 @@ async def submit_consent(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> None:
+):
+    # ★반환 애노테이션을 쓰지 않는다 — 이 파일은 `from __future__ import annotations` 라
+    #   `-> None` 이 **문자열** "None" 이 되고, FastAPI 가 그것을 response_model 로 읽어
+    #   `Status code 204 must not have a response body` 로 **앱 기동 자체가 실패**한다.
+    #   2026-09-06 실측: CI Backend 가 9 failed · 295 errors(앱이 안 뜨니 전 스위트 오염).
+    #   ★같은 파일의 형제 `/account/withdraw` 가 이미 `Response(status_code=204)` 를
+    #     반환하고 있었다 — 다른 파일의 형제(`-> None`)를 보고 맞춘 것이 오판이었다(§29).
     """동의 미완 사용자의 약관 동의를 기록하고 플래그를 내린다(소셜·이메일 공통).
 
     ★필수 동의를 거부하면 기록하지 않고 거부한다 — 「동의했다」가 아니면 통과시킬 수 없다.
@@ -650,7 +656,7 @@ async def submit_consent(
             detail="이용약관과 개인정보처리방침에 동의해야 서비스를 이용할 수 있습니다.",
         )
     if not getattr(user, "consent_pending", False):
-        return None  # 멱등 — 이미 처리됐다
+        return Response(status_code=status.HTTP_204_NO_CONTENT)  # 멱등 — 이미 처리됐다
 
     for row in build_consent_rows(
         user_id=user.id,
@@ -663,7 +669,7 @@ async def submit_consent(
         db.add(row)
     user.consent_pending = False
     await db.commit()
-    return None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/me/consents")
