@@ -121,11 +121,11 @@ function resolveErrorMessage(error: unknown, fallback: string): string {
 
 export function CoinsClient({ locale }: { locale: Locale }) {
   const [packages, setPackages] = useState<PackagesResponse | null>(null);
-  // ★결제 경로(simulated=데모 self-confirm 가능 / manual_only=관리자 확정만). 프로덕션에서
-  //   100% 실패하는 '결제 완료 처리' 버튼을 감추기 위한 게이트(성장루프 MEDIUM 수렴).
-  const [paymentMode, setPaymentMode] = useState<string>("manual_only");
-  // ★병존 — 카드와 무통장입금을 **함께** 제시한다. `paymentMode` 는 이 목록의 첫 항목이라
-  //   두 값이 갈릴 수 없다(서버가 그렇게 파생시킨다).
+  // ★결제 경로는 **목록 하나**로만 들고 있는다.
+  //   종전에는 `paymentMode`(단일 문자열) 상태도 함께 뒀는데, 소비처를 전부 목록 파생으로
+  //   옮기고 나니 **아무도 안 읽는 죽은 값**이 됐다(CI 린트 래칫이 `0 → 1` 로 잡았다).
+  //   상태를 남겨 두면 다음 사람이 그것을 읽고 **목록과 갈린 판정**을 하게 된다 —
+  //   이 저장소가 반복해 데인 「두 출처」 형태다.
   const [paymentMethods, setPaymentMethods] = useState<string[]>([]);
   const [bankConfig, setBankConfig] = useState<BankTransferConfig | null>(null);
   // 실제 입금자명 — 비우면 서버가 **가입자명**을 쓴다(종전 동작).
@@ -205,7 +205,6 @@ export function CoinsClient({ locale }: { locale: Locale }) {
       .then((c) => {
         setTossConfig(c);
         // ★단일 출처 — 설정 응답의 payment_mode 를 그대로 쓴다(별도 판정 금지).
-        if (c?.payment_mode) setPaymentMode(c.payment_mode);
         setPaymentMethods(methodsFromResponse(c?.payment_mode, c?.payment_methods));
       })
       .catch(() => {
@@ -218,7 +217,6 @@ export function CoinsClient({ locale }: { locale: Locale }) {
       )
       .then((p) => {
         setPackages(p);
-        if (p?.payment_mode) setPaymentMode(p.payment_mode);
         setPaymentMethods(methodsFromResponse(p?.payment_mode, p?.payment_methods));
         setPackagesError(false);
       })
@@ -253,7 +251,6 @@ export function CoinsClient({ locale }: { locale: Locale }) {
       );
       // ★안내문과 '결제 완료 처리' 버튼 게이트를 동일 출처(주문 응답 payment_mode)로 통일 —
       //   packages 조회가 실패해도 안내와 버튼 노출이 어긋나지 않게 한다(성장루프 LOW 수렴).
-      if (order.payment_mode) setPaymentMode(order.payment_mode);
       setPaymentMethods(
         methodsFromResponse(
           order.payment_mode,

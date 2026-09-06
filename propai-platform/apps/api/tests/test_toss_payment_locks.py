@@ -1241,7 +1241,7 @@ async def test_full_cancel_still_claws_back_everything(
     out = await _tos.reconcile_order(db, order_id=_reconcile_row()["id"], actor_id="admin")
 
     assert out["action"] == "clawed_back"
-    claw_params = [p for s, p in zip(db.sql, db.params) if "WITH prev AS" in s]
+    claw_params = [p for s, p in zip(db.sql, db.params, strict=True) if "WITH prev AS" in s]
     assert claw_params and claw_params[0]["a"] == 10_000.0, "전액이 환수 대상이어야 한다"
     assert ledger and ledger[0]["amount_krw"] == -10_000.0
 
@@ -1295,7 +1295,7 @@ async def test_partial_clawback_takes_only_the_difference(
 
     assert out["action"] == "clawed_back"
     assert out["clawed_back_krw"] == 3_000.0
-    claw_params = [p for s, p in zip(db.sql, db.params) if "WITH prev AS" in s]
+    claw_params = [p for s, p in zip(db.sql, db.params, strict=True) if "WITH prev AS" in s]
     assert claw_params[0]["a"] == 3_000.0, "환수액이 차이가 아니라 전액이다"
 
 
@@ -1538,7 +1538,6 @@ async def test_reconcile_grants_when_vendor_amount_matches(
 
     이쪽이 없으면 "전부 거절"이 만점을 받고 「돈만 낸 상태」 복구가 죽는다.
     """
-    _reconcile_env
     _stub_vendor(
         monkeypatch,
         {"status": "DONE", "paymentKey": "pk_live_1", "totalAmount": 10_000},
