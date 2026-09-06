@@ -119,6 +119,67 @@ def _suspects() -> tuple[list[tuple[str, str, str, int]], int]:
     return out, scanned
 
 
+class TestKnownBlindSpot:
+    """★이 락이 **못 보는 것**의 크기를 재 둔다 — 「모른다」를 「없다」로 두지 않는다."""
+
+    def test_동적_속성명은_보지_못한다(self):
+        """`getattr(current_user, name_var)` 처럼 **변수**로 넘기면 상수 검사가 못 본다.
+
+        ★2026-09-06 실측: 상수명 **17건** · 동적명 **0건**.
+          17건은 전부 CurrentUser 실재 필드라 위반이 아니다(= 조회기도 살아 있다).
+          동적명이 0이므로 **지금은 사각지대에 아무것도 없다.**
+          이 수가 0을 벗어나면 그때 락을 넓힌다 — 미리 넓히면 위양성만 는다.
+        """
+        import ast
+
+        fields = _current_user_fields()
+        const = dyn = 0
+        for p in _files():
+            try:
+                tree = ast.parse(p.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            if not any(
+                isinstance(n, ast.ImportFrom)
+                and n.module
+                and "jwt_handler" in n.module
+                and any(a.name == "get_current_user" for a in n.names)
+                for n in ast.walk(tree)
+            ):
+                continue
+            for fn in [
+                n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            ]:
+                names: set[str] = set()
+                defaults = fn.args.defaults
+                if defaults:
+                    for arg, default in zip(fn.args.args[-len(defaults) :], defaults, strict=True):
+                        if (
+                            isinstance(default, ast.Call)
+                            and getattr(default.func, "id", "") == "Depends"
+                            and default.args
+                            and getattr(default.args[0], "id", "") == "get_current_user"
+                        ):
+                            names.add(arg.arg)
+                for n in ast.walk(fn):
+                    if (
+                        isinstance(n, ast.Call)
+                        and isinstance(n.func, ast.Name)
+                        and n.func.id == "getattr"
+                        and n.args
+                        and isinstance(n.args[0], ast.Name)
+                        and n.args[0].id in names
+                    ):
+                        if len(n.args) >= 2 and isinstance(n.args[1], ast.Constant):
+                            const += 1
+                        else:
+                            dyn += 1
+        # ★대조군 — 상수명이 0이면 이 계수기 자체가 죽은 것이다
+        assert const >= 5, f"getattr 상수명 {const}건 — 계수기 사망 의심"
+        assert dyn == 0, f"★동적 속성명 {dyn}건 — 이 락의 사각지대다. 락을 넓혀라"
+        assert fields, "필드 목록이 비었다"
+
+
 class TestCurrentUserAttributeContract:
     def test_모집단이_실재한다(self):
         """★공허 진리 가드 — 주사한 파일이 0이면 「위반 0」은 조회기 사망이다."""
