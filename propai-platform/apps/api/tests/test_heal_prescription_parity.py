@@ -101,7 +101,7 @@ def _eval_strings(expr: ast.AST, env: dict[str, bool], funcs: dict) -> set[str]:
         if fn is not None:
             # 인자를 파라미터 이름에 **진리값으로** 묶어 함수 몸통을 같은 env 로 편다.
             inner = dict(env)
-            for param, arg in zip(fn.args.args, expr.args):
+            for param, arg in zip(fn.args.args, expr.args, strict=False):
                 inner[param.arg] = _truth(arg, env)  # type: ignore[assignment]
             out = set()
             for n in ast.walk(fn):
@@ -127,7 +127,7 @@ def _heal_emitting_types() -> tuple[set[str], int]:
         if not isinstance(node, ast.Dict):
             continue
         keyed: dict[str, ast.AST] = {}
-        for k, v in zip(node.keys, node.values):
+        for k, v in zip(node.keys, node.values, strict=True):
             if isinstance(k, ast.Constant) and isinstance(k.value, str):
                 keyed[k.value] = v
         if "insight_type" not in keyed or "recommended_action" not in keyed:
