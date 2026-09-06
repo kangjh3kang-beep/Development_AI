@@ -19,8 +19,6 @@
 """
 from __future__ import annotations
 
-import pytest
-
 from app.services.feasibility.construction_cost_engine import (
     DEFAULT_INDIRECT_RATIOS,
     calculate_total_construction_cost,
@@ -111,36 +109,60 @@ def test_폴백비율_0_04_는_두_번째_표준이_아니다() -> None:
         "폴백을 적용하면서 사유를 안 싣는다 — 사용자가 왜 다른 수인지 알 수 없다")
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "★부채 — **설계·감리·예비비가 두 자리에서 계상된다.** 공사비 간접비(design 0.04 · "
-    "supervision 0.03 · contingency 0.05, 직접공사비 대비)와 소프트비 7% 가 **가산**되고, "
-    "실측(M01)상 공사비 안 중복 후보 2,304,000,000원(총사업비 6.7%)이 소프트비 "
-    "2,010,456,000원(5.9%)보다 **크다**. 주석은 정정했으나 **값은 그대로다** — "
-    "7% 를 낮추면 **모든 프로젝트의 총사업비가 움직이므로** 어느 쪽이 정본인지는 "
-    "도메인·사업 결정이고 사용자 판단 영역이다. "
-    "★선택지를 수치로 재 뒀다(M01 기본 입력 · 총사업비 34,262,392,053원 기준): "
-    "A)현행 7% = 0.0% · B)설계·감리·예비비 제외 4% = **-2.5%** · "
-    "C)분양대행+금융수수료만 3% = **-3.4%** · D)공사비 쪽에서 그 셋을 뺀다 = **-6.7%**. "
-    "★B~D 는 전부 총사업비를 낮춰 **ROI 를 높인다(낙관 방향)** — 그래서 더 신중해야 한다. "
-    "결정이 내려지면 이 표식이 자연히 풀린다."))
-def test_debt_소프트비와_공사비_간접비가_겹치지_않는다() -> None:
-    """부채: 두 표준이 같은 항목을 세지 않는가 — **지금은 센다.**"""
-    r = calculate_total_construction_cost(
-        total_gfa_sqm=20000.0, building_type="apartment", total_households=200)
-    ind = r["indirect"]
-    overlap = sum(ind.get(f"{k}_won", 0) for k in _OVERLAP_KEYS)
+def test_경계가_결정됐다_공사비는_설계_감리_예비비_소프트비는_사업경비() -> None:
+    """★★**사용자 결정(2026-09-06): A — 현행 유지.** 부채가 아니라 **결정**이다.
 
+    ## 무엇이 결정됐나
+
+    두 자리가 **같은 항목을 세는 것이 아니라, 다른 항목을 센다**는 것으로 경계를 확정했다:
+
+        공사비 간접비  = 설계비 · 감리비 · 예비비(설계변경) · 일반관리비   ← 정본
+        소프트비 7%    = 분양대행 · 광고 · 금융수수료 · 제세공과 등 사업경비 ← 정본
+
+    ★종전 주석이 *«설계·감리·분양대행·금융수수료·예비비 통칭»* 이라 **양쪽을 다 주장**해서
+      이중계상처럼 보였다. **거짓은 계산이 아니라 주석이었다.**
+
+    ## 왜 값을 안 바꿨나 (기각한 대안과 그 근거)
+
+    | 안 | 총사업비 | 기각 사유 |
+    |---|---|---|
+    | B) 소프트비 4% | -2.5% | 소프트비가 덮는 것이 실제로 줄지 않는데 값만 깎는 것 |
+    | C) 소프트비 3% | -3.4% | 위와 같음 |
+    | D) 공사비에서 그 셋 제거 | -6.7% | ★**적산 보고서·API 가 그 셋을 읽는다** — 제거하면 |
+    |   |   | 「설계비·감리비·예비비」 행이 **0원**이 된다(실측: |
+    |   |   | `report/render/cost_estimation_adapter.py:127-129` · |
+    |   |   | `routers/cost.py:216-217`). **적산은 수지와 다른 질문에 답한다.** |
+
+    ★B~D 는 전부 총사업비를 낮춰 **ROI 를 높인다(낙관 방향)** — 근거 없이 채택하면 위험하다.
+
+    ## 이 테스트가 지키는 것
+
+    **경계가 흐려지면 빨개진다.** 어느 한쪽이 상대의 항목을 자기 것이라 주장하면 실패한다.
+    """
+    # ── 공사비 쪽 정본: 그 셋을 담는다(위 test_공사비가_… 가 금액까지 태운다)
+    for k in _OVERLAP_KEYS:
+        assert k in DEFAULT_INDIRECT_RATIOS, f"공사비 정본에서 `{k}` 가 사라졌다 — 경계가 무너졌다"
+
+    # ── 소프트비 쪽 정본: **사업경비**만 주장한다
     inp = _Inp()
     _, other = apply_auto_estimates(
         inp, {"total_land_cost_won": 50_000_000_000},
-        {"total_construction_cost_won": r["total_construction_cost_won"]},
+        {"total_construction_cost_won": 60_000_000_000},
         {"total_finance_cost_won": 0}, compute_other_cost(inp))
-    soft = float(other["total_other_cost_won"])
+    basis = other["estimate_basis"]
+    assert "사업경비" in basis, f"소프트비가 자기 영역을 말하지 않는다: {basis}"
+    for theirs in ("설계", "감리", "예비비"):
+        assert theirs not in basis, (
+            f"소프트비가 공사비 정본의 항목 `{theirs}` 를 주장한다 — 경계가 흐려졌다: {basis}")
 
-    # ★겹치지 않는다면 «소프트비가 공사비 중복 후보보다 충분히 작거나, 경계가 명시»되어야 한다.
-    #   지금은 둘 다 아니다 — 소프트비가 통칭이라 경계가 없고, 규모도 비슷하다.
-    assert overlap == 0 or soft == 0, (
-        f"두 자리가 같은 항목을 센다: 공사비 안 {overlap:,.0f}원 · 소프트비 {soft:,.0f}원")
+    # ── ★적산 소비처가 살아 있다(D 를 기각한 이유가 여전히 유효한가)
+    import pathlib as _pl
+    adapter = (_pl.Path(__file__).resolve().parents[1]
+               / "app/services/report/render/cost_estimation_adapter.py").read_text(encoding="utf-8")
+    for label in ("설계비", "감리비", "예비비"):
+        assert label in adapter, (
+            f"적산 보고서가 `{label}` 를 더는 인쇄하지 않는다 — D 기각 근거가 바뀌었으니 "
+            "경계 결정을 다시 하라")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
