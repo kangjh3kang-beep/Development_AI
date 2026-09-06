@@ -369,13 +369,35 @@ async def _presale_signal_per_pyeong(address: str) -> dict[str, Any]:
     try:
         from app.services.land_intelligence.presale_service import PresaleService
 
+        # ★★★**좌표가 없으면 `nearby` 는 거리필터를 적용하지 않는다** — 그 함수가
+        #   *«중심좌표 없음 — 거리필터 미적용»* 이라 명시하고 **전국 목록을 그대로** 준다.
+        #   라이브 검증이 그것을 잡았다: 마석우리인데 **분당센트로·여의도 더로드캐슬**이
+        #   섞여 **3,155만원/평**이 나왔고 `distance_m` 이 전부 `None` 이었다.
+        #   ★«반경을 넘겼으니 걸렸겠지»는 **추측**이다 — 좌표를 먼저 얻고, 못 얻으면 **쓰지 않는다.**
+        from apps.api.app.services.land_intelligence.nearby_map_service import NearbyMapService
+
+        center = None
+        try:
+            center = await NearbyMapService().geocode_one(addr)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("청약홈 신호 지오코딩 실패: %s", str(e)[:100])
+        if not center or center.get("lat") is None or center.get("lon") is None:
+            return {"available": False,
+                    "note": "중심좌표를 얻지 못해 반경을 적용할 수 없음 — 신호 미사용"}
+
         svc = PresaleService()
-        near = await svc.nearby(center_lat=None, center_lon=None, area=None,
+        near = await svc.nearby(center_lat=center["lat"], center_lon=center["lon"], area=None,
                                 radius_m=_PRESALE_SIGNAL_RADIUS_M, months_back=12)
         items = near.get("items") or []
+        # ★★거리가 **실제로 붙었는지** 확인한다 — `None` 이면 필터가 안 걸린 것이다.
+        items = [it for it in items
+                 if isinstance(it.get("distance_m"), (int, float))
+                 and it["distance_m"] <= _PRESALE_SIGNAL_RADIUS_M]
         if not items:
             return {"available": False, "radius_m": _PRESALE_SIGNAL_RADIUS_M,
-                    "note": f"반경 {_PRESALE_SIGNAL_RADIUS_M // 1000}km 내 분양 공고 없음"}
+                    "note": f"반경 {_PRESALE_SIGNAL_RADIUS_M // 1000}km 내 "
+                            "거리 확인된 분양 공고 없음"}
+        items.sort(key=lambda x: x.get("distance_m") or 10 ** 9)
         pps: list[float] = []
         samples: list[dict[str, Any]] = []
         for it in items[:5]:          # 지연 상한 — 가까운 순으로 최대 5건만 상세 조회

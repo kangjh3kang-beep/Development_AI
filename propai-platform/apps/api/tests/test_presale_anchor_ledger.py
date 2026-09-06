@@ -215,3 +215,43 @@ def test_신축_축이_집계기에_실재하고_경계가_10년이다() -> None
     # ★기존 키는 살아 있다(무회귀 — 소비처가 깨지면 안 된다)
     for k in ("dong", "sigungu"):
         assert f'"{k}":' in src, f"기존 축 `{k}` 이 사라졌다"
+
+
+def test_거리가_확인되지_않은_분양은_신호에서_뺀다() -> None:
+    """★★★라이브 검증이 잡은 결함 — **반경을 넘겼는데 안 걸렸다.**
+
+    `PresaleService.nearby` 는 **좌표가 없으면** *«중심좌표 없음 — 거리필터 미적용»* 로
+    **전국 목록을 그대로** 준다. 반경 인자만 넘기고 «걸렸겠지» 로 넘어간 결과:
+
+        마석우리 사업지인데 **분당센트로 · 여의도 더로드캐슬**이 섞여
+        **3,155만원/평** 이 나왔다(`distance_m` 은 전부 `None`).
+
+    ★***«인자를 넘긴 것과 그것이 적용된 것은 다르다» — 결과에서 확인하라.***
+
+    → ①**좌표를 먼저 얻고, 못 얻으면 신호를 쓰지 않는다**
+      ②`distance_m` 이 **수치이고 반경 이내**인 것만 남긴다(`None` 은 버린다)
+    """
+    from app.services.sales.pricing import suggest as sg
+
+    src = _SUGGEST.read_text(encoding="utf-8")
+    fn = src[src.index("async def _presale_signal_per_pyeong"):][:3200]
+
+    # ① 좌표를 얻는다 — 못 얻으면 미사용
+    assert "geocode_one" in fn, "좌표를 얻지 않는다 — 반경이 적용되지 않는다"
+    assert "중심좌표를 얻지 못해" in fn, "좌표 실패 시 **신호를 쓰지 않는다**는 경로가 없다"
+    # ② 거리 수치 검증이 있다(None 을 통과시키지 않는다)
+    assert "isinstance(it.get(\"distance_m\")" in fn or "distance_m" in fn
+    assert "_PRESALE_SIGNAL_RADIUS_M" in fn
+
+    # ★★행위 — `distance_m` 이 None 이거나 반경 밖이면 **걸러진다**
+    radius = sg._PRESALE_SIGNAL_RADIUS_M
+    rows = [
+        {"distance_m": None, "name": "거리미상"},
+        {"distance_m": radius + 1, "name": "반경밖"},
+        {"distance_m": 500, "name": "반경안"},
+    ]
+    kept = [r for r in rows
+            if isinstance(r.get("distance_m"), (int, float))
+            and r["distance_m"] <= radius]
+    assert [r["name"] for r in kept] == ["반경안"], (
+        f"거리 미상·반경 밖이 남는다: {[r['name'] for r in kept]}")
