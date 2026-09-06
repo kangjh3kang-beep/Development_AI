@@ -1,7 +1,7 @@
 """v62 — users.consent_pending 컬럼만 만든다(★소급은 다음 리비전).
 
 Revision ID: v62_9_consent_pending
-Revises: v62_8_run_execution
+Revises: 043_mypage_coin_orders_ledger
 Create Date: 2026-09-06
 
 ★모집단을 라이브에서 재고 이름을 바꿨다.
@@ -26,7 +26,12 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "v62_9_consent_pending"
-down_revision = "v62_8_run_execution"
+# ★부모는 **실제 head** 여야 한다. v62_8 은 이미 자식(042_member_account_system)이 있어
+#   거기 매달면 042 와 형제가 되어 **가지를 친다** → head 2개 → `alembic upgrade head` 가 거부.
+#   2026-09-06 실측: 이 PR 전 head 1개(043) · 후 2개. 배포가 그 지점에서 안전 중단됐다.
+#   ★그리고 라이브 DB 스탬프가 043 이므로, 043 을 부모로 두면 `upgrade head` 가
+#     **이 리비전 하나만** 실행한다(v62_5~v62_8 재적용 위험 없음).
+down_revision = "043_mypage_coin_orders_ledger"
 branch_labels = None
 depends_on = None
 
