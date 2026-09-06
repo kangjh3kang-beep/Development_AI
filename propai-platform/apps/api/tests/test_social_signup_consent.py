@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import uuid
 
-import pytest
-
 from apps.api.auth.oauth_common import CONSENT_TYPES, build_consent_rows
 
 

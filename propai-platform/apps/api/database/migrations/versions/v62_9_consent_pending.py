@@ -22,8 +22,8 @@ Create Date: 2026-09-06
 ★소급은 되돌릴 수 있어야 한다 — downgrade 는 컬럼째 지운다(플래그만 지우면 되므로
   사용자 데이터는 손실되지 않는다. 동의 이력 user_consents 는 이 리비전이 건드리지 않는다).
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = "v62_9_consent_pending"
 down_revision = "v62_8_run_execution"
