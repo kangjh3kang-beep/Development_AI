@@ -85,8 +85,11 @@ describe("identity churn — 레이어 토글 무변화 시 참조 보존", () =
       "@/store/useSatongMapPrefsStore"
     );
     useSatongMapPrefs.setState({ enabledLayerIds: defaultEnabledLayerIds() });
+    // ★2026-09-07 — 종전엔 «cadastre 가 기본 ON» 이라는 **기본값에 얹혀** 이 전제가 성립했다.
+    //   기본이 꺼짐으로 바뀌었으므로 ***그 상태를 만들어서*** 잰다(명제는 그대로).
+    useSatongMapPrefs.getState().ensureLayerEnabled("cadastre");
     const before = useSatongMapPrefs.getState().enabledLayerIds;
-    useSatongMapPrefs.getState().ensureLayerEnabled("cadastre"); // 이미 켜져 있다
+    useSatongMapPrefs.getState().ensureLayerEnabled("cadastre"); // 이미 켜져 있다 = 변화 없음
     expect(useSatongMapPrefs.getState().enabledLayerIds).toBe(before);
   });
 

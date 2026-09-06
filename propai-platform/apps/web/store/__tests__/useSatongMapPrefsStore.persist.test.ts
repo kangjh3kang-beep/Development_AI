@@ -270,21 +270,31 @@ describe("★★하이드레이션 identity — 저장분이 없으면 **참조�
 describe("★★레이어 활성 상태 — 사용자 신고의 **남은 절반**", () => {
   const ids = () => useSatongMapPrefs.getState().enabledLayerIds;
 
-  it("기본은 지적도 하나(첫 방문 = 종전과 동일 · 회귀 아님)", () => {
-    expect(ids()).toEqual(["cadastre"]);
+  /**
+   * ★★2026-09-07 계약 변경 — 아래 셋은 **옛 계약을 잠그고 있었다**(기본 ON · 못 끔).
+   *   사용자 신고로 뒤집혔다: *"기본은 경계선이 없고 오른쪽 메뉴에서 선택 시 나타나야"*.
+   *   그리고 「못 끈다」의 **사유가 실재하지 않았다**(선택은 지적 타일과 독립 — `SatongMultiMap`).
+   *   ★**명제는 보존한다** — identity 계약(«변화가 없으면 같은 참조»)과 «골랐다» 계약은 그대로이고,
+   *     그것을 재는 **입력만** 새 계약에 맞게 바꾼다.
+   */
+  it("★기본은 **비어 있다** — 지적 경계선이 배경을 덮지 않는다(사용자 신고 2026-09-07)", () => {
+    expect(ids()).toEqual([]);
   });
 
-  it("★계약 ① — `cadastre` 는 꺼지지 않는다(기반 레이어)", () => {
+  it("★계약 ① — `cadastre` 를 **켜고 끌 수 있다**(죽은 버튼이 살아났다)", () => {
     useSatongMapPrefs.getState().toggleLayerEnabled("cadastre");
     expect(ids()).toContain("cadastre");
+    // ★두 모집단 — 끄기도 같은 실행에서 본다(한 방향만 보면 「항상 켬」도 통과한다).
+    useSatongMapPrefs.getState().toggleLayerEnabled("cadastre");
+    expect(ids()).not.toContain("cadastre");
   });
 
   it("★★계약 ② identity — **변화가 없으면 같은 참조**(«깜빡임의 근원» 방어 이식)", () => {
+    // ★전제를 만들어서 잰다 — 종전엔 «cadastre 가 기본 ON» 이라는 **기본값에 얹혀** 있었다.
+    useSatongMapPrefs.getState().ensureLayerEnabled("cadastre");
     const before = ids();
-    useSatongMapPrefs.getState().ensureLayerEnabled("cadastre"); // 이미 켜져 있다
+    useSatongMapPrefs.getState().ensureLayerEnabled("cadastre"); // 이미 켜져 있다 = 변화 없음
     expect(ids()).toBe(before); // ★같은 참조
-    useSatongMapPrefs.getState().toggleLayerEnabled("cadastre"); // 못 끈다 = 변화 없음
-    expect(ids()).toBe(before);
   });
 
   it("★대칭 — **변화가 있으면 다른 참조**(한쪽만 재면 「항상 같은 참조」가 만점)", () => {
@@ -366,8 +376,12 @@ describe("★★레이어 활성 상태 — 사용자 신고의 **남은 절반*
     expect(useSatongMapPrefs.getState().enabledLayersCustomized).toBe(true);
   });
 
-  it("★변화가 없으면 «골랐다» 도 안 켜진다(cadastre 는 못 끈다)", () => {
-    useSatongMapPrefs.getState().toggleLayerEnabled("cadastre");
+  it("★변화가 없으면 «골랐다» 도 안 켜진다(ensure 가 무동작일 때)", () => {
+    // ★종전엔 «cadastre 는 못 끈다» 로 이 명제를 쟀다. 이제 끌 수 있으므로
+    //   **변화 없음**을 만드는 다른 입력(이미 켜진 레이어에 ensure)으로 같은 명제를 잠근다.
+    useSatongMapPrefs.getState().ensureLayerEnabled("cadastre");
+    useSatongMapPrefs.setState({ enabledLayersCustomized: false }); // 대조군 리셋
+    useSatongMapPrefs.getState().ensureLayerEnabled("cadastre");    // 이미 켜져 있다 = 변화 없음
     expect(useSatongMapPrefs.getState().enabledLayersCustomized).toBe(false);
   });
 
