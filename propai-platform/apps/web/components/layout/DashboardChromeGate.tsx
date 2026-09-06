@@ -12,6 +12,7 @@ import { HomeLink } from "@/components/layout/HomeLink";
 import { AuthButton } from "@/components/auth/AuthButton";
 import { Disclaimer } from "@/components/common/Disclaimer";
 import { ProjectSyncProvider } from "@/components/common/ProjectSyncProvider";
+import { ConsentGate } from "@/components/auth/ConsentGate";
 import { useIsAuthenticated } from "@/hooks/useIsAuthenticated";
 import type { Locale } from "@/i18n/config";
 import type { NavSection } from "@/components/layout/nav-config";
@@ -55,7 +56,11 @@ export function DashboardChromeGate({
     return <>{children}</>;
   }
 
+  // ★동의 게이트 — 서버(_require_consent)가 403 으로 막기 전에 **동의할 자리**를 준다.
+  //   게이트 자신이 면제 경로(login·register·legal)를 판정하므로 여기서 조건을 겹치지 않는다
+  //   (두 곳에 적으면 갈린다).
   return (
+    <ConsentGate locale={locale} pathname={pathname} authed={authed}>
     <div className="mx-auto flex min-h-screen max-w-[1500px] flex-col gap-4 px-4 py-4 md:px-6">
       <ProjectSyncProvider />
       <AIAssistant />
@@ -99,24 +104,10 @@ export function DashboardChromeGate({
         <Disclaimer />
       </main>
 
-      {/* 회사정보 푸터 */}
-      <footer className="mt-16 border-t border-[var(--line)] bg-[var(--surface-soft)] py-8 px-6">
-        <div className="mx-auto max-w-6xl flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-          <div className="space-y-4">
-            <Logo size="sm" className="opacity-80 grayscale" />
-            <div className="space-y-1 text-xs text-[var(--text-tertiary)] leading-relaxed">
-              <p>대표: 강재희 | 사업자등록번호: 682-38-01463</p>
-              <p>업태: 도매 및 소매업</p>
-              <p>소재지: 경기도 광주시 회안대로 637-36</p>
-            </div>
-          </div>
-          <div className="space-y-1 text-xs text-[var(--text-tertiary)]">
-            <p>대표번호: <a href="tel:1666-0916" className="text-[var(--text-secondary)] hover:text-[var(--accent-strong)]">1666-0916</a></p>
-            <p>팩스: 02-6305-0044</p>
-            <p className="mt-2 text-[var(--text-hint)]">&copy; 2026 사통팔땅. All rights reserved.</p>
-          </div>
-        </div>
-      </footer>
+      {/* ★회사정보 푸터는 전역(app/[locale]/layout.tsx)의 SiteFooter 로 일원화했다.
+          값이 두 곳에 있으면 한쪽만 고쳐진다 — 2026-09-06 실측에서 통신판매업 신고번호가
+          여기에도 legal 페이지에도 없었던 것이 그 결과다(§29 형제 분기). */}
     </div>
+    </ConsentGate>
   );
 }

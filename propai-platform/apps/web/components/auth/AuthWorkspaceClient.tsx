@@ -110,12 +110,16 @@ const STORAGE_KEYS = {
   refresh: "propai_refresh_token",
 } as const;
 
-const LABELS: Record<Locale, Labels> = {
+// ★테스트가 문구를 손으로 복사하지 않도록 **내보낸다** — 3사 콜백에 이미 적용한 처방의 형제.
+//   2026-09-06 실측: 「테넌트 등록」→「회원가입」으로 바꾸자 테스트가 깨졌다
+//   (getByRole name: "Create tenant" 하드코딩). 파생시키면 문구를 다듬어도
+//   「어느 버튼을 눌러 어느 요청이 나가는가」라는 계약만 남는다.
+export const LABELS: Record<Locale, Labels> = {
   ko: {
     eyebrow: "AUTH / LIVE",
     title: "실사용 인증 작업 공간",
     description:
-      "이제 로그인과 테넌트 관리자 등록이 placeholder가 아니라 실제 `/auth` API에 연결됩니다.",
+      "로그인과 회원가입이 실제 `/auth` API에 연결되어 있습니다.",
     loginFields: {
       email: "이메일",
       password: "비밀번호",
@@ -126,7 +130,7 @@ const LABELS: Record<Locale, Labels> = {
       companyName: "회사명 (개인은 비워두세요)",
       email: "관리자 이메일",
       password: "비밀번호",
-      submit: "테넌트 등록",
+      submit: "회원가입",
     },
     runtimeTitle: "런타임 연결 상태",
     runtimeDescription:
@@ -163,12 +167,12 @@ const LABELS: Record<Locale, Labels> = {
     switchLabel: "다른 인증 경로",
     switchLinks: {
       login: "기존 계정 로그인",
-      register: "신규 테넌트 등록",
+      register: "회원가입",
     },
     submitting: "처리 중...",
     successLabels: {
       login: "로그인에 성공했고 세션을 저장했습니다.",
-      register: "테넌트 관리자 등록에 성공했고 세션을 저장했습니다.",
+      register: "회원가입이 완료되었고 세션을 저장했습니다.",
       sessionRefreshed: "리프레시 토큰으로 세션을 갱신했습니다.",
       logout: "로그아웃이 완료되어 브라우저 세션을 정리했습니다.",
       sessionRestored: "브라우저에 저장된 세션을 복구했습니다.",
@@ -197,7 +201,7 @@ const LABELS: Record<Locale, Labels> = {
       companyName: "Company (optional)",
       email: "Admin email",
       password: "Password",
-      submit: "Create tenant",
+      submit: "Sign up",
     },
     runtimeTitle: "Runtime connection",
     runtimeDescription:
@@ -234,7 +238,7 @@ const LABELS: Record<Locale, Labels> = {
     switchLabel: "Alternative path",
     switchLinks: {
       login: "Use an existing account",
-      register: "Create a new tenant",
+      register: "Sign up",
     },
     submitting: "Submitting...",
     successLabels: {
@@ -267,7 +271,7 @@ const LABELS: Record<Locale, Labels> = {
       companyName: "公司名称(可选)",
       email: "管理员邮箱",
       password: "密码",
-      submit: "创建租户",
+      submit: "注册",
     },
     runtimeTitle: "运行时连接状态",
     runtimeDescription: "auth 页面优先调用真实 API，成功后立即刷新浏览器中的令牌。",
@@ -302,7 +306,7 @@ const LABELS: Record<Locale, Labels> = {
     switchLabel: "其他入口",
     switchLinks: {
       login: "使用现有账号",
-      register: "创建新租户",
+      register: "注册",
     },
     submitting: "处理中...",
     successLabels: {
@@ -678,7 +682,7 @@ export function AuthWorkspaceClient({
   const gateTitle = mode === "register" ? "사통팔땅 관리자 등록" : "사통팔땅 로그인";
   const gateDescription =
     mode === "register"
-      ? "새 테넌트와 첫 관리자 계정을 생성합니다."
+      ? "새 계정을 만들고 첫 관리자로 등록합니다."
       : "서비스 이용을 위해 계정에 로그인해 주세요.";
 
   return (
@@ -906,10 +910,19 @@ export function AuthWorkspaceClient({
                     <Button type="submit" disabled={isSubmitting}>
                       {isSubmitting ? labels.submitting : labels.loginFields.submit}
                     </Button>
-                    <div className="text-right">
+                    {/* ★계정 관련 보조 동선을 한 줄에 모은다 — 회원가입이 카드 밖 하단에 있으면
+                        「로그인만 되는 서비스」로 읽힌다(네이버 검수도 신규 회원가입 적용을 본다). */}
+                    <div className="flex items-center justify-end gap-3 text-xs">
+                      <Link
+                        href={`/${locale}/register`}
+                        className="font-semibold text-[var(--accent-strong)] underline-offset-4 hover:underline"
+                      >
+                        {labels.switchLinks.register}
+                      </Link>
+                      <span aria-hidden className="text-[var(--line)]">|</span>
                       <Link
                         href={`/${locale}/forgot-password`}
-                        className="text-xs font-medium text-[var(--text-tertiary)] underline-offset-4 hover:text-[var(--text-primary)] hover:underline"
+                        className="font-medium text-[var(--text-tertiary)] underline-offset-4 hover:text-[var(--text-primary)] hover:underline"
                       >
                         비밀번호를 잊으셨나요?
                       </Link>
@@ -1036,14 +1049,18 @@ export function AuthWorkspaceClient({
 
             {/* 인증 경로 전환 + 시스템 메타 푸터 */}
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-              <Link
-                href={`/${locale}/${mode === "login" ? "register" : "login"}`}
-                className="cc-label text-[var(--accent-strong)] underline-offset-4 hover:underline"
-              >
-                {mode === "login"
-                  ? labels.switchLinks.register + " →"
-                  : "← " + labels.switchLinks.login}
-              </Link>
+              {/* ★로그인 화면에서는 위 줄(비밀번호 찾기 옆)에 회원가입이 있으므로 여기서는 숨긴다 —
+                  같은 링크가 두 곳이면 어느 쪽이 정본인지 흐려진다. 가입 화면에서는 돌아갈 길로 남긴다. */}
+              {mode === "login" ? (
+                <span />
+              ) : (
+                <Link
+                  href={`/${locale}/login`}
+                  className="cc-label text-[var(--accent-strong)] underline-offset-4 hover:underline"
+                >
+                  {"← " + labels.switchLinks.login}
+                </Link>
+              )}
               <span className="cc-label text-[var(--text-tertiary)]">
                 ENCRYPTED · JWT
               </span>

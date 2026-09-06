@@ -73,6 +73,15 @@ class User(Base, TenantMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True,
         comment="마지막 비밀번호 변경/재설정 시각",
     )
+    consent_pending: Mapped[bool] = mapped_column(
+        default=False, nullable=False, server_default="false",
+        comment=(
+            "약관·개인정보 동의를 아직 받지 않은 상태. "
+            "★2026-09-06 라이브 실측으로 모집단이 바뀌었다 — 소셜만이 아니다: "
+            "소셜 2/2 · **이메일 6/11** 도 동의 이력이 0건이었다(동의 기능 도입 2026-08-27 이전 계정). "
+            "그래서 이름에서 social 을 뺐다. 마이그레이션이 기존 미동의자를 True 로 채운다(소급)."
+        ),
+    )
 
     # 관계
     tenant = relationship("Tenant", back_populates="users")
