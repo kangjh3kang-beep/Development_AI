@@ -738,6 +738,74 @@ except Exception as _e:  # noqa: BLE001
 
 
 # 인증 사용자 ID를 요청 컨텍스트에 주입 (LLM 과금 누적·한도 차단용, best-effort)
+# ★동의 게이트 — 동의를 「받는 것」과 「강제하는 것」은 다르다.
+#   화면만 그리고 건너뛸 수 있으면 그 동의는 장식이다(개인정보보호법 §22 는 수집을 요구한다).
+#
+#   ★여기 미들웨어에 두는 이유: get_current_user 는 Depends 사용처가 **295곳**이고
+#     테스트 dependency_overrides 대상이라, 시그니처를 바꾸면 광범위하게 깨진다.
+#     미들웨어는 한 곳이고 그 오버라이드에 영향을 주지 않는다.
+#
+#   ★탈출구(allowlist)가 없으면 **동의하러 갈 수도 없다** — 아래 경로는 열어 둔다.
+#     경로가 아니라 낱말로 매칭하면 /api/v1/xxx/legal 같은 것도 열린다 → **접두**로 판정한다.
+_CONSENT_EXEMPT_PREFIXES: tuple[str, ...] = (
+    "/api/v1/auth/",   # 로그인·토큰갱신·me·동의 제출·로그아웃 — 동의하러 가는 길
+    "/api/v1/legal",   # 약관·방침 본문(동의하려면 읽어야 한다)
+    "/health",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+)
+
+
+@app.middleware("http")
+async def _require_consent(request, call_next):
+    """동의 미완 사용자의 보호 자원 접근을 403 으로 막는다.
+
+    ★반환 코드는 401 이 아니라 **403** 이다 — 인증은 유효하고 **권한 상태**가 미완이다.
+      401 로 주면 프론트가 토큰 갱신·재로그인 루프를 돌게 된다.
+    ★응답 본문에 `reason: consent_required` 를 실어 화면이 **무엇을 해야 하는지** 알게 한다
+      (진단 불가는 그 자체로 장애다).
+    """
+    path = request.url.path or ""
+    if request.method == "OPTIONS" or path.startswith(_CONSENT_EXEMPT_PREFIXES):
+        return await call_next(request)
+
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    if not (auth and auth.lower().startswith("bearer ")):
+        return await call_next(request)  # 비로그인은 기존 인증 계층이 판단한다
+
+    try:
+        from sqlalchemy import select
+
+        from apps.api.auth.jwt_handler import decode_token
+        from apps.api.database.models.user import User as _U
+        from apps.api.database.session import AsyncSessionLocal
+
+        payload = decode_token(auth.split(" ", 1)[1].strip())
+        uid = getattr(payload, "sub", None)
+        if not uid:
+            return await call_next(request)
+        async with AsyncSessionLocal() as _db:
+            row = await _db.execute(select(_U.consent_pending).where(_U.id == uid))
+            pending = row.scalar_one_or_none()
+    except Exception:  # noqa: BLE001
+        # ★못 재면 막지 않는다 — 이 게이트의 오작동이 서비스 전체를 세우면 안 된다.
+        #   대신 «조용히 통과」가 아니라 기존 인증 계층이 정상 판단하도록 넘긴다.
+        return await call_next(request)
+
+    if pending:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "서비스를 이용하려면 이용약관과 개인정보처리방침에 동의해야 합니다.",
+                "reason": "consent_required",
+            },
+        )
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def _inject_user_context(request, call_next):
     from app.core.request_context import set_current_tenant_id, set_current_user_id

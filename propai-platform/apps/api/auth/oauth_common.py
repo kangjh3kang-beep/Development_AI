@@ -212,7 +212,7 @@ async def get_or_create_oauth_user(
         # ★신규 소셜 계정은 **동의 미완**으로 시작한다. 이메일 가입은 가입 요청에 동의가
         #   실려 오지만 소셜은 공급자 화면을 거쳐 오므로 **받을 자리가 없다** —
         #   콜백 화면에서 받아 POST /auth/social-consents 로 기록하고 이 플래그를 내린다.
-        social_consent_pending=True,
+        consent_pending=True,
     )
     db.add(new_user)
     await db.flush()

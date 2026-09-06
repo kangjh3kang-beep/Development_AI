@@ -1,0 +1,68 @@
+"""v62 — users.consent_pending + **기존 미동의자 소급 채움**.
+
+Revision ID: v62_9_consent_pending
+Revises: v62_8_run_execution
+Create Date: 2026-09-06
+
+★모집단을 라이브에서 재고 이름을 바꿨다.
+  처음엔 `social_consent_pending` 으로 두고 «기존 사용자는 기본값 False 로 유예» 하려 했다.
+  그런데 프로덕션을 조회하니 **소셜만의 문제가 아니었다**(2026-09-06 실측, 탈퇴 제외):
+
+      경로      동의  인원   생성일
+      email      ✘     6    2026-05-27 ~ 2026-08-27
+      email      ✔     5    2026-08-27 (전원 같은 날 — 동의 기능 도입일)
+      kakao      ✘     1    2026-06-09
+      naver      ✘     1    2026-09-06  ← 동의 기능이 있는데도 소셜이라 안 받았다
+
+  즉 ①**동의 기능 도입(2026-08-27) 이전 계정 8명**이 동의 없이 남아 있고
+     ②그중 네이버 1건은 **기능 도입 이후에 만들어졌는데도** 소셜 경로라 비어 있다.
+  ①은 소급 대상, ②는 이 브랜치가 고친 결함의 실증이다.
+  → 이름에서 `social` 을 빼고, **동의 이력이 없는 모든 생존 사용자**를 True 로 채운다.
+
+★소급은 되돌릴 수 있어야 한다 — downgrade 는 컬럼째 지운다(플래그만 지우면 되므로
+  사용자 데이터는 손실되지 않는다. 동의 이력 user_consents 는 이 리비전이 건드리지 않는다).
+"""
+from alembic import op
+import sqlalchemy as sa
+
+revision = "v62_9_consent_pending"
+down_revision = "v62_8_run_execution"
+branch_labels = None
+depends_on = None
+
+from apps.api.database.consent_backfill import (  # noqa: E402
+    BACKFILL_SQL,
+    CONSENT_PENDING_COLUMN as _COL,
+)
+
+
+def _has_column(bind, table: str, column: str) -> bool:
+    insp = sa.inspect(bind)
+    if table not in insp.get_table_names():
+        return False
+    return column in {c["name"] for c in insp.get_columns(table)}
+
+
+def upgrade() -> None:
+    bind = op.get_bind()
+    if not _has_column(bind, "users", _COL):
+        op.add_column(
+            "users",
+            sa.Column(
+                _COL,
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.text("false"),
+                comment="약관·개인정보 동의 미완. 동의 이력이 없는 사용자를 소급 표시한다.",
+            ),
+        )
+
+    op.execute(sa.text(BACKFILL_SQL))
+
+
+def downgrade() -> None:
+    bind = op.get_bind()
+    if _has_column(bind, "users", _COL):
+        op.drop_column("users", _COL)
+
+

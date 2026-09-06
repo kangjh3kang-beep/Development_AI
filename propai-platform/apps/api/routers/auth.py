@@ -556,7 +556,7 @@ async def get_me(
         email_verified=bool(user.email_verified),
         has_password=bool(user.hashed_password),
         phone=user.phone,
-        social_consent_pending=bool(getattr(user, "social_consent_pending", False)),
+        consent_pending=bool(getattr(user, "consent_pending", False)),
     )
 
 
@@ -619,26 +619,26 @@ async def update_me(
         email_verified=bool(user.email_verified),
         has_password=bool(user.hashed_password),
         phone=user.phone,
-        social_consent_pending=bool(getattr(user, "social_consent_pending", False)),
+        consent_pending=bool(getattr(user, "consent_pending", False)),
     )
 
 
-class SocialConsentRequest(BaseModel):
-    """소셜 간편가입 직후 받는 동의. 이메일 가입의 RegisterRequest 와 **같은 필드 이름**을 쓴다."""
+class ConsentSubmitRequest(BaseModel):
+    """동의 미완 사용자가 제출하는 동의. 이메일 가입의 RegisterRequest 와 **같은 필드 이름**을 쓴다."""
 
     agree_terms: bool = Field(description="이용약관 동의(필수)")
     agree_privacy: bool = Field(description="개인정보처리방침 동의(필수)")
     agree_marketing: bool = Field(default=False, description="마케팅 수신 동의(선택)")
 
 
-@router.post("/social-consents", status_code=status.HTTP_204_NO_CONTENT)
-async def submit_social_consent(
-    body: SocialConsentRequest,
+@router.post("/me/consents", status_code=status.HTTP_204_NO_CONTENT)
+async def submit_consent(
+    body: ConsentSubmitRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> None:
-    """소셜 가입 사용자의 약관 동의를 기록하고 미완 플래그를 내린다.
+    """동의 미완 사용자의 약관 동의를 기록하고 플래그를 내린다(소셜·이메일 공통).
 
     ★필수 동의를 거부하면 기록하지 않고 거부한다 — 「동의했다」가 아니면 통과시킬 수 없다.
     ★이미 동의를 마친 사용자가 다시 부르면 **아무것도 쌓지 않는다**(멱등) —
@@ -649,7 +649,7 @@ async def submit_social_consent(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="이용약관과 개인정보처리방침에 동의해야 서비스를 이용할 수 있습니다.",
         )
-    if not getattr(user, "social_consent_pending", False):
+    if not getattr(user, "consent_pending", False):
         return None  # 멱등 — 이미 처리됐다
 
     for row in build_consent_rows(
@@ -661,7 +661,7 @@ async def submit_social_consent(
         ip=_client_ip(request),
     ):
         db.add(row)
-    user.social_consent_pending = False
+    user.consent_pending = False
     await db.commit()
     return None
 
