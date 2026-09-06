@@ -67,7 +67,13 @@ export function SiteFooter({ locale, compact = false }: SiteFooterProps) {
       data-testid="site-footer"
       className={`${compact ? "mt-8" : "mt-16"} border-t border-[var(--line)] bg-[var(--surface-soft)] py-8 px-6`}
     >
-      <div className="mx-auto max-w-6xl flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+      {/* ★법정 표시항목이 사는 영역. 락은 **이 안**만 본다 —
+          범위를 푸터 전체로 두면 저작권 줄의 상호가 사업자 표기의 상호 삭제를 가린다
+          (2026-09-06 변이로 실증: companyName 을 비워도 SURVIVED 였다). */}
+      <div
+        data-testid="business-disclosure"
+        className="mx-auto max-w-6xl flex flex-col gap-4 md:flex-row md:items-start md:justify-between"
+      >
         <div className="space-y-1 text-xs text-[var(--text-tertiary)] leading-relaxed">
           <p className="text-[var(--text-secondary)]">
             {b.companyName} <span className="opacity-60">({b.brand})</span>
