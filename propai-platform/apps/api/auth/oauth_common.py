@@ -32,6 +32,42 @@ UTC = UTC
 #   /register는 UserRole.ADMIN.value('admin')을 부여하므로 소셜도 동일하게 맞춘다.
 _DEFAULT_SOCIAL_ROLE = "admin"
 
+# ★동의 기록의 **단일 통로**. 이메일 가입(routers/auth.py)과 소셜 가입이 같은 형식으로
+#   남기게 한다 — 두 곳에 손으로 적으면 조용히 갈린다(그것이 이 결함의 원인이었다).
+#   consent_type 집합·policy_version 스탬프 방식은 여기 한 곳에서만 정한다.
+CONSENT_TYPES: tuple[str, str, str] = ("terms_of_service", "privacy_policy", "marketing")
+
+
+def build_consent_rows(
+    *,
+    user_id,
+    agree_terms: bool,
+    agree_privacy: bool,
+    agree_marketing: bool,
+    policy_version: str,
+    ip: str | None,
+):
+    """동의 3종을 UserConsent 행으로 만든다(저장은 호출부가 한다).
+
+    ★선택 동의는 거부(False)도 **명시 기록**한다 — 이후 분쟁 시 «선택했고 거부했다»를
+      증빙하기 위해서다(개인정보보호법 §22). 빠뜨리면 «묻지 않았다»와 구별되지 않는다.
+    """
+    from apps.api.database.models.member_auth import UserConsent  # 순환 임포트 회피(함수-로컬)
+
+    values = (agree_terms, agree_privacy, agree_marketing)
+    assert len(values) == len(CONSENT_TYPES)
+    return [
+        UserConsent(
+            user_id=user_id,
+            consent_type=ct,
+            agreed=bool(agreed),
+            policy_version=policy_version,  # 서버 상수 스탬프(클라이언트 값 미신뢰)
+            ip=ip,
+        )
+        for ct, agreed in zip(CONSENT_TYPES, values, strict=True)
+    ]
+
+
 
 class OAuthError(Exception):
     """소셜 OAuth 처리 중 발생하는 공용 예외."""
@@ -173,6 +209,10 @@ async def get_or_create_oauth_user(
         is_active=True,
         oauth_provider=provider,
         oauth_id=provider_id,
+        # ★신규 소셜 계정은 **동의 미완**으로 시작한다. 이메일 가입은 가입 요청에 동의가
+        #   실려 오지만 소셜은 공급자 화면을 거쳐 오므로 **받을 자리가 없다** —
+        #   콜백 화면에서 받아 POST /auth/social-consents 로 기록하고 이 플래그를 내린다.
+        consent_pending=True,
     )
     db.add(new_user)
     await db.flush()

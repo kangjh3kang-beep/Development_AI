@@ -43,6 +43,19 @@ describe("NaverCallbackWorkspaceClient", () => {
     expect(new Set([SUCCESS, STATE_MISMATCH, MISSING]).size).toBe(3);
   });
 
+  // ★제목이 **상태를 따라간다** — 오류인데 성공 제목을 띄우면 화면이 거짓말을 한다.
+  //   2026-09-06 라이브 실측: 파라미터 없이 콜백을 열면 본문은 실패를 말하는데
+  //   제목은 「로그인되었습니다」였다(형제 카카오만 errorTitle 을 갖고 있었다 · §29).
+  it("★오류 상태에서 성공 제목이 뜨지 않고 오류 제목이 뜬다", () => {
+    // 세 제목이 서로 달라야 판별력이 있다(같으면 어떤 배선이든 통과)
+    expect(new Set([EN.loadingTitle, EN.successTitle, EN.errorTitle]).size).toBe(3);
+    render(
+      <NaverCallbackWorkspaceClient locale="en" code={null} state={null} redirectUri={null} />,
+    );
+    expect(screen.getByText(EN.errorTitle)).toBeInTheDocument();
+    expect(screen.queryByText(EN.successTitle)).toBeNull();
+  });
+
   beforeEach(() => {
     window.localStorage.clear();
     window.sessionStorage.clear();

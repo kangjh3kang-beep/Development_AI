@@ -71,6 +71,9 @@ class UserResponse(BaseModel):
     has_password: bool = True
     # 마이페이지(2026-07-17): 프로필 표시·수정용(additive)
     phone: str | None = None
+    # 소셜 간편가입(2026-09-06): 동의 미완 여부 — 화면이 동의 단계를 그릴지 판단(additive).
+    # ★기본 False 라 기존 응답 소비처는 영향받지 않는다.
+    consent_pending: bool = False
 
 
 # ──────────────────────────────────────
