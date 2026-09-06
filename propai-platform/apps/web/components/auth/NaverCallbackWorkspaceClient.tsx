@@ -31,7 +31,12 @@ type NaverCallbackWorkspaceClientProps = {
 
 type CallbackLabels = {
   eyebrow: string;
-  title: string;
+  /** ★제목은 **상태마다 다르다**. 하나로 두면 오류일 때 「로그인되었습니다」를 띄운다.
+   *  2026-09-06 라이브 실측: 파라미터 없이 콜백을 열면 본문은 실패를 말하는데
+   *  제목은 「로그인되었습니다」였다 — 형제 카카오만 errorTitle 을 갖고 있었다(§29). */
+  loadingTitle: string;
+  successTitle: string;
+  errorTitle: string;
   description: string;
   loading: string;
   success: string;
@@ -57,7 +62,9 @@ export const LABELS: Record<Locale, CallbackLabels> = {
   //   톤은 카카오 콜백(형제 중 정돈된 쪽)에 맞춘다.
   ko: {
     eyebrow: "AUTH / NAVER CALLBACK",
-    title: "로그인되었습니다",
+    loadingTitle: "로그인하는 중",
+    successTitle: "로그인되었습니다",
+    errorTitle: "로그인하지 못했어요",
     description: "네이버 계정으로 안전하게 로그인하고 있어요. 잠시 후 자동으로 이동합니다.",
     loading: "로그인하는 중",
     success: "네이버 계정으로 로그인되었습니다. 잠시 후 이동합니다.",
@@ -69,7 +76,9 @@ export const LABELS: Record<Locale, CallbackLabels> = {
   },
   en: {
     eyebrow: "AUTH / NAVER CALLBACK",
-    title: "You're signed in",
+    loadingTitle: "Signing you in",
+    successTitle: "You're signed in",
+    errorTitle: "Sign-in failed",
     description: "Signing you in securely with Naver. You'll be redirected shortly.",
     loading: "Signing in",
     success: "Signed in with Naver. Redirecting you now.",
@@ -81,7 +90,9 @@ export const LABELS: Record<Locale, CallbackLabels> = {
   },
   "zh-CN": {
     eyebrow: "AUTH / NAVER CALLBACK",
-    title: "已登录",
+    loadingTitle: "正在登录",
+    successTitle: "已登录",
+    errorTitle: "登录失败",
     description: "正在使用 Naver 账号安全登录，稍后将自动跳转。",
     loading: "正在登录",
     success: "已使用 Naver 账号登录，即将跳转。",
@@ -249,7 +260,11 @@ export function NaverCallbackWorkspaceClient({
             {labels.eyebrow}
           </span>
           <CardTitle className="mt-5 text-3xl font-bold text-[var(--text-primary)] md:text-4xl">
-            {labels.title}
+            {status === "error"
+              ? labels.errorTitle
+              : status === "success"
+                ? labels.successTitle
+                : labels.loadingTitle}
           </CardTitle>
           <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)] md:text-base">
             {labels.description}
