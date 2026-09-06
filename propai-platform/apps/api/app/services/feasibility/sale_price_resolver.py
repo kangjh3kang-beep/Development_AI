@@ -374,13 +374,22 @@ async def _resolve_sale_price_per_pyeong(
             logger.warning("suggest_base_price 실패 — 주변 실거래 직접조회로 폴백: %s", str(e)[:120])
 
     # 2순위: 주변 실거래(MOLIT) 직접 조회 — site_id 없이 주소→시군구로 확보(★HIGH-1).
-    trade = await _trade_sale_price_per_pyeong(dev_type=dev_type, address=address)
+    # ★사례를 원할 때만(=precision 소비처가 있을 때만) 수집한다 — 없으면 비용 0.
+    #   ★★이 인자를 안 넘기면 `cases_out` 통로가 **소비처 0** 으로 남는다.
+    #     사례를 만들고도 밖으로 안 내보내는 것은 «만들었는데 안 불린다» 그 자체다.
+    _cases: list[dict[str, Any]] | None = [] if precision_out is not None else None
+    trade = await _trade_sale_price_per_pyeong(
+        dev_type=dev_type, address=address, cases_out=_cases)
     if trade is not None:
         # ★이 리졸버의 **외부 계약은 4-튜플 그대로**다(rough 호출부 무회귀).
         #   표본수는 `_molit_sale_price_source` 만 쓰므로 여기서 벗겨 낸다.
         #   ★시그니처를 바꾸며 **이 호출부를 안 고쳤다** — 형제·호출부를 파생으로
         #     세지 않고 «바꾼 함수만» 본 결과다(이 저장소가 반복해 데인 형태).
         price, src, basis, deg, _n = trade
+        # ★사례를 **채택된 경로일 때만** 정밀화 출력에 싣는다(목록화·선택의 입력).
+        if precision_out is not None and _cases:
+            precision_out["presale_cases"] = _cases
+            precision_out["presale_case_count"] = len(_cases)
         return price, src, basis, deg
 
     # 3순위(폴백): 지역×유형 시세 테이블(수지·추천 공용 SSOT) — 실거래 아님(추정치).

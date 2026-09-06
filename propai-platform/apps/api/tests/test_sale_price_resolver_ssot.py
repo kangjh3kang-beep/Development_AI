@@ -1052,3 +1052,52 @@ async def test_채택한_경로의_사례만_내보낸다(monkeypatch) -> None:
     monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong", mk(17), raising=True)
     await spr._trade_sale_price_per_pyeong(dev_type="M01", address="x", sigungu5="41360")
     assert seen_kw == [False], f"사례가 필요 없는데 수집했다: {seen_kw}"
+
+
+@pytest.mark.asyncio
+async def test_분양권_사례가_정밀화_출력까지_도달한다(monkeypatch) -> None:
+    """★★사례를 만들고도 **밖으로 안 내보내면 소비처 0** 이다 — 오늘 계속 고쳐 온 형태.
+
+    실제로 첫 판이 그랬다: `_trade_sale_price_per_pyeong` 에 `cases_out` 통로를 만들고
+    **호출부에서 안 넘겼다.** 값은 나오는데 목록화가 원리적으로 불가능한 상태.
+
+    ★그리고 **원할 때만** 수집한다 — `precision_out` 이 없으면 비용 0.
+    """
+    import app.services.feasibility.sale_price_resolver as spr
+
+    seen: list[bool] = []
+
+    async def spy(sigungu5, dong, prop_type, **kw):
+        if prop_type == "apt_presale":
+            seen.append(bool(kw.get("collect_cases")))
+            return {"dong": {"median": 2436, "n": 7}, "sigungu": {"median": 2400, "n": 78},
+                    "cases": [{"building_name": "빌리브센트하이", "included": True,
+                               "per_pyeong_10k": 2386.6}]}
+        return {"dong": {"median": 1391, "n": 102}, "sigungu": {"median": 1391, "n": 102}}
+
+    monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong", spy, raising=True)
+    # ★`_resolve_…` 는 `sigungu5` 를 안 넘기므로 **지오코딩(VWorld)** 을 탄다 —
+    #   테스트 환경에선 실패해 2순위가 통째로 죽고 3순위(지역 시세표)로 떨어진다.
+    #   첫 판이 그래서 빨갰다. **전제를 맞춘다**(외부 의존을 고정).
+    async def fake_geo(_addr):
+        return "41360"
+    monkeypatch.setattr(spr, "_sigungu5_from_address", fake_geo, raising=True)
+
+    # ① precision 을 원하면 사례가 실린다
+    prec: dict = {}
+    price, src, _b, _d = await spr._resolve_sale_price_per_pyeong(
+        db=None, site_id=None, dev_type="M01", region="경기",
+        address="경기도 남양주시 화도읍 마석우리 265-1", precision_out=prec)
+    assert src == "분양권 전매(MOLIT)", src
+    assert prec.get("presale_case_count") == 1, f"사례가 정밀화 출력에 안 실렸다: {prec}"
+    assert prec["presale_cases"][0]["building_name"] == "빌리브센트하이"
+    assert seen == [True], f"사례를 원하는데 수집을 안 켰다: {seen}"
+
+    # ② ★precision 을 안 원하면 **수집도 안 한다**(비용 0)
+    seen.clear()
+    price2, src2, _b2, _d2 = await spr._resolve_sale_price_per_pyeong(
+        db=None, site_id=None, dev_type="M01", region="경기", address="x")
+    assert src2 == "분양권 전매(MOLIT)"
+    assert seen == [False], f"사례가 필요 없는데 수집했다: {seen}"
+    # ★음성 대조군 — 값 자체는 두 경로가 같아야 한다(사례 수집이 값을 바꾸면 안 된다)
+    assert price == price2, f"사례 수집 여부가 분양가를 바꿨다: {price:,} ≠ {price2:,}"
