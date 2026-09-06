@@ -15,7 +15,12 @@
  */
 
 /** 사용자가 스스로 취소·거부한 경우. 공급자별 표기가 다르다. */
-const USER_CANCELLED = new Set([
+// ★테스트가 이 집합을 **파생**해 전수로 태운다 — 손으로 두 개만 고르면 나머지가 무잠금이다.
+//   2026-09-06 기계 변이 감사(base 7609325e): 5종 중 2종만 태우고 있어
+//   "user_cancelled_login"·"consent_required" 변이가 **SURVIVED** 였다.
+//   ★네이버가 실제로 쓰는 취소 코드가 그 안에 있어, 오분류되면 사용자에게
+//     「취소하셨습니다」 대신 **기술 코드가 박힌 설정오류 문구**가 뜬다.
+export const USER_CANCELLED = new Set([
   "access_denied", // OAuth 2.0 표준 (구글·네이버 공통)
   "user_cancel", // 일부 공급자
   "cancel",
