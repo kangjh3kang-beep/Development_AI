@@ -8,9 +8,11 @@
   열린 인사이트 126건 중 **치유기가 분기를 가진 것은 0건**이었다.
   그런데 그것을 말해 주는 기계가 **하나도 없었다** — 좁힌 사유는 산문 주석뿐이었다.
 
-★그리고 그 산문은 **이미 낡아 있었다**: 주석이 `analyzer.py:846` 을 가리키는데
-  현재 846 은 `"none"` 이고 실제 자리는 **1064** 다. **주석을 인용하지 말고 파생하라** —
-  이 락이 정확히 그것을 한다.
+★그리고 그 산문은 **이미 낡아 있었다**: `healing_rules` 주석이 인용한 `analyzer.py` 줄번호가
+  현재 코드와 어긋난다. ★**그런데 그것을 지적한 이 파일의 초판도 같은 실수를 했다** —
+  저자가 **83줄 뒤처진 공유 메인**에서 재고 그 좌표를 실었다(독립 리뷰 2026-09-06 적발).
+  ⇒ **줄번호를 인용하지 마라. 좌표는 썩고 심볼은 안 썩는다.** 이 락은 좌표를 쓰지 않고
+  `insight_type_for_latency` 와 `recommended_action` 표현식을 **AST 로 파생**한다.
 
 ★이 락은 **처방을 강제하지 않는다.** 「분기를 갖거나, 사유를 적고 면제하거나」 둘 중
   하나를 강제할 뿐이다. 치유를 붙일지는 사람의 판단이다.
@@ -42,7 +44,12 @@ _MAX_SHARED_VARS = 4
 
 
 def _string_constants(node: ast.AST) -> set[str]:
-    """표현식 안의 문자열 상수를 전부 모은다(마지막 수단의 보수적 근사)."""
+    """표현식 안의 문자열 상수를 전부 모은다.
+
+    ★**보수적 근사가 아니다** — bare `Name`·`Subscript` 처럼 상수가 없는 표현식에서는
+      **빈 집합을 반환하는 과소근사**다(독립 리뷰 지적 · §C-11 거짓 면역 주장 금지).
+      그래서 이 함수만으로는 안 되고, 호출부에 **「모르면 실패」 회계**가 함께 있어야 한다.
+    """
     return {
         n.value for n in ast.walk(node)
         if isinstance(n, ast.Constant) and isinstance(n.value, str)
@@ -117,7 +124,11 @@ def _heal_emitting_types() -> tuple[set[str], int]:
     두 표현식의 **공유 자유변수**에 대해 {참, 거짓} 을 전부 대입해, **같은 대입에서**
     `recommended_action` 이 `"heal"` 이 되는 경우의 `insight_type` 만 모은다.
 
-    반환: (타입 집합, 발행 자리 총수 — 공허 진리 가드용)
+    반환: (타입 집합, **파서가 인식한 dict 리터럴 자리 수** — 공허 진리 가드용)
+
+    ★이 수는 「발행 자리 수」가 **아니다**. INSERT 파라미터 dict 처럼 발행이 아닌 자리도
+      같은 두 키를 갖기 때문이다(독립 리뷰 지적). 공허 진리 가드의 용도로는 충분하다 —
+      재는 것은 「파서가 무언가를 읽었는가」이지 「발행이 몇 건인가」가 아니다.
     """
     tree = ast.parse(_ANALYZER.read_text(encoding="utf-8"))
     funcs = _module_functions(tree)
@@ -134,13 +145,39 @@ def _heal_emitting_types() -> tuple[set[str], int]:
             continue
         sites += 1
         it_expr, ra_expr = keyed["insight_type"], keyed["recommended_action"]
+        # ★**모르는 형태를 만나면 조용히 빠지지 않고 실패한다.**
+        #   형제 `test_healer_fetches_only_handled_types._branch_types()` 가 이미 쓰던 패턴이다
+        #   — 초판은 안 가져왔고, 독립 리뷰가 **변수 경유 형태**(`"recommended_action": _ACT`)로
+        #   진짜 고아를 심었는데 락이 **초록**이었다(`::VERDICT=SURVIVED`).
+        #
+        #   ★판정 지점을 **두 단계**로 나눈다. 초판은 두 표현식을 똑같이 엄격히 봤는데,
+        #     그러면 **정당한 통과 자리**(이미 발행된 인사이트를 INSERT 파라미터로 다시
+        #     싣는 dict — `ins["insight_type"]`)까지 실패시킨다. 그것은 **원천 선언이 아니다**:
+        #     그 타입은 분석기의 자기 dict 리터럴에서 **이미 한 번 세어졌다.**
+        #     ⇒ ①`recommended_action` 의 **형태**는 무조건 엄격히 본다(여기서 heal 여부가 갈린다)
+        #       ②`insight_type` 은 **heal 이 가능할 때만** 해석 가능해야 한다
+        #     이러면 변수 경유·f-string 은 ①에서 죽고, 통과 자리는 ②에 도달하지 않는다.
+        if not isinstance(ra_expr, (ast.Constant, ast.IfExp, ast.BoolOp, ast.Call)):
+            raise AssertionError(
+                f"★파서가 모르는 `recommended_action` 표현식 형태: "
+                f"{type(ra_expr).__name__} (`{ast.unparse(ra_expr)[:80]}`). "
+                "변수 경유·f-string 등이면 이 파서를 넓히거나 그 형태를 쓰지 마라 — "
+                "**조용히 통과시키지 않는다.** 여기서 놓치면 진짜 고아가 초록으로 지나간다.")
         shared = sorted(_free_names(it_expr) & _free_names(ra_expr))[:_MAX_SHARED_VARS]
         assignments: list[dict[str, bool]] = [{}]
         for name in shared:
             assignments = [{**a, name: b} for a in assignments for b in (True, False)]
         for env in assignments:
-            if "heal" in _eval_strings(ra_expr, env, funcs):
-                heal_types |= _eval_strings(it_expr, env, funcs)
+            if "heal" not in _eval_strings(ra_expr, env, funcs):
+                continue
+            resolved = _eval_strings(it_expr, env, funcs)
+            if not resolved:
+                raise AssertionError(
+                    f"★`recommended_action` 이 heal 이 될 수 있는데 `insight_type` 을 "
+                    f"해석하지 못했다: {type(it_expr).__name__} "
+                    f"(`{ast.unparse(it_expr)[:80]}`). 어느 타입이 고아인지 알 수 없으므로 "
+                    "**판정 불가**다 — 조용히 빠지지 않는다.")
+            heal_types |= resolved
     return heal_types, sites
 
 
@@ -254,3 +291,37 @@ def test_current_tree_is_green_end_to_end() -> None:
         "면제표에서 지워야 한다(위 `test_no_dead_exemptions` 가 잡는다)."
     )
     assert not (heal_types - set(HANDLED_INSIGHT_TYPES) - set(HEAL_UNHANDLED_REASONS))
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# ⑥ ★부채 — 초록 안에 보이게 남긴다(§13: 커밋 메시지에만 적으면 드러나지 않는다)
+# ════════════════════════════════════════════════════════════════════════════
+
+@pytest.mark.xfail(
+    reason=(
+        "★모집단 축이 좁다 — 독립 리뷰(2026-09-06)가 실측한 두 한계. "
+        "①이 파서는 `analyzer.py` 안의 **dict 리터럴**만 본다. `dict(...)` 호출·`**` 언패킹·"
+        "`d[k]=` 갱신으로 만든 인사이트는 **자리 자체가 보이지 않는다**(형태 검사에 도달조차 못 함). "
+        "②`INSERT INTO platform_insights` 생산자는 **넷**이다(analyzer · healing_rules · "
+        "heal_actions · improvement_agent). 그중 `heal_actions` 는 SQL **리터럴**에 heal 을 실어 "
+        "AST 로 볼 수 없다(오늘은 그 타입이 `stale_reanalysis` 라 HANDLED 에 있어 고아가 아니다). "
+        "⇒ 이 락은 **analyzer 의 dict 리터럴 축**만 잠근다. 나머지 축은 미잠금."
+    ),
+    strict=True,
+)
+def test_debt_all_insight_producers_are_covered() -> None:
+    """★부채가 해소되면 이 테스트가 **XPASS 로 빨개져서** 알려 준다(strict=True).
+
+    해소 조건: 파서가 네 생산자를 전부 보고, dict 리터럴 아닌 형태도 판정하게 될 때.
+    """
+    import subprocess
+
+    api_root = Path(__file__).resolve().parents[1]
+    out = subprocess.run(
+        ["grep", "-rl", "INSERT INTO platform_insights", "--include=*.py", "app/"],
+        cwd=api_root, capture_output=True, text=True,
+    ).stdout.split()
+    assert len(out) <= 1, (
+        f"`platform_insights` 생산자가 {len(out)}개인데 이 락은 analyzer 하나만 판정한다: "
+        f"{sorted(out)}"
+    )

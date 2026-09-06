@@ -23,15 +23,15 @@
 
 | # | 전제 | 확인 방법 | **결과 (2026-09-06 09:0x–09:3xZ 실측)** |
 |---|---|---|---|
-| 1 | 분석기가 `recommended_action='heal'` 를 싣는 타입이 있다 | `ast` 로 `insight_type`+`recommended_action` 을 함께 가진 dict 리터럴을 **파생** | **7종 발견**. `heal` 은 2자리: `L775 fallback_rate`, **`L1064 insight_type_for_latency(sev)` → `'heal' if sev else 'none'`** |
+| 1 | 분석기가 `recommended_action='heal'` 를 싣는 타입이 있다 | `ast` 로 `insight_type`+`recommended_action` 을 함께 가진 dict 리터럴을 **파생** | **dict 리터럴 7자리 인식**. `heal` 은 2자리: `fallback_rate`(상수), **`insight_type_for_latency(sev)` + `'heal' if sev else 'none'`**. ★**줄번호를 쓰지 않는다** — 초판은 좌표를 실었고 그 좌표가 틀렸다(아래 전제 9) |
 | 2 | 치유기가 분기를 가진 타입 | `grep` 선언 | `HANDLED_INSIGHT_TYPES = ("fallback_rate", "stale_reanalysis")` (healing_rules.py:131) |
-| 3 | ⇒ 도달 불가한 처방이 실재하는가 | 1 − 2 차집합 | ★**`latency_regression` 이 `heal` 을 내는데 HANDLED 에 없다.** 후보 쿼리(`:335`)가 `insight_type = ANY(:handled)` 로 거르므로 **원리적으로 도달 불가** |
+| 3 | ⇒ 도달 불가한 처방이 실재하는가 | 1 − 2 차집합 | ★**`latency_regression` 이 `heal` 을 내는데 HANDLED 에 없다.** 후보 쿼리(`_candidate_actions`)가 `insight_type = ANY(:handled)` 로 거르므로 **원리적으로 도달 불가** |
 | 4 | 라이브에 그 인사이트가 쌓여 있는가 | 라이브 DB 집계 | 최근 3일 **열린 `latency_regression` 22건**(최신 `2026-09-05T22:05:05Z`). 열린 인사이트 총 126건 중 **치유기가 분기를 가진 타입은 0건** |
 | 5 | 치유 잡이 죽은 것은 아닌가 | `platform_settings.growth_last_run.heal` | **`2026-09-06T09:02:16Z`** — 20분 전에 돌았다. **생산자는 살아 있다** |
 | 6 | 캡에 막힌 것은 아닌가 | `platform_events` 에서 `heal_blocked` 집계 (+ 대조군) | **전체 0건.** 대조군 생존 확인: `api_call` 230,077 · `heal_action` 524 조회됨 ⇒ **조회기 정상, 진짜 0건** |
-| 7 | `_guard_counts` 가 영구 억제하는가 | 소스 원문 | **아니다** — `since = now - timedelta(hours=1)` (healing_rules.py:210). 1시간 창 |
-| 8 | `fallback_rate` 축은 왜 조용한가 | `growth_analysis` 발행물 + 분모 추적 | `{"axes":"fal 0/0 lat 0/8 qua 0/0","state":"starved"}`. 분모는 `event_type='llm_call'`(analyzer.py:732) → 최근 36h **2건**, 마지막 `2026-09-05T01:07Z`. 최근 36h 트래픽은 **지도타일·인증·프로젝트뿐**(route 열 상위 12개에 분석 라우트 0건) ⇒ ★**사건 미발생** |
-| 9 | ★인용된 주석이 현재도 맞는가 | 원문 대조 | **틀렸다.** healing_rules 주석이 *"latency_regression 은 `analyzer.py:846` 에서 heal 을 낸다"* 고 하는데 **현재 846 은 `'none'`**. 실제 자리는 **1064**. ⇒ 주석을 인용하지 않고 **AST 로 다시 셌다** |
+| 7 | `_guard_counts` 가 영구 억제하는가 | 소스 원문 | **아니다** — `_guard_counts` 안이 `since = now - timedelta(hours=1)`. 1시간 창 |
+| 8 | `fallback_rate` 축은 왜 조용한가 | `growth_analysis` 발행물 + 분모 추적 | `{"axes":"fal 0/0 lat 0/8 qua 0/0","state":"starved"}`. 분모는 `event_type='llm_call'`(`_analyze_fallback_rate` 의 SQL) → 최근 36h **2건**, 마지막 `2026-09-05T01:07Z`. 최근 36h 트래픽은 **지도타일·인증·프로젝트뿐**(route 열 상위 12개에 분석 라우트 0건) ⇒ ★**사건 미발생** |
+| 9 | ★인용된 주석이 현재도 맞는가 | 원문 대조 | **틀렸다** — `healing_rules` 주석이 인용한 `analyzer.py` 줄번호가 현재 코드와 어긋난다. ★★**그리고 이 계획서의 초판도 같은 실수를 했다**: 저자가 **공유 메인**(`0ecdb5122` · `analyzer.py` 가 **83줄 뒤처짐**)에서 재고 그 좌표(`L775`·`L1064`)를 실었다. 워크트리 정본의 실제 자리는 `862`·`1153` 이고, 초판이 *"846 은 `none`"* 이라 쓴 줄은 **주석**이다. **독립 리뷰가 적발**(2026-09-06). ⇒ **줄번호를 인용하지 않는다 — 좌표는 썩고 심볼은 안 썩는다** |
 | 10 | 겹치는 claim 이 있는가 | `coord.sh status` | cd(sid=79cfa3eb) 의 `growth-route-key-normalization` 은 **관측 키** 영역. 이 계획은 `healing_rules.py` — 파일이 다름 |
 
 ---
@@ -71,6 +71,17 @@
 - **`api_call` 이 30만 행 넘게 쌓이는데 `service` 열이 전부 NULL** — `route` 는 정상. 별건, 미측정.
 
 ---
+
+- ★**모집단 축이 좁다 — 독립 리뷰 실측(2026-09-06)**. 둘 다 `it.xfail(strict=True)` 로 **초록 안에 보이게** 남겼다:
+  · 이 파서는 `analyzer.py` 의 **dict 리터럴**만 본다. `dict(...)` 호출·`**` 언패킹·`d[k]=` 갱신으로
+    만든 인사이트는 **자리 자체가 안 보인다**(형태 검사에 도달조차 못 함).
+  · `INSERT INTO platform_insights` 생산자는 **넷**이다(`analyzer` · `healing_rules` · `heal_actions` ·
+    `improvement_agent`). `heal_actions` 는 SQL **리터럴**에 `'heal'` 을 실어 AST 로 볼 수 없다
+    (오늘은 그 타입이 `stale_reanalysis` 라 HANDLED 에 있어 고아가 아니다).
+  ⇒ 이 락이 잠그는 것은 **analyzer 의 dict 리터럴 축**이다. 그 이상을 주장하지 않는다.
+- ★**초판의 락은 실제로 뚫렸다.** 독립 리뷰가 변수 경유(`"recommended_action": _ACT`)로 진짜 고아를
+  심었는데 `::VERDICT=SURVIVED` 였다. 형제 `_branch_types()` 의 **「모르면 실패」**를 이식해
+  재현 변이가 이제 `::VERDICT=CAUGHT` 다. **형제가 옆에 옳은 패턴을 갖고 있었는데 안 봤다**(§29).
 
 ## 4. 되돌리기 경로
 
