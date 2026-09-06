@@ -13,6 +13,7 @@ import uuid
 from datetime import UTC
 from typing import Any
 
+import structlog
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,8 +22,18 @@ from apps.api.app.utils.withheld import INSUFFICIENT_COVERAGE, withheld
 from apps.api.database.models.sales.site_org import SalesSite
 from apps.api.integrations.region_codes import pnu_to_bcode
 
+logger = structlog.get_logger(__name__)
+
 PYEONG_SQM = 3.305785
 _REF_EXCLUSIVE_SQM = 84.0          # 84타입 전용면적
+
+# ★「최근 건축년도」의 경계(년). 신축 분양가의 비교 대상을 고르는 축이다.
+#   실측(남양주 화도읍 · 8개월 469건 · 전용 만원/평):
+#       0~5년 3,226 · 6~10년 3,620 · 11~20년 1,997 · 21~30년 1,629 · 31년+ 914
+#   ★**10년과 11년 사이에서 크게 꺾인다**(3,620 → 1,997). 그래서 10을 경계로 둔다.
+#   ★서울 재건축 기대 지역은 31년+ 이 **반등**하지만(노원·강남 실측), 그것은
+#     «신축 분양가의 비교 대상»이 아니므로 이 축과 무관하다.
+_RECENT_BUILD_YEARS = 10
 _REF_SUPPLY_SQM = 112.4            # 84타입 표준 공급면적(전용률 ~74.7%)
 _REF_SUPPLY_PYEONG = round(_REF_SUPPLY_SQM / PYEONG_SQM, 1)  # ≈ 34.0평
 _JEONYULRYUL = 0.747               # 전용률(전용/공급) 표준 가정 — 전용 평당가→공급 평당가 환산
@@ -203,6 +214,9 @@ async def _trade_per_pyeong(
             mo = 12; y -= 1
     dong_pp: list[float] = []
     sigu_pp: list[float] = []
+    recent_dong_pp: list[float] = []
+    recent_sigu_pp: list[float] = []
+    _NOW_YEAR = now.year
     cases: list[dict[str, Any]] = []
     for ym in yms:
         try:
@@ -254,9 +268,31 @@ async def _trade_per_pyeong(
             sigu_pp.append(pp)
             if matched_dong:
                 dong_pp.append(pp)
+            # ★★**최근 건축년도(신축) 축을 따로 센다**(2026-09-06 · 사용자 결정).
+            #   기존 집계는 신축·구축을 **한 통**에 넣는다 — 실측(남양주 화도읍 469건):
+            #       전체 중앙 1,391 만원/평(전용) ↔ 신축(≤10년) **1,846** = **+33%**
+            #       ★21~30년 구축이 **202건(최다)** 이라 중앙값을 끌어내린다.
+            #   **신축 분양가의 비교 대상은 신축**이므로 별도 축으로 낸다.
+            #   ★기존 두 키(`dong`·`sigungu`)는 **손대지 않는다** — 무회귀.
+            try:
+                _by = int(r.get("build_year") or 0)
+            except (TypeError, ValueError):
+                _by = 0
+            if _by > 0 and (_NOW_YEAR - _by) <= _RECENT_BUILD_YEARS:
+                recent_sigu_pp.append(pp)
+                if matched_dong:
+                    recent_dong_pp.append(pp)
     result: dict[str, Any] = {
         "dong": {"median": round(statistics.median(dong_pp)) if dong_pp else None, "n": len(dong_pp)},
         "sigungu": {"median": round(statistics.median(sigu_pp)) if sigu_pp else None, "n": len(sigu_pp)},
+        # ★신축(최근 건축년도) 축 — 소비처가 없으면 그냥 안 읽는다(기존 계약 불변).
+        "recent_dong": {
+            "median": round(statistics.median(recent_dong_pp)) if recent_dong_pp else None,
+            "n": len(recent_dong_pp)},
+        "recent_sigungu": {
+            "median": round(statistics.median(recent_sigu_pp)) if recent_sigu_pp else None,
+            "n": len(recent_sigu_pp)},
+        "recent_build_years": _RECENT_BUILD_YEARS,
     }
     if collect_cases:
         result["cases"] = cases
@@ -371,8 +407,37 @@ async def suggest_base_price(
     # 아래 반환 dict들에 조건부로만 실려 반환 shape 을 불변으로 유지한다).
     trade_cases_extra: dict[str, Any] = {"trade_cases": pp.get("cases") or []} if collect_cases else {}
 
-    # ── 교차검증(신뢰루프): 동(앵커) vs 시군구. 이상치 제외·신뢰도 산출 ──
+    # ── 교차검증(신뢰루프): 앵커 vs 보조 신호. 이상치 제외·신뢰도 산출 ──
+    # ★★**앵커 계단을 올렸다**(2026-09-06 · 사용자 결정):
+    #     ①분양권 전매 → ②최근 건축년도(신축) 실거래 → ③혼합 실거래
+    #   종전 앵커는 ③(혼합)뿐이었고, 실측상 **-33.5%** 였다:
+    #       마석우리 공급평당 — 혼합 1,200 ↔ 분양권 1,827 ↔ 사용자 관측 실제 분양 1,804
+    #   ★기존 신호(동·시군구 실거래)는 **그대로 둔다** — 교차검증 재료로 계속 쓰인다.
+    #     바뀌는 것은 **어느 것을 앵커로 삼는가**다.
+    presale_pp: dict[str, Any] = {}
+    if prop_type == "apt":
+        try:
+            presale_pp = await _trade_per_pyeong(sigungu5, dong, "apt_presale")
+        except TypeError as e:
+            # ★시그니처 불일치는 «조회 실패»가 아니라 **배선 오류**다(무언 폴백 금지).
+            logger.error("분양권 조회 시그니처 불일치 — 배선 오류: %s", str(e)[:140])
+        except Exception as e:  # noqa: BLE001 — 조회 실패는 다음 단으로(무중단)
+            logger.warning("분양권 전매 조회 실패 — 다음 단으로: %s: %s",
+                           type(e).__name__, str(e)[:100])
+    p_med = (presale_pp.get("dong") or {}).get("median") or (presale_pp.get("sigungu") or {}).get("median")
+    p_n = ((presale_pp.get("dong") or {}).get("n") or 0) or ((presale_pp.get("sigungu") or {}).get("n") or 0)
+    rec = pp.get("recent_dong") or {}
+    if not (rec.get("median") and (rec.get("n") or 0) >= 5):
+        rec = pp.get("recent_sigungu") or {}
+
     signals: list[Signal] = []
+    # ★분양권은 **이미 신축 분양가**다 — 가장 직접적인 신호(가중치 최상).
+    if p_med and p_n >= 5:
+        signals.append(Signal("분양권_전매", float(p_med), sample_size=int(p_n),
+                              source="live", weight=1.6))
+    if rec.get("median") and (rec.get("n") or 0) >= 5:
+        signals.append(Signal("신축_실거래", float(rec["median"]), sample_size=int(rec["n"]),
+                              source="live", weight=1.45))
     if d_med:
         signals.append(Signal("동_실거래", float(d_med), sample_size=d_n, source="live", weight=1.3))
     if s_med:
@@ -382,8 +447,12 @@ async def suggest_base_price(
                 "note": "주변 실거래가 없어 적정분양가를 산출할 수 없습니다(가짜값 금지).",
                 **trade_cases_extra}
 
+    # ★앵커도 같은 계단을 따른다 — 신호를 추가만 하고 앵커를 안 바꾸면 **값이 안 움직인다**.
+    _names = {sig.name for sig in signals}
+    _anchor = next((n for n in ("분양권_전매", "신축_실거래", "동_실거래", "시군구_실거래")
+                    if n in _names), "시군구_실거래")
     trust = cross_validate(
-        signals, anchor="동_실거래" if d_med else "시군구_실거래",
+        signals, anchor=_anchor,
         outlier_ratio=1.6, min_anchor_samples=20, plausible_min=_PP_MIN, plausible_max=_PP_MAX,
     )
     if trust.trusted_value is None or trust.verdict == "fail":

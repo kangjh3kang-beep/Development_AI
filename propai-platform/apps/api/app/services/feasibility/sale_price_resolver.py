@@ -289,6 +289,32 @@ async def _trade_sale_price_per_pyeong(
                 return price, "분양권 전매(MOLIT)", basis, None, p_n
 
         pp = await _trade_per_pyeong(sigungu5, dong, prop_type)
+
+        # ★★**2-b 단: 최근 건축년도(신축) 실거래**(2026-09-06 · 사용자 결정).
+        #   «청약홈/분양권 → 없으면 가장 최근 건축년도 실거래»의 그 단이다.
+        #   ★신축 분양가의 비교 대상은 신축이다. 혼합 표본을 쓰면 구축이 끌어내린다 —
+        #     실측(화도읍 469건 전용 만원/평): 전체 1,391 ↔ 신축(≤10년) **1,846** = **+33%**
+        #     (21~30년 구축이 **202건 최다**라 중앙값을 지배한다).
+        #   ★신축 표본에도 **신축 프리미엄은 적용한다** — 매매가에서 분양가로 가는
+        #     환산이지 «구축→신축» 보정이 아니기 때문이다(분양권 단과 다른 이유).
+        r_d, r_s = pp.get("recent_dong") or {}, pp.get("recent_sigungu") or {}
+        if r_d.get("median") and (r_d.get("n") or 0) >= _MIN_TRADE_SAMPLES:
+            r_scope, r_med, r_n = "동", int(r_d["median"]), int(r_d["n"])
+        elif r_s.get("median") and (r_s.get("n") or 0) >= _MIN_TRADE_SAMPLES:
+            r_scope, r_med, r_n = "시군구", int(r_s["median"]), int(r_s["n"])
+        else:
+            r_scope = None
+        if r_scope:
+            yrs = pp.get("recent_build_years")
+            ratio, ratio_note = _exclusive_ratio_for(dev_type, building_type)
+            premium = _PREMIUM["base"]
+            price = int(round(r_med * ratio * premium * 10000))
+            basis = (
+                f"신축 실거래(MOLIT · 준공 {yrs}년 이내) {r_scope} 중앙값 {r_med:,}만원/평"
+                f"(전용, 표본 {r_n}건·최근 8개월) × {ratio_note} × 신축 프리미엄 {premium}"
+                f" → 공급 평당가(공급면적 기준·물건종별 {prop_type})"
+            )
+            return price, "신축 실거래(MOLIT)", basis, None, r_n
     except Exception as e:  # noqa: BLE001 — 실거래 조회 실패는 지역 시세로 폴백(무중단)
         logger.warning("주변 실거래(MOLIT) 분양단가 조회 실패 — 지역 시세 폴백: %s", str(e)[:120])
         return None
