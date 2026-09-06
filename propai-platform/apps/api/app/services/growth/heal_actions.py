@@ -38,6 +38,42 @@ ACTION_CIRCUIT_OBSERVE = "circuit_observe"     # 관측·기록만
 _ACTOR = "growth_engine"
 
 
+def build_heal_payload(action_id: str, action_type: str, params: dict[str, Any], *,
+                       rollbackable: bool, setting_key: str | None,
+                       ttl_expires_at: str | None, actor: str,
+                       executed: bool | None, no_op_reason: str | None) -> dict[str, Any]:
+    """`heal_action` 이벤트 payload 의 **정본**. 두 생산자가 이 하나를 쓴다.
+
+    ## ★왜 공용인가 — 복제가 이미 형제를 만들었다
+
+    `heal_action` 이벤트를 쓰는 곳은 **둘**이다:
+    `heal_actions._emit_heal_event`(L0) 와 `feature_flags._emit_l1_event`(L1).
+    두 번째가 이 payload 를 **복제**하고 있었고, 라이브 524행 중 **441행(84.2%)** 의
+    생산자다. `#995` 가 `executed`/`no_op_reason` 을 L0 에만 넣어 **L1 이 그대로 뒤처졌다**.
+
+    ★저장소가 **이미 경고하고 있었다**:
+      · `effector_firing.py` — *"L0·L1 **공통**. 한쪽만 보면 **절반을 놓친다**"*
+      · `feature_flags.py` — *"★공용 헬퍼를 **재사용**한다. **복제하면 한쪽만 고쳐지는
+        형제가 또 생긴다**"*
+
+    ***한 곳을 고치면 전역이 따라오게*** 하려면 함수가 아니라 **payload 를 만드는 코드**를
+    공용화해야 한다(공용화의 축이 한 층 위여야 한다).
+    """
+    return {
+        "action_id": action_id,
+        "action_type": action_type,
+        "params": params,
+        "rollbackable": rollbackable,
+        "setting_key": setting_key,
+        "ttl_expires_at": ttl_expires_at,
+        "actor": actor,
+        # ★무동작을 **산출물에서 구별 가능하게** 한다. 이것이 없으면 아무 일도 안 한 행이
+        #   `/growth/heal-log` 에서 진짜 치유와 **같은 모양**으로 보인다.
+        "executed": executed,
+        "no_op_reason": no_op_reason,
+    }
+
+
 async def _emit_heal_event(db, action_id: str, action_type: str,
                            params: dict[str, Any], *, severity: str = "info",
                            service: str | None = None,
@@ -55,19 +91,12 @@ async def _emit_heal_event(db, action_id: str, action_type: str,
 
     from sqlalchemy import text
 
-    payload = {
-        "action_id": action_id,
-        "action_type": action_type,
-        "params": params,
-        "rollbackable": rollbackable,
-        "setting_key": setting_key,
-        "ttl_expires_at": ttl_expires_at.isoformat() if ttl_expires_at else None,
-        "actor": _ACTOR,
-        # ★무동작을 **산출물에서 구별 가능하게** 한다. 이것이 없으면 아무 일도 안 한 행이
-        #   `/growth/heal-log` 에서 진짜 치유와 **같은 모양**으로 보인다(적대 리뷰 실측).
-        "executed": executed,
-        "no_op_reason": no_op_reason,
-    }
+    payload = build_heal_payload(
+        action_id, action_type, params,
+        rollbackable=rollbackable, setting_key=setting_key,
+        ttl_expires_at=ttl_expires_at.isoformat() if ttl_expires_at else None,
+        actor=_ACTOR, executed=executed, no_op_reason=no_op_reason,
+    )
     try:
         await db.execute(text(
             "INSERT INTO platform_events "
@@ -159,7 +188,7 @@ async def _do_threshold_relax(db, action_id, params, service, severity):
     await _emit_heal_event(db, action_id, ACTION_THRESHOLD_RELAX, params,
                            severity=severity, service=service,
                            setting_key=setting_key, ttl_expires_at=ttl,
-                           rollbackable=True)
+                           rollbackable=True, executed=ok)
     await _audit(ACTION_THRESHOLD_RELAX, action_id, detail)
     return {"action_id": action_id, "type": ACTION_THRESHOLD_RELAX,
             "executed": ok, "setting_key": setting_key, "ttl_expires_at": ttl,
@@ -261,7 +290,8 @@ async def _do_stale_reanalysis(db, action_id, params, service, severity):
 
     detail = {"queued_suggestion": inserted, "auto_executed": False, "params": params}
     await _emit_heal_event(db, action_id, ACTION_STALE_REANALYSIS, params,
-                           severity=severity, service=service, rollbackable=False)
+                           severity=severity, service=service, rollbackable=False,
+                           executed=inserted)
     await _audit(ACTION_STALE_REANALYSIS, action_id, detail)
     return {"action_id": action_id, "type": ACTION_STALE_REANALYSIS,
             "executed": inserted, "detail": detail}
@@ -270,8 +300,15 @@ async def _do_stale_reanalysis(db, action_id, params, service, severity):
 async def _do_circuit_observe(db, action_id, params, service, severity):
     """CircuitBreaker OPEN/폴백 관측 — 이벤트화·heal-log 기록만(circuit 로직 불변)."""
     detail = {"service": service, "observation": params}
-    await _emit_heal_event(db, action_id, ACTION_CIRCUIT_OBSERVE, params,
-                           severity=severity, service=service, rollbackable=False)
+    # ★`executed=True` 는 «관측을 기록했다»는 뜻이다(차단기를 여닫지 않는 것이 **설계**).
+    #   ★**그 사실을 `no_op_reason` 으로 싣지 않는다** — 그 필드는 «무동작일 때의 사유»로
+    #   정의돼 있어서(`HealActionOut.no_op_reason`), `executed=True` 에 붙이면
+    #   «사유가 있으면 무동작» 으로 읽는 소비자가 이 30행을 **오분류**한다.
+    #   설계 사실은 `params.mode` 로 싣는다(다른 축, 다른 이름).
+    await _emit_heal_event(db, action_id, ACTION_CIRCUIT_OBSERVE,
+                           {**params, "mode": "observe_only"},
+                           severity=severity, service=service, rollbackable=False,
+                           executed=True)
     await _audit(ACTION_CIRCUIT_OBSERVE, action_id, detail)
     return {"action_id": action_id, "type": ACTION_CIRCUIT_OBSERVE,
             "executed": True, "detail": detail}
@@ -326,7 +363,8 @@ async def rollback(db, action_id: str, *, actor_id: str | None = None) -> dict[s
         pass
     await _emit_heal_event(db, str(uuid.uuid4()), "rollback",
                            {"original_action_id": action_id, "setting_key": setting_key},
-                           severity="info", setting_key=setting_key, rollbackable=False)
+                           severity="info", setting_key=setting_key, rollbackable=False,
+                           executed=cleared)
     return {"rolled_back": cleared, "setting_key": setting_key, "detail": detail}
 
 
