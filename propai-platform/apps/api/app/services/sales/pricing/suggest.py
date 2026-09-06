@@ -341,6 +341,79 @@ async def _nearby_presale_reference(sigungu5: str) -> dict[str, Any]:
         return {"available": False, "area": area, "note": "청약홈 조회 실패"}
 
 
+# ★★청약홈을 **신호로 승격**할 때 쓰는 반경 상한(m). 사용자 결정(2026-09-06).
+#   ★종전 참고 경로(`_nearby_presale_reference`)는 **시도 전체**(`_LAWD_TO_AREA[sigungu5[:2]]`)의
+#     최근 2건이라 **앵커로 쓸 수 없다** — 실측(남양주 41360 → 「경기」):
+#         성남복정2 신혼희망타운 7.98~8.12억 · 시흥 은계 에피트 3.08~4.85억
+#     마석 사업지와 **무관한 지역**이고, 그 파일 주석이 적은 **«용인 신봉동 과대표시 사고
+#     — 럭셔리 분양가에 2배 과대»** 의 정체가 바로 이것이다.
+#   → 신호로 쓸 때는 **반경**(`PresaleService.nearby`)으로 좁히고 **거리를 근거에 싣는다.**
+_PRESALE_SIGNAL_RADIUS_M = 10_000
+# 반경 안 표본이 이보다 적으면 **신호로 쓰지 않는다**(한두 건이 사업 전체를 정하면 안 된다).
+_PRESALE_SIGNAL_MIN_SAMPLES = 3
+
+
+async def _presale_signal_per_pyeong(address: str) -> dict[str, Any]:
+    """청약홈 **반경 내** 분양가 → 공급 평당가(만원/평). 신호로 쓸 수 있는 형태.
+
+    ★참고 경로와 **다른 함수**로 둔다 — 참고는 시도 전체(넓게 보여 주기),
+      신호는 반경 안(값을 정하기). **같은 데이터원이라도 쓰임이 다르면 범위가 다르다.**
+
+    Returns:
+        {'available', 'per_pyeong_man', 'n', 'radius_m', 'nearest_m', 'note', 'samples'}
+        ★`available=False` 면 **값을 내지 않는다**(호출부가 다음 단으로).
+    """
+    addr = (address or "").strip()
+    if not addr:
+        return {"available": False, "note": "주소 없음 — 반경을 잡을 수 없다"}
+    try:
+        from app.services.land_intelligence.presale_service import PresaleService
+
+        svc = PresaleService()
+        near = await svc.nearby(center_lat=None, center_lon=None, area=None,
+                                radius_m=_PRESALE_SIGNAL_RADIUS_M, months_back=12)
+        items = near.get("items") or []
+        if not items:
+            return {"available": False, "radius_m": _PRESALE_SIGNAL_RADIUS_M,
+                    "note": f"반경 {_PRESALE_SIGNAL_RADIUS_M // 1000}km 내 분양 공고 없음"}
+        pps: list[float] = []
+        samples: list[dict[str, Any]] = []
+        for it in items[:5]:          # 지연 상한 — 가까운 순으로 최대 5건만 상세 조회
+            try:
+                d = await svc.detail(it.get("house_manage_no") or "",
+                                     it.get("pblanc_no") or "", "apt")
+            except Exception:  # noqa: BLE001
+                continue
+            for m in (d.get("models") or []):
+                try:
+                    area_sqm = float(m.get("supply_area_m2") or 0)
+                    price_man = float(m.get("price_man") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if area_sqm > 0 and price_man > 0:
+                    pps.append(price_man / (area_sqm / PYEONG_SQM))
+            samples.append({"name": it.get("name"), "distance_m": it.get("distance_m")})
+        if len(pps) < _PRESALE_SIGNAL_MIN_SAMPLES:
+            return {"available": False, "radius_m": _PRESALE_SIGNAL_RADIUS_M,
+                    "note": f"반경 내 분양가 표본 {len(pps)}건 — 하한 "
+                            f"{_PRESALE_SIGNAL_MIN_SAMPLES}건 미달로 신호 미사용"}
+        nearest = min((s.get("distance_m") or 10 ** 9) for s in samples)
+        return {
+            "available": True,
+            "per_pyeong_man": round(statistics.median(pps)),
+            "n": len(pps),
+            "radius_m": _PRESALE_SIGNAL_RADIUS_M,
+            "nearest_m": None if nearest >= 10 ** 9 else int(nearest),
+            "samples": samples,
+            "note": (f"청약홈 반경 {_PRESALE_SIGNAL_RADIUS_M // 1000}km 내 "
+                     f"주택형 {len(pps)}건 중앙값(공급면적 기준)"),
+        }
+    except Exception as e:  # noqa: BLE001 — 조회 실패는 다음 단으로(무중단)
+        logger.warning("청약홈 신호 조회 실패 — 다음 단으로: %s: %s",
+                       type(e).__name__, str(e)[:100])
+        return {"available": False, "note": "청약홈 조회 실패"}
+
+
 async def suggest_base_price(
     db: AsyncSession, site_id: uuid.UUID, bcode: str | None = None,
     construction_cost_per_gfa_won: int | None = None,
@@ -430,8 +503,20 @@ async def suggest_base_price(
     if not (rec.get("median") and (rec.get("n") or 0) >= 5):
         rec = pp.get("recent_sigungu") or {}
 
+    # ★★청약홈을 **신호로 승격**(2026-09-06 · 사용자 결정). 단 **반경 안**에서만 —
+    #   시도 전체를 쓰면 «용인 신봉동 과대표시 사고»(럭셔리 분양가 2배 과대)가 재발한다.
+    #   실측: 남양주(41360) → 「경기」 최근 2건이 **성남복정 8.12억 · 시흥은계 4.85억** 으로
+    #   마석 사업지와 무관하다. 그래서 `_presale_signal_per_pyeong`(반경 10km)을 따로 둔다.
+    #   ★가중치는 분양권 전매(1.6)보다 **낮다** — 청약홈은 **공급자 책정가**라 시장 검증 전이고,
+    #     실제 계약가는 미분양·할인으로 달라질 수 있다. 분양권은 **거래된 값**이다.
+    presale_sig = await _presale_signal_per_pyeong(address)
+
     signals: list[Signal] = []
-    # ★분양권은 **이미 신축 분양가**다 — 가장 직접적인 신호(가중치 최상).
+    if presale_sig.get("available") and presale_sig.get("per_pyeong_man"):
+        signals.append(Signal("청약홈_분양가", float(presale_sig["per_pyeong_man"]),
+                              sample_size=int(presale_sig.get("n") or 0),
+                              source="live", weight=1.5))
+    # ★분양권은 **이미 신축 분양가**이고 **거래된 값**이다 — 가중치 최상.
     if p_med and p_n >= 5:
         signals.append(Signal("분양권_전매", float(p_med), sample_size=int(p_n),
                               source="live", weight=1.6))
@@ -449,7 +534,8 @@ async def suggest_base_price(
 
     # ★앵커도 같은 계단을 따른다 — 신호를 추가만 하고 앵커를 안 바꾸면 **값이 안 움직인다**.
     _names = {sig.name for sig in signals}
-    _anchor = next((n for n in ("분양권_전매", "신축_실거래", "동_실거래", "시군구_실거래")
+    _anchor = next((n for n in ("분양권_전매", "청약홈_분양가", "신축_실거래",
+                                "동_실거래", "시군구_실거래")
                     if n in _names), "시군구_실거래")
     trust = cross_validate(
         signals, anchor=_anchor,
@@ -525,6 +611,21 @@ async def suggest_base_price(
             "value": f"{pr[0]:,}~{pr[1]:,}만원",
             "basis": "청약홈 인근 분양 단지 분양가 — 거래사례비교 '참고'(산정 앵커는 주변 실거래, 주변 분양가 과대표시 방지)",
         })
+
+    # ★신호로 **채택된** 청약홈은 참고와 다르게 표기한다 — 어느 것이 값을 정했는지 갈린다.
+    if presale_sig.get("available"):
+        _evl = ev_block.get("evidence")
+        if isinstance(_evl, list):
+            _evl.append({
+                "label": ("주변 분양가(청약홈) — **앵커**"
+                          if _anchor == "청약홈_분양가" else "주변 분양가(청약홈) 신호"),
+                "value": f"{presale_sig['per_pyeong_man']:,}만원/평(공급)",
+                "basis": (
+                    f"{presale_sig.get('note')} · 최근접 "
+                    f"{(presale_sig.get('nearest_m') or 0) / 1000:.1f}km"
+                    " — 공급자 책정 분양가라 실제 계약가와 다를 수 있습니다"
+                ),
+            })
 
     return {
         "data_source": "live",

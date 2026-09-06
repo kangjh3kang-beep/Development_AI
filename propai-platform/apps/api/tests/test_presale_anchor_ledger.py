@@ -26,8 +26,6 @@ from __future__ import annotations
 
 import pathlib
 
-import pytest
-
 _SUGGEST = (pathlib.Path(__file__).resolve().parents[1]
             / "app/services/sales/pricing/suggest.py")
 
@@ -60,26 +58,49 @@ def test_과소표시_위험도_기록돼_있다() -> None:
     assert "1,804" in src[at:at + 600], "실측 수치가 흩어져 있어 대조가 안 된다"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "★부채가 **줄었다**(2026-09-06 · 사용자 결정으로 앵커 계단 승격). 이제 site 연결 경로의 "
-    "앵커는 **분양권 전매 → 신축 실거래 → 동 실거래 → 시군구 실거래** 계단을 따른다 — "
-    "종전 «혼합 실거래 고정»(실측 -33.5%)이 아니다. **남은 것은 청약홈뿐**: "
-    "`_nearby_presale_reference` 는 여전히 `evidence` 에 «참고»로만 실리고 신호가 아니다. "
-    "★청약홈은 **공급자가 책정한 분양가**라 시장 검증 전이고, 반경 밖이면 0건이다"
-    "(실측: 마석우리 10km 0건 · 20km 28건). 그래서 **자동 앵커로 올리는 것은 별도 판단**이고, "
-    "지금은 사용자가 **화면에서 사례를 골라** 넣는 경로(W4-FE)로 대신한다. "
-    "청약홈을 신호로 올리면 이 표식이 자연히 풀린다."))
-def test_debt_청약홈_분양가도_신호로_쓴다() -> None:
-    """부채: 청약홈이 **신호(앵커 후보)** 인가 — 지금은 `evidence` 참고일 뿐이다.
+def test_청약홈_신호는_반경으로_좁힌다_시도전체_금지() -> None:
+    """★★부채 **회수**(2026-09-06 · 사용자 결정으로 신호 승격). 그리고 **사고를 막는다.**
 
-    ★분양권·신축은 **이미 신호로 올라갔다**(위 `test_앵커_계단이_…` 가 잠근다).
-      이 표식이 덮는 범위는 **청약홈 하나**로 좁아졌다 —
-      *«이 부채 문장이 덮는 범위 = 내가 덮었다고 생각한 범위?»*
+    ## 왜 반경이어야 하나 — 기록된 사고
+
+    이 파일의 참고 경로(`_nearby_presale_reference`)는 **시도 전체**를 본다:
+    `area = _LAWD_TO_AREA[sigungu5[:2]]`. 그 주석이 사고를 적어 뒀다 —
+    *«용인 신봉동 과대표시 사고: 주변 분양가를 산정 앵커로 쓰면 **럭셔리 분양가에 2배 과대**»*.
+
+    ★**실측이 그 사고를 재현했다**(남양주 41360 → 「경기」 최근 2건):
+
+        성남복정2 신혼희망타운   7.98 ~ 8.12억
+        시흥 은계 에피트         3.08 ~ 4.85억
+
+    마석 사업지와 **무관한 지역**이다. 이대로 신호로 올리면 사고가 **재발**한다.
+
+    → 신호는 **반경 기반**(`_presale_signal_per_pyeong`)으로만 쓴다.
+      참고 경로는 그대로 두되(넓게 보여 주기) **신호와 섞지 않는다.**
     """
+    from app.services.sales.pricing.suggest import (
+        _PRESALE_SIGNAL_MIN_SAMPLES,
+        _PRESALE_SIGNAL_RADIUS_M,
+        _presale_signal_per_pyeong,
+    )
+
     src = _SUGGEST.read_text(encoding="utf-8")
-    # 신호로 올라가면 `Signal("청약홈_분양가", ...)` 같은 형태가 생긴다
-    assert 'Signal("청약홈' in src or 'Signal("분양가_청약홈' in src, (
-        "청약홈이 여전히 evidence 참고일 뿐 신호가 아니다")
+    # ① 신호 함수가 **반경**을 쓴다(시도 전체가 아니다)
+    fn_at = src.index("async def _presale_signal_per_pyeong")
+    fn = src[fn_at:fn_at + 2600]
+    assert "radius_m=_PRESALE_SIGNAL_RADIUS_M" in fn, "신호가 반경을 안 쓴다 — 사고 재발 경로"
+    assert "_LAWD_TO_AREA" not in fn, (
+        "신호가 **시도 전체** 매핑을 쓴다 — 용인 신봉동 사고가 재발한다")
+    # ② 반경·표본 하한이 실효값이다(0 이면 사실상 무제한)
+    assert 1_000 <= _PRESALE_SIGNAL_RADIUS_M <= 30_000, (
+        f"반경 상한이 이상하다: {_PRESALE_SIGNAL_RADIUS_M}m")
+    assert _PRESALE_SIGNAL_MIN_SAMPLES >= 3, (
+        f"표본 하한 {_PRESALE_SIGNAL_MIN_SAMPLES} — 한두 건이 사업 전체 분양가를 정한다")
+    # ③ ★행위 — 주소가 없으면 **값을 내지 않는다**(반경을 잡을 수 없다)
+    import asyncio
+    out = asyncio.run(_presale_signal_per_pyeong("   "))
+    assert out.get("available") is False and "주소" in str(out.get("note")), out
+    # ④ ★참고 경로는 살아 있다(신호 승격이 참고를 지우지 않았다 — 넓은 시야는 여전히 필요)
+    assert "_nearby_presale_reference" in src
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -100,7 +121,7 @@ def test_앵커_계단이_분양권_신축_혼합_순이다() -> None:
     """
     src = _SUGGEST.read_text(encoding="utf-8")
     # ① 두 신호가 실재한다
-    for name in ("분양권_전매", "신축_실거래"):
+    for name in ("분양권_전매", "청약홈_분양가", "신축_실거래"):
         assert f'"{name}"' in src, f"신호 `{name}` 이 없다 — 계단이 무너졌다"
     # ② ★앵커 선택이 그 순서를 따른다(신호만 늘리고 앵커를 안 바꾸는 것을 막는다)
     at = src.find('_anchor = next(')
@@ -110,20 +131,26 @@ def test_앵커_계단이_분양권_신축_혼합_순이다() -> None:
     #   — 순서를 뒤집는 변이가 **SURVIVED**. *«어느 순서를 재는가»가 축이다.*
     #   → **소스에 등장하는 순서**를 뽑아 비교한다.
     import re as _re2
-    _raw = _re2.findall(r'"(분양권_전매|신축_실거래|동_실거래|시군구_실거래)"', block)
+    _raw = _re2.findall(
+        r'"(분양권_전매|청약홈_분양가|신축_실거래|동_실거래|시군구_실거래)"', block)
     # ★마지막 폴백 기본값(`), "시군구_실거래")`)이 한 번 더 잡힌다 — **첫 등장만** 센다.
     order: list[str] = []
     for n in _raw:
         if n not in order:
             order.append(n)
-    assert order == ["분양권_전매", "신축_실거래", "동_실거래", "시군구_실거래"], (
+    assert order == ["분양권_전매", "청약홈_분양가", "신축_실거래",
+                     "동_실거래", "시군구_실거래"], (
         f"앵커 우선순위가 계단과 다르다(소스 순서): {order}")
     # ③ ★분양권 가중치가 가장 높다(가장 직접적인 신호)
     import re as _re
     w = {m.group(1): float(m.group(2))
          for m in _re.finditer(r'Signal\("(\w+)".*?weight=([\d.]+)\)', src, _re.S)}
-    assert w.get("분양권_전매", 0) > w.get("신축_실거래", 0) > w.get("동_실거래", 0), (
+    assert (w.get("분양권_전매", 0) > w.get("청약홈_분양가", 0)
+            > w.get("신축_실거래", 0) > w.get("동_실거래", 0)), (
         f"가중치가 계단과 반대다: {w}")
+    # ★청약홈이 분양권보다 낮아야 한다 — **공급자 책정가**라 시장 검증 전이다.
+    assert w["청약홈_분양가"] < w["분양권_전매"], (
+        "청약홈이 분양권보다 높다 — 책정가가 거래가를 이기면 안 된다")
 
 
 def test_신축_축이_집계기에_실재하고_경계가_10년이다() -> None:
