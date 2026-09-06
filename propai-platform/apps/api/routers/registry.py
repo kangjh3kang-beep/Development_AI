@@ -1014,6 +1014,11 @@ async def parcel_purchase_strategy(
                     # ★액션 라벨을 문자열로 다시 적으면 계약 상수와 갈라진다(상수 이름이 바뀌어도
                     #   이 줄은 조용히 0 을 세고, 성장루프는 "판정보류 없음"으로 오독한다).
                     "undecided_rows": strategy["summary"]["by_action"].get(ACTION_UNDECIDED, 0),
+                    # ★★사유별로 가른 값도 함께 보낸다 — 정수 하나로는 성장루프가
+                    #   「사용자가 입력을 안 했다」와 「제품에 입력 필드가 없다」를 **구별 못 한다**.
+                    #   특히 `track_input_missing` 은 후자다(시행자유형·관리지역 UI 부재).
+                    #   ★`undecided_rows` 는 **그대로 둔다** — 제거가 아니라 분리다.
+                    "undecided_by_reason": strategy["summary"].get("undecided_by_reason") or {},
                     "secured_ratio_available": strategy["summary"]["secured_ratio_available"],
                     "geometry_unknown": strategy["summary"]["geometry_unknown_count"],
                     "scheme_provided": bool(req.scheme),

@@ -1634,3 +1634,113 @@ def test_형제_상한이_같은_상수를_공유한다() -> None:
 
     assert reg.MAX_STRATEGY_PARCELS == reg.MAX_BULK_ITEMS
     assert reg.MIN_STRATEGY_PARCELS == reg.MIN_BULK_ITEMS
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 판정보류 **사유별 분해** — 정수 하나로는 원인을 배울 수 없다
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_undecided_reason_parity_with_row_action() -> None:
+    """★★두 함수가 **같은 순서**를 공유하는가.
+
+    `_undecided_reason_code` 는 `_row_action` 의 시그니처를 바꾸지 않으려고 **형제 함수**로 뒀다.
+    그 대가는 **순서가 갈릴 수 있다**는 것이다 — 앞 조건이 먼저 반환하므로 **순서가 곧 의미**다.
+    순서가 다르면 같은 행이 다른 사유를 받는다. 여기서 **모든 갈래를 전수로** 태워 잠근다.
+
+    ★대조군을 함께 둔다 — 판정보류가 **아닌** 입력은 코드가 `None` 이어야 한다.
+      (그게 없으면 «항상 어떤 코드를 준다» 도 통과한다.)
+    """
+    from app.services.land_intelligence.parcel_purchase_strategy_service import (
+        ACTION_UNDECIDED, HOLDING_PERIOD_ACT, UNDECIDED_HOLDING_PERIOD, UNDECIDED_NO_ACT,
+        UNDECIDED_REASON_CODES, UNDECIDED_TOPOLOGY, UNDECIDED_TRACK_INPUT,
+        _row_action, _undecided_reason_code,
+    )
+
+    # (입력, 기대코드) — 네 갈래 전수 + 대조군 둘
+    cases = [
+        (dict(owner_judgment=None, governing_act=None, instrument=None,
+              requires_track_input=False, ratio_known=False, meets_threshold=None,
+              in_exclusion_set=False, exclusion_ok=None), UNDECIDED_NO_ACT),
+        (dict(owner_judgment=None, governing_act="소규모정비특례법", instrument="매도청구",
+              requires_track_input=True, ratio_known=False, meets_threshold=None,
+              in_exclusion_set=False, exclusion_ok=None), UNDECIDED_TRACK_INPUT),
+        (dict(owner_judgment=None, governing_act=HOLDING_PERIOD_ACT, instrument="매도청구",
+              requires_track_input=False, ratio_known=True, meets_threshold=True,
+              in_exclusion_set=False, exclusion_ok=None), UNDECIDED_HOLDING_PERIOD),
+        (dict(owner_judgment="가능(원칙)", governing_act=HOLDING_PERIOD_ACT, instrument="매도청구",
+              requires_track_input=False, ratio_known=True, meets_threshold=True,
+              in_exclusion_set=True, exclusion_ok=None), UNDECIDED_TOPOLOGY),
+    ]
+    # ★공허 진리 가드 — 케이스가 비면 아래 루프가 통째로 참이 된다.
+    assert len(cases) == 4, "갈래 수가 바뀌었다 — 케이스를 맞춰라"
+
+    seen: set[str] = set()
+    for kwargs, expected in cases:
+        action, _reason = _row_action(**kwargs)
+        assert action == ACTION_UNDECIDED, (kwargs, action)
+        code = _undecided_reason_code(
+            owner_judgment=kwargs["owner_judgment"], governing_act=kwargs["governing_act"],
+            requires_track_input=kwargs["requires_track_input"],
+            in_exclusion_set=kwargs["in_exclusion_set"], exclusion_ok=kwargs["exclusion_ok"],
+        )
+        assert code == expected, f"{kwargs} → {code!r} (기대 {expected!r}) — 두 함수의 순서가 갈렸다"
+        assert code in UNDECIDED_REASON_CODES, f"닫힌 집합 밖: {code!r}"
+        seen.add(code)
+
+    # ★네 갈래가 **서로 다른 코드**를 낸다 — 하나라도 겹치면 구별이 없다.
+    assert len(seen) == 4, f"코드가 겹친다: {sorted(seen)}"
+
+    # ★대조군(음성) — 판정이 나오는 입력은 코드가 없다.
+    action, _ = _row_action(
+        owner_judgment="가능(원칙)", governing_act="도시개발법", instrument="수용",
+        requires_track_input=False, ratio_known=True, meets_threshold=True,
+        in_exclusion_set=False, exclusion_ok=None,
+    )
+    assert action != ACTION_UNDECIDED, action
+    assert _undecided_reason_code(
+        owner_judgment="가능(원칙)", governing_act="도시개발법",
+        requires_track_input=False, in_exclusion_set=False, exclusion_ok=None,
+    ) is None, "판정이 나오는 행에 사유 코드를 붙였다 — 「모름」이 유효값을 입는다"
+
+
+def test_undecided_by_reason_sums_and_keeps_undecided_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★사유별 분해가 **합이 맞고**, 기존 정수 축을 **죽이지 않는다**.
+
+    ★제거가 아니라 **분리**다 — `undecided_rows` 소비처가 살아 있다.
+    ★성장루프까지 태운다: `record_event` 를 **스텁하지 않고** 실제 적재된 row 의 payload 를 본다
+      (스텁하면 `_EVENT_COLS` 화이트리스트가 키를 버리는지 **원리적으로 못 본다**).
+    """
+    from app.services.land_intelligence.parcel_purchase_strategy_service import (
+        ACTION_UNDECIDED, UNDECIDED_REASON_CODES,
+    )
+
+    events = _capture_growth(monkeypatch)
+    # 미등록 방식 → 전 행 `undecided_no_act` 가 나오는 모집단
+    body = _post_strategy(monkeypatch, _ring_endpoint_parcels(True), scheme="존재하지않는사업방식XYZ")
+
+    summary = body["strategy"]["summary"]
+    by_reason = summary.get("undecided_by_reason")
+    # ★공허 진리 가드 — 대상이 없으면 아래 합계 단언이 0==0 으로 통과한다.
+    assert isinstance(by_reason, dict) and by_reason, f"사유별 분해가 비었다: {summary}"
+    undecided_n = summary["by_action"].get(ACTION_UNDECIDED, 0)
+    assert undecided_n > 0, f"판정보류 행이 없다 — 이 테스트는 다른 것을 잰다: {summary['by_action']}"
+
+    # ★합이 맞는다 — 분해가 원본을 잃거나 부풀리지 않는다.
+    assert sum(by_reason.values()) == undecided_n, (by_reason, undecided_n)
+    # ★닫힌 집합 밖 코드가 없다.
+    assert set(by_reason) <= set(UNDECIDED_REASON_CODES), by_reason
+
+    # ★기존 축이 살아 있다(제거가 아니라 분리).
+    got = [p for n, p in events if n == "parcel_purchase_strategy"]
+    assert len(got) == 1, f"성장루프 이벤트 1건이 아니다: {list(events)}"
+    props = got[0]
+    assert props["undecided_rows"] == undecided_n, props
+    # ★★그리고 분해가 **실제 적재된 payload 에** 실린다(화이트리스트를 통과하는가).
+    assert props.get("undecided_by_reason") == by_reason, props
+
+
+# ★★부채 — 라이브에서 어느 사유가 얼마나 나는지는 **미측정**이다(유료 경로라 프로브하지 않았다).
+#   배포 후 성장루프가 답한다. 그 전에는 «어느 사유가 가장 많다» 를 쓰지 않는다.
+@pytest.mark.skip(reason="★부채: 라이브 사유 분포는 배포 후 성장루프로만 잴 수 있다(유료 경로)")
+def test_undecided_reason_live_distribution() -> None:  # pragma: no cover
+    ...
