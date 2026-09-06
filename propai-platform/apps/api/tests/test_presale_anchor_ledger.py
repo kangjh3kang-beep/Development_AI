@@ -106,10 +106,18 @@ def test_앵커_계단이_분양권_신축_혼합_순이다() -> None:
     at = src.find('_anchor = next(')
     assert at > 0, "앵커 선택이 계단을 따르지 않는다(하드코딩된 앵커)"
     block = src[at:at + 260]
-    order = [n for n in ("분양권_전매", "신축_실거래", "동_실거래", "시군구_실거래")
-             if n in block]
+    # ★★첫 판은 «내 목록 순서대로 in block» 이라 **소스의 순서를 안 봤다**
+    #   — 순서를 뒤집는 변이가 **SURVIVED**. *«어느 순서를 재는가»가 축이다.*
+    #   → **소스에 등장하는 순서**를 뽑아 비교한다.
+    import re as _re2
+    _raw = _re2.findall(r'"(분양권_전매|신축_실거래|동_실거래|시군구_실거래)"', block)
+    # ★마지막 폴백 기본값(`), "시군구_실거래")`)이 한 번 더 잡힌다 — **첫 등장만** 센다.
+    order: list[str] = []
+    for n in _raw:
+        if n not in order:
+            order.append(n)
     assert order == ["분양권_전매", "신축_실거래", "동_실거래", "시군구_실거래"], (
-        f"앵커 우선순위가 계단과 다르다: {order}")
+        f"앵커 우선순위가 계단과 다르다(소스 순서): {order}")
     # ③ ★분양권 가중치가 가장 높다(가장 직접적인 신호)
     import re as _re
     w = {m.group(1): float(m.group(2))
@@ -130,8 +138,13 @@ def test_신축_축이_집계기에_실재하고_경계가_10년이다() -> None
         f"신축 경계가 {_RECENT_BUILD_YEARS}년으로 바뀌었다 — 실측(10↔11년 사이 급락)을 "
         "다시 확인하고 근거를 갱신하라")
     src = _SUGGEST.read_text(encoding="utf-8")
-    for k in ("recent_dong", "recent_sigungu"):
-        assert f'"{k}"' in src, f"신축 축 `{k}` 이 집계기에서 사라졌다"
+    # ★★`"recent_dong"` 은 **주석에도** 있어 키를 지워도 통과했다(변이 SURVIVED).
+    #   → **반환 dict 조립 블록**으로 모집단을 좁힌다.
+    ret_at = src.find('"recent_dong"', src.find('result: dict[str, Any] = {'))
+    assert ret_at > 0, "신축 축이 **반환 dict** 에 없다 — 소비처가 못 읽는다"
+    ret_block = src[src.find('result: dict[str, Any] = {'):ret_at + 400]
+    for k in ("recent_dong", "recent_sigungu", "recent_build_years"):
+        assert f'"{k}"' in ret_block, f"신축 축 `{k}` 이 **반환값에서** 사라졌다"
     # ★기존 키는 살아 있다(무회귀 — 소비처가 깨지면 안 된다)
     for k in ("dong", "sigungu"):
         assert f'"{k}":' in src, f"기존 축 `{k}` 이 사라졌다"
