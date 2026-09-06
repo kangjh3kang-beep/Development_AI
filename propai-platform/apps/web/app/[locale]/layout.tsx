@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { AccessibilityProvider } from "@/components/ui/AccessibilityProvider";
+import { SiteFooter } from "@/components/layout/SiteFooter";
 import { HtmlLangSetter } from "@/components/layout/HtmlLangSetter";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { AppProviders } from "@/lib/providers";
@@ -70,6 +71,10 @@ export default async function LocaleLayout({
         <div id="main-content" tabIndex={-1}>
           {children}
         </div>
+        {/* ★전자상거래법 표기 — 초기 화면·로그인 포함 **모든 화면 하단**에 노출한다.
+            네이버 로그인 검수 반려(2026.05.13) 사유였고, 실측 당시 /ko 와 /ko/login 에
+            사업자 정보가 0건이었다. */}
+        <SiteFooter locale={locale} />
       </AppProviders>
     </AccessibilityProvider>
   );
