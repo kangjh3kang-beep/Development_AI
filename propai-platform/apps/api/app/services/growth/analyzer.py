@@ -556,6 +556,77 @@ def _severity_rank(sev: str | None) -> int:
 # DB 스캔 + 인사이트 생성
 # ════════════════════════════════════════════════════════════════════════════
 
+#: 분석 실행 상태를 **프로세스 경계 밖으로** 내보내는 설정 키.
+#:
+#: ★**새 표면을 만들지 않는다** — 형제 `capture_service.CAPTURE_STATUS_SETTING_KEY` 와 같이
+#:   `growth_last_run.*` 워터마크가 이미 쓰는 통로(`schema_guard.set_setting` →
+#:   `platform_settings` → `/growth/heal-log` 의 `active_flags` → `GrowthDashboard`)를 탄다.
+#:   **읽기 경로는 한 줄도 안 바꾼다.**
+#:
+#: ★**왜 필요한가**: 커버리지(`왜 판정 못 했는지`)가 저장되는 **유일한 자리가 인사이트 행의
+#:   `metrics_json`** 이었다. 그래서 **인사이트가 0건이면 설명이 통째로 버려진다** —
+#:   설명이 가장 필요한 바로 그때. 실측(2026-09-05): 산출 0 이 **11.3시간** 이어졌는데
+#:   (관측 최대 8.7시간) 화면은 `open 175` 로 가득 차 **건강해 보였다.**
+#:   ★워터마크(`growth_last_run.analyze`)는 **「돌았다」를 말하지 「됐다」를 말하지 않는다.**
+ANALYSIS_STATUS_SETTING_KEY = "growth_analysis"
+
+#: 발행 행의 수명 — 주기(60분)의 **3배**. 형제와 같은 규칙.
+#: ★TTL 이 없으면 «분석기가 멈췄다»가 **낡은 값으로 남아 «정상»과 구별되지 않는다.**
+#:   TTL 이 지나면 `/heal-log` 필터(`ttl_expires_at IS NULL OR > now()`)에서 **스스로 빠진다.**
+_ANALYSIS_TTL_MIN = 180
+
+#: 화면(`GrowthDashboard.summarizeParams`)의 표시 계약. **손 목록이 아니라 계약값**이다.
+#: ★키는 `jsonb` 가 **(길이, 바이트순)으로 재정렬**하므로 «판별 필드를 앞에» 는 성립하지 않는다.
+#:   그래서 **키 수 자체를 상한 이하**로 두어 전부 보이게 한다(형제가 값을 치른 자리).
+_RENDER_KEY_CAP = 4
+_RENDER_VALUE_CAP = 24
+
+
+def analysis_status_payload(coverage: dict[str, dict[str, Any]], n_insights: int) -> dict[str, Any]:
+    """발행할 스냅샷을 만든다(순수 함수 — 락이 이것만 태우면 된다).
+
+    ★세 모집단을 `state` 하나로 가른다. **둘로 만들면 표면이 죽은 것이 「정상 유휴」로 읽힌다.**
+        judged   — 하나라도 판정했다
+        starved  — 돌았으나 **모든 축이 하한 미달**(오늘의 상태 · 처방은 **대기**)
+        idle     — 커버리지 축 자체가 없다
+    ★`state` 는 **생산** 축만 말한다 — 「효과 0」은 다른 축이다(`/growth/effectors`).
+    """
+    judged_total = sum(int(v.get("judged") or 0) for v in coverage.values())
+    state = "idle" if not coverage else ("judged" if judged_total > 0 else "starved")
+    # 축 요약: 축 이름 앞 3글자 + judged/total. ★손 매핑표를 두지 않는다(목록은 곧 상한이다).
+    axes = " ".join(f"{k[:3]} {v.get('judged', 0)}/{v.get('total', 0)}" for k, v in sorted(coverage.items()))
+    return {
+        "at": datetime.now(UTC).isoformat(),
+        "axes": axes or "-",
+        "state": state,
+        "insights": n_insights,
+    }
+
+
+async def publish_analysis_status(db, coverage: dict[str, dict[str, Any]], n_insights: int) -> bool:
+    """스냅샷을 `platform_settings` 에 발행한다. **best-effort** — 실패해도 배치를 죽이지 않는다."""
+    try:
+        from datetime import timedelta
+
+        from app.services.growth import schema_guard
+
+        ok = await schema_guard.set_setting(
+            db, ANALYSIS_STATUS_SETTING_KEY,
+            analysis_status_payload(coverage, n_insights),
+            scope="global",
+            ttl_expires_at=datetime.now(UTC) + timedelta(minutes=_ANALYSIS_TTL_MIN),
+            updated_by="growth-analyzer",
+        )
+        if ok:
+            await db.commit()
+        return bool(ok)
+    except Exception as e:  # noqa: BLE001 — 관측이 배치의 임계경로에 있으면 안 된다.
+        logger.warning("growth analyze 상태 발행 실패: %s", str(e)[:120])
+        with contextlib.suppress(Exception):
+            await db.rollback()
+        return False
+
+
 async def analyze_window(
     db, window_start: datetime, window_end: datetime, *, use_llm: bool | None = None
 ) -> list[dict[str, Any]]:
@@ -641,6 +712,8 @@ async def analyze_window(
     # ★종전엔 `if insights:` 라 **0건인 실행이 아무 로그도 남기지 않았다** — 배치가
     #   돌지 않은 것과 구별이 안 됐다. 커버리지는 **0건일 때가 가장 중요하다**
     #   (라이브: fallback 은 서비스 5개 전부 하한 미달이라 인사이트가 0건이다).
+    # ★로그와 **같은 자리**에서 발행한다 — 로그만 남기면 그 앎이 컨테이너 밖으로 못 나간다.
+    await publish_analysis_status(db, coverage, len(insights))
     logger.info(
         "growth analyze: 인사이트 %d건 생성(INSERT %d) · 커버리지 %s",
         len(insights), inserted,
