@@ -8,6 +8,7 @@ import { siteDerivedFeasibilityFields } from "@/lib/feasibility-seed";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { motion } from "framer-motion";
 import { NumberInput as CommaInput } from "@/components/common/NumberInput";
+import { PresaleComparablePicker } from "./PresaleComparablePicker";
 
 const LAND_CATEGORIES = [
   { value: "land", label: "대지" },
@@ -87,6 +88,7 @@ function NumberInput({
 }
 
 export function ModuleInputForm() {
+  const [pickedBasis, setPickedBasis] = useState<string | null>(null);
   const { input, setInput, calculate, isCalculating, selectedModule, commitVersion, withSenior, setWithSenior } =
     useFeasibilityV2Store();
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
@@ -298,13 +300,50 @@ export function ModuleInputForm() {
           <NumberInput label="총공사비 직접입력" value={input.construction_cost_override_won ?? undefined} unit="원" comma
             onChange={(v) => handleInputChange({ construction_cost_override_won: v || null })} />
 
+          {/* ★토지비 직접입력 — 비우면 공시지가 × 시가반영배율 산출 그대로(무회귀).
+              ★실거래 기반 산출은 **지목을 걸러야** 한다(라이브 실측: 필터 없으면 강남 +490%·
+              분당 +1,085% 왜곡 — 표본의 70~87%가 도로·임야다). `land_trade_price` 참조. */}
+          <NumberInput label="총토지비 직접입력" value={input.land_cost_override_won ?? undefined} unit="원" comma
+            onChange={(v) => handleInputChange({ land_cost_override_won: v || null })} />
+
+          {/* ★기타경비 — 비우면 그 항목 몫의 **표준분이 살아남는다**(백엔드 `_OTHER_ITEM_SHARE`).
+              종전엔 하나만 입력해도 표준 7% 가 통째로 죽어 총사업비가 −98.7% 과소계상됐다. */}
+          <NumberInput label="분양대행·광고비" value={input.marketing_cost_won ?? undefined} unit="원" comma
+            onChange={(v) => handleInputChange({ marketing_cost_won: v || null })} />
+          <NumberInput label="사업관리·수수료" value={input.management_cost_won ?? undefined} unit="원" comma
+            onChange={(v) => handleInputChange({ management_cost_won: v || null })} />
+          <NumberInput label="예비비" value={input.reserve_cost_won ?? undefined} unit="원" comma
+            onChange={(v) => handleInputChange({ reserve_cost_won: v || null })} />
+
           {/* 분양 (핵심 수정 항목 — 변경 시 자동 히스토리) */}
-          <NumberInput label="평당 분양가" value={input.avg_sale_price_per_pyeong} unit="원/평" comma
+          {/* ★라벨에 **기준을 명시**한다. 실거래 마커는 **전용** 기준이고 이 값은 **공급**
+              기준이라, 같은 「만원/평」으로 나란히 두면 반드시 오독된다(2026-09-06 신고). */}
+          <NumberInput label="평당 분양가(공급)" value={input.avg_sale_price_per_pyeong} unit="원/평" comma
             onChange={(v) => handleInputChange({ avg_sale_price_per_pyeong: v })} />
           <NumberInput label="평균 전용면적" value={input.avg_area_pyeong} unit="평"
             onChange={(v) => handleInputChange({ avg_area_pyeong: v })} />
           <NumberInput label="분양률" value={input.sale_ratio} unit="%"
             onChange={(v) => handleInputChange({ sale_ratio: v })} />
+
+          {/* ★분양사례에서 골라 채우기 — 만들고 안 부르면 소비처 0 이다.
+              부지분석 주소가 있을 때만 뜬다(주소 없이는 반경을 잡을 수 없다). */}
+          {siteAnalysis?.address && (
+            <div className="sm:col-span-2">
+              <PresaleComparablePicker
+                address={siteAnalysis.address}
+                onPick={(won, label) => {
+                  handleInputChange({ avg_sale_price_per_pyeong: won });
+                  setPickedBasis(label);
+                }}
+              />
+              {/* ★어느 사례에서 왔는지 남긴다 — 근거 없는 수치는 검산할 수 없다. */}
+              {pickedBasis && (
+                <p data-testid="picked-basis" className="mt-1 text-[11px] text-[var(--text-hint)]">
+                  근거 · {pickedBasis}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* 토지비 (핵심 수정 항목) */}
           <NumberInput label="공시지가" value={input.official_price_per_sqm} unit="원/m²" comma
