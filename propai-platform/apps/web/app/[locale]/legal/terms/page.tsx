@@ -152,6 +152,7 @@ export default function TermsPage() {
         <UL>
           <li>상호: 사통팔땅 (브랜드: PropAI) · 대표자: 강재희</li>
           <li>사업자등록번호: 682-38-01463</li>
+            <li>통신판매업 신고번호: 제2026-경기광주-1245호</li>
           <li>주소: 경기도 광주시 회안대로 637-36, 207동 1301호</li>
         </UL>
       </Article>

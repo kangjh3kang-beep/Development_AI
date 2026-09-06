@@ -1,0 +1,48 @@
+"""v62 — 동의 미완 **소급 채움**. ★사용자 승인 뒤 versions/ 로 옮겨 적용한다.
+
+Revision ID: v62_10_consent_backfill
+Revises: v62_9_consent_pending
+
+★★왜 versions/ 밖에 있나 — **배포가 이것을 자동 적용하기 때문**이다.
+  실측(2026-09-06):
+    propai-platform/infra/deploy-zero-downtime.sh:234
+      alembic upgrade head   ← **트래픽 전환 '전'** 에 실행된다
+  즉 versions/ 에 두면 머지 → api 배포 → 소급이 **한 덩어리**가 되어,
+  «배포를 확증한 뒤 소급» 이 원리적으로 불가능해진다.
+
+★그 소급이 무해하지 않다 — 라이브 실측(읽기 전용, 탈퇴 제외):
+    생존 13명 · 소급 대상(동의 이력 0건) **8명**
+      admin@4t8t.net          ← super_admin · 성장루프 조회에 쓰는 계정
+      kangjh3kang@naver.com   ← ★사용자 본인
+      admin@propai.kr · gest01@4t8t.net · kakao_4937025927@propai.local
+      member-…@propai-test.io · ops@propai.ai · test@4t8t.net
+  적용 즉시 이들은 보호 자원에서 403(consent_required) 이 되고,
+  **본인이 동의 화면을 통과해야** 복구된다. 배포 부수효과로 일어날 일이 아니다.
+
+【적용 절차】
+  1. v62_9(컬럼) 이 배포되고 동의 화면이 **라이브에서 동작**하는지 확증한다
+  2. 사용자 승인을 받는다(본인 계정이 대상이므로)
+  3. 이 파일을 database/migrations/versions/v62_10_consent_backfill.py 로 옮기고 배포
+  4. 적용 후 재조회로 확증: consent_pending=true 가 **8건**인지(사전 측정과 대조)
+"""
+from alembic import op
+import sqlalchemy as sa
+
+from apps.api.database.consent_backfill import BACKFILL_SQL  # noqa: E402
+
+revision = "v62_10_consent_backfill"
+down_revision = "v62_9_consent_pending"
+branch_labels = None
+depends_on = None
+
+
+def upgrade() -> None:
+    # ★멱등 — 이미 True 인 행과 동의가 생긴 행은 대상에서 빠진다(SQL 의 조건).
+    op.execute(sa.text(BACKFILL_SQL))
+
+
+def downgrade() -> None:
+    # ★되돌리기는 «전원 False» 가 아니다 — 그러면 **원래 미완이던 사람도 통과**시킨다.
+    #   이 리비전이 켠 것만 되돌릴 수는 없으므로(어느 행을 켰는지 기록하지 않는다),
+    #   되돌림은 v62_9 의 downgrade(컬럼 삭제)로 한다. 여기서는 아무것도 하지 않는다.
+    pass
