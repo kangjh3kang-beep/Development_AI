@@ -131,6 +131,29 @@ TOTAL_OUTAGE_FALLBACK_PCT = 50.0
 HANDLED_INSIGHT_TYPES = ("fallback_rate", "stale_reanalysis")
 
 
+#: 분석기가 `recommended_action="heal"` 로 발행하지만 `_candidate_actions` 가 **일부러**
+#  분기를 두지 않은 타입 → **사유를 적는다.**
+#
+#  ★왜 이 표가 필요한가(2026-09-06 실측): 분석기는 `latency_regression` 에 `"heal"` 을
+#    실어 발행하는데(`analyzer.py` 의 `insight_type_for_latency` + `"heal" if sev else "none"`)
+#    후보 쿼리가 `insight_type = ANY(HANDLED_INSIGHT_TYPES)` 로 거르므로 **원리적으로
+#    치유기에 도달하지 못한다.** 라이브에 열린 `latency_regression` 이 **22건** 쌓여 있었고
+#    (최신 2026-09-05T22:05:05Z), 그것을 말해 주는 기계가 **하나도 없었다** —
+#    좁힌 사유는 위 주석에 **산문으로만** 있었다.
+#  ★그래서 「하지 않기로 한 것」을 **선언하고 잠근다**(§36 면제에는 사유를 적는다).
+#    죽은 면제(더 이상 heal 을 안 내는 타입)도 락이 **실패**시킨다.
+#  ★이 표는 **처방이 아니다** — 여기 적힌다고 치유가 생기지 않는다. 「도달 불가를
+#    판정 가능하게」만 한다. 실제 처방을 붙일지는 별도 판단이다.
+HEAL_UNHANDLED_REASONS: dict[str, str] = {
+    "latency_regression": (
+        "★부채 — 자동 처방이 없다. 유력 후보인 임계 자동완화는 이 저장소에서 "
+        "**기각된 길**이다: 무트래픽 스택에서 `threshold_relax` 가 발화하면 "
+        "`integrations/base_client.py` 의 `_request` 가 실제 프로덕션 HTTP 타임아웃을 "
+        "곱한다(전역 지침 §완결 가능한 구현계획 의 실측). 사람이 보는 축으로 남긴다."
+    ),
+}
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # 순수 가드 함수군 (DB 무의존 — inline 단위검증 대상)
 # ════════════════════════════════════════════════════════════════════════════
@@ -569,6 +592,7 @@ __all__ = [
     "_within_cooldown", "_cap_exceeded", "should_escalate",
     "GLOBAL_HOURLY_CAP", "PER_TRIGGER_HOURLY_CAP", "COOLDOWN_MIN",
     "ESCALATION_THRESHOLD", "TOTAL_OUTAGE_FALLBACK_PCT", "HANDLED_INSIGHT_TYPES",
+    "HEAL_UNHANDLED_REASONS",
     "HEAL_BLOCKED_EVENT", "CAP_BLOCK_REASONS",
     "ESCALATION_COUNT_REASONS", "ESCALATION_WINDOW_HOURS",
     "_SUPPRESSING_STATUSES", "_DISMISSED_SUPPRESS_WITHIN_WINDOW",
