@@ -33,7 +33,17 @@ const PACKAGES = {
 function mockGets(overrides: Record<string, unknown> = {}) {
   vi.mocked(apiClient.get).mockImplementation(async (path: string) => {
     if (path.startsWith("/billing/packages"))
-      return { ...PACKAGES, payment_mode: overrides["payment_mode"] ?? "manual_only" };
+      return {
+        ...PACKAGES,
+        payment_mode: overrides["payment_mode"] ?? "manual_only",
+        // ★기본은 **주지 않는다** — 구 서버(배포 창)를 재현한다. 그 상태에서도
+        //   결제 버튼이 사라지면 안 된다(`methodsFromResponse` 폴백이 그것을 지킨다).
+        ...(overrides["payment_methods"]
+          ? { payment_methods: overrides["payment_methods"] }
+          : {}),
+      };
+    if (path.startsWith("/billing/payments/bank-transfer/config"))
+      return overrides["bank"] ?? { enabled: false, account: null, guide: null, notice: null };
     if (path.startsWith("/billing/ledger/verify")) return overrides["verify"] ?? { ok: true, count: 3 };
     if (path.startsWith("/billing/orders")) {
       if (overrides["ordersReject"]) throw new Error("boom");
@@ -72,8 +82,10 @@ describe("CoinsClient", () => {
         expect.objectContaining({ body: { package_key: "starter" }, useMock: false }),
       );
     });
-    // PG 미연동(manual_only) 정직 안내 — 계좌이체·관리자 확인 경로 고지.
-    expect(await screen.findByText(/계좌이체 후 관리자 확인/)).toBeInTheDocument();
+    // ★수단이 하나도 없을 때의 정직 안내.
+    //   종전 문구는 *"계좌이체 후 관리자 확인"* 이라 말하면서 **어느 계좌인지 말하지 않았다** —
+    //   사용자가 그 문장으로 할 수 있는 일이 없었다. 계좌가 없으면 그 사실을 말한다.
+    expect(await screen.findByText(/결제 수단이 아직 설정되지 않아/)).toBeInTheDocument();
   });
 
   const PENDING_ORDER = {
@@ -110,6 +122,102 @@ describe("CoinsClient", () => {
     render(<CoinsClient locale="ko" />);
     await userEvent.click(await screen.findByRole("button", { name: /데모.*결제 완료 처리/ }));
     expect(await screen.findByText(/온라인 결제 연동 준비 중/)).toBeInTheDocument();
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // 무통장입금 — ★부분 정보로 안내하면 사용자가 **엉뚱한 곳으로 송금**한다
+  // ══════════════════════════════════════════════════════════════════════
+  const BANK_ON = {
+    enabled: true,
+    account: { bank_name: "새마을금고", account_no: "9002148908909", holder: "예금주" },
+    guide: "입금자명은 주문에 적은 이름과 같아야 합니다.",
+    notice: "관리자 승인 후 충전됩니다.",
+  };
+
+  it("무통장입금이 켜지면 은행·계좌·예금주를 **전부** 보여준다", async () => {
+    mockGets({ payment_methods: ["bank_transfer"], payment_mode: "bank_transfer", bank: BANK_ON });
+    render(<CoinsClient locale="ko" />);
+    expect(await screen.findByTestId("bank-account-no")).toHaveTextContent("9002148908909");
+    expect(screen.getByTestId("bank-name")).toHaveTextContent("새마을금고");
+    expect(screen.getByTestId("bank-holder")).toHaveTextContent("예금주");
+    // ★즉시 충전이 아니라는 사실을 **입금 전에** 말한다.
+    expect(screen.getByText(/관리자 승인 후 충전/)).toBeInTheDocument();
+  });
+
+  it("★계좌가 불완전하면 입금 구역을 아예 그리지 않는다(부분 안내 금지)", async () => {
+    // 서버가 `enabled:false` 면 `account` 는 null 이다 — 화면이 그것을 존중해야 한다.
+    mockGets({
+      payment_methods: ["bank_transfer"],
+      payment_mode: "bank_transfer",
+      bank: { enabled: false, account: null, guide: null, notice: null },
+    });
+    render(<CoinsClient locale="ko" />);
+    await screen.findByText("스타터 1만원");
+    expect(screen.queryByTestId("bank-transfer-pay")).toBeNull();
+    expect(screen.queryByTestId("bank-account-no")).toBeNull();
+  });
+
+  it("입금자명을 적으면 주문에 실려 간다 · 비우면 보내지 않는다(두 모집단)", async () => {
+    mockGets({ payment_methods: ["bank_transfer"], payment_mode: "bank_transfer", bank: BANK_ON });
+    vi.mocked(apiClient.post).mockResolvedValue({
+      id: "o1", order_no: "CO-1", status: "pending", amount_krw: 10000,
+      payment_mode: "bank_transfer", payment_methods: ["bank_transfer"],
+    });
+    render(<CoinsClient locale="ko" />);
+    await screen.findByTestId("bank-transfer-pay");
+
+    // (a) 비운 채 주문 — `depositor_name` 이 **없어야** 한다(서버가 가입자명을 쓴다).
+    await userEvent.click(screen.getByRole("button", { name: "무통장입금 주문 만들기" }));
+    await waitFor(() => {
+      expect(apiClient.post).toHaveBeenCalledWith(
+        "/billing/orders",
+        expect.objectContaining({ body: { package_key: "starter" } }),
+      );
+    });
+
+    // (b) 적고 주문 — 그 값이 실린다.
+    await userEvent.type(screen.getByLabelText(/입금자명/), "(주)사통팔땅");
+    await userEvent.click(screen.getByRole("button", { name: "무통장입금 주문 만들기" }));
+    await waitFor(() => {
+      expect(apiClient.post).toHaveBeenLastCalledWith(
+        "/billing/orders",
+        expect.objectContaining({
+          body: { package_key: "starter", depositor_name: "(주)사통팔땅" },
+        }),
+      );
+    });
+  });
+
+  it("★병존 — 카드와 무통장입금이 **동시에** 뜬다", async () => {
+    mockGets({
+      payment_methods: ["toss", "bank_transfer"],
+      payment_mode: "toss",
+      bank: BANK_ON,
+    });
+    render(<CoinsClient locale="ko" />);
+    expect(await screen.findByTestId("toss-pay")).toBeInTheDocument();
+    expect(screen.getByTestId("bank-transfer-pay")).toBeInTheDocument();
+    // 종전 「토스 or else」 구조였다면 둘 중 하나만 떴다.
+  });
+
+  it("★환불 버튼은 **그 주문의 결제수단**이 정한다(현재 모드가 아니라)", async () => {
+    // 모드는 toss 인데 주문은 무통장입금(provider=manual) — 환불 버튼이 뜨면 안 된다.
+    mockGets({
+      payment_methods: ["toss", "bank_transfer"],
+      payment_mode: "toss",
+      bank: BANK_ON,
+      orders: {
+        orders: [
+          { id: "o1", order_no: "CO-1", amount_krw: 10000, coin_krw: 10000,
+            status: "paid", provider: "manual", created_at: null, paid_at: null },
+        ],
+      },
+    });
+    render(<CoinsClient locale="ko" />);
+    await screen.findByText("CO-1");
+    expect(screen.queryByRole("button", { name: "환불" })).toBeNull();
+    // ★대조군 — 처리내역 버튼은 뜬다(행 자체가 안 그려져서 통과한 것이 아니다).
+    expect(screen.getByRole("button", { name: "처리내역" })).toBeInTheDocument();
   });
 
   it("조회 실패를 '내역 없음'이 아닌 오류로 표시한다(거짓 성공 위장 방지)", async () => {

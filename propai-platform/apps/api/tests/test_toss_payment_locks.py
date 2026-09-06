@@ -183,22 +183,148 @@ def test_redact_removes_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "***" in out
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# ★키는 **세 축**이다 — 하나만 재면 나머지 둘이 조용히 샌다 (2026-09-06)
+#
+# 종전 이 자리의 테스트는 `("test_sk_…","test_ck_…", True)` 를 단언했다.
+# 그것은 **환경 축만** 보는 옛 계약이었고, 그 조합으로는 결제창이 열리지 않는다:
+# 우리 프론트는 `js.tosspayments.com/v2/standard` + `widgets()` 를 쓰고, 그것은
+# **`gck`/`gsk`(주문서형·결제창형)** 만 받는다. 벤더 문서 원문 —
+# *"세트가 아닌 키를 사용하거나 테스트 또는 라이브 키를 섞어 사용하면
+#   `INVALID_API_KEY` 오류가 발생해요."*
+#
+# ★그래서 이 테스트는 **의도적으로 계약을 바꾼다.** 옛 기대값을 그대로 두면
+#   "검사는 초록인데 결제는 죽는" 상태를 테스트가 **보증**하게 된다.
+# ═══════════════════════════════════════════════════════════════════════════
 @pytest.mark.parametrize(
-    ("sk", "ck", "paired"),
+    ("sk", "ck", "usable", "why"),
     [
-        ("test_sk_x1234567", "test_ck_y1234567", True),
-        ("live_sk_x1234567", "live_ck_y1234567", True),
-        # ★혼용 — 토스가 FORBIDDEN_REQUEST 로 거절한다. 호출 **전에** 알아야 한다.
-        ("test_sk_x1234567", "live_ck_y1234567", False),
-        ("live_sk_x1234567", "test_ck_y1234567", False),
+        # ── 통과해야 하는 모집단(★상한만 걸면 하한이 무너진다 — 양방향으로 건다) ──
+        ("test_gsk_x1234567", "test_gck_y1234567", True, "테스트 위젯 한 쌍"),
+        ("live_gsk_x1234567", "live_gck_y1234567", True, "라이브 위젯 한 쌍"),
+        # ── 축 ①: 환경 혼용 ──
+        ("test_gsk_x1234567", "live_gck_y1234567", False, "환경 혼용"),
+        ("live_gsk_x1234567", "test_gck_y1234567", False, "환경 혼용(반대)"),
+        # ── 축 ②: 계열 — ★종전 검사가 **초록으로 통과시키던** 조합 ──
+        ("test_sk_x1234567", "test_ck_y1234567", False, "API 개별연동 한 쌍(짝은 맞지만 SDK 불가)"),
+        ("live_sk_x1234567", "live_ck_y1234567", False, "라이브 API 개별연동 한 쌍"),
+        ("test_gsk_x1234567", "test_ck_y1234567", False, "계열 불일치(위젯 시크릿 + 개별 클라이언트)"),
+        # ── 축 ③: 역할 — 칸이 뒤바뀐 경우 ──
+        ("test_gsk_x1234567", "test_gsk_y1234567", False, "★클라이언트 칸에 시크릿 키"),
+        ("test_gck_x1234567", "test_gck_y1234567", False, "시크릿 칸에 클라이언트 키"),
+        # ── 형식 ──
+        ("test_gsk_x1234567", "not-a-toss-key", False, "형식 불량"),
     ],
 )
-def test_key_pairing_detects_mixed_environments(
-    monkeypatch: pytest.MonkeyPatch, sk: str, ck: str, paired: bool
+def test_key_usability_covers_role_env_and_family(
+    monkeypatch: pytest.MonkeyPatch, sk: str, ck: str, usable: bool, why: str
 ) -> None:
     monkeypatch.setenv("TOSS_SECRET_KEY", sk)
     monkeypatch.setenv("TOSS_CLIENT_KEY", ck)
-    assert toss_payments.key_pairing_ok() is paired
+    assert toss_payments.key_pairing_ok() is usable, why
+
+
+def test_both_populations_are_present_in_the_matrix() -> None:
+    """★**공허 진리 가드** — 위 표에 통과·거부가 **둘 다** 있어야 한다.
+
+    한쪽만 있으면 "전부 거부"가 만점이 되고, 그 가드는 곧 꺼진다.
+    """
+    cases = test_key_usability_covers_role_env_and_family.pytestmark[0].args[1]
+    oks = [c for c in cases if c[2] is True]
+    bads = [c for c in cases if c[2] is False]
+    assert len(oks) >= 2, "통과 모집단이 비었다 — 정상 키를 막아도 초록이 된다"
+    assert len(bads) >= 4, "거부 모집단이 비었다"
+
+
+@pytest.mark.parametrize(
+    ("sk", "ck", "code"),
+    [
+        ("test_gsk_x1234567", "test_gsk_y1234567", "client_slot_has_secret_key"),
+        ("test_gck_x1234567", "test_gck_y1234567", "secret_slot_has_client_key"),
+        ("test_gsk_x1234567", "test_ck_y1234567", "family_mismatch"),
+        ("test_sk_x1234567", "test_ck_y1234567", "wrong_family"),
+        ("test_gsk_x1234567", "live_gck_y1234567", "env_mismatch"),
+        ("test_gsk_x1234567", "not-a-toss-key", "client_key_malformed"),
+        ("bogus", "test_gck_y1234567", "secret_key_malformed"),
+        ("test_gsk_x1234567", "test_gck_y1234567", "ok"),
+    ],
+)
+def test_diagnosis_says_which_axis_failed(
+    monkeypatch: pytest.MonkeyPatch, sk: str, ck: str, code: str
+) -> None:
+    """★`false` 만으로는 관리자가 고칠 수 없다 — **어느 축이** 틀렸는지 말해야 한다.
+
+    이 저장소 규율: *"진단 불가는 그 자체로 장애다."*
+    """
+    monkeypatch.setenv("TOSS_SECRET_KEY", sk)
+    monkeypatch.setenv("TOSS_CLIENT_KEY", ck)
+    d = toss_payments.key_diagnosis()
+    assert d["code"] == code
+    # 코드만 있고 조치가 없으면 관리자는 여전히 못 고친다.
+    assert d["message"], code
+    if code != "ok":
+        assert d["action"], f"{code} 에 **다음에 할 일**이 없다"
+
+
+def test_client_slot_secret_is_critical_because_it_reaches_browsers() -> None:
+    """시크릿 키가 클라이언트 칸에 있으면 `/payments/toss/config` 가 그것을 **배포**한다.
+
+    ★이것만은 `error` 가 아니라 `critical` 이어야 한다 — 키 **재발급**이 필요하다.
+    """
+    import os
+
+    os.environ["TOSS_SECRET_KEY"] = "test_gsk_a1234567"
+    os.environ["TOSS_CLIENT_KEY"] = "test_gsk_b1234567"
+    try:
+        d = toss_payments.key_diagnosis()
+        assert d["code"] == "client_slot_has_secret_key"
+        assert d["severity"] == "critical"
+        assert "재발급" in d["action"]
+    finally:
+        os.environ.pop("TOSS_SECRET_KEY", None)
+        os.environ.pop("TOSS_CLIENT_KEY", None)
+
+
+def test_diagnosis_never_leaks_key_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    """진단은 관리자 API 응답으로 나간다 — **키 값이 실리면 안 된다.**"""
+    import json
+
+    monkeypatch.setenv("TOSS_SECRET_KEY", "test_gsk_SUPERSECRETVALUE")
+    monkeypatch.setenv("TOSS_CLIENT_KEY", "test_ck_PUBLICBUTSTILLNOT")
+    blob = json.dumps(toss_payments.config_status(), ensure_ascii=False)
+    assert "SUPERSECRETVALUE" not in blob
+    assert "PUBLICBUTSTILLNOT" not in blob
+    # ★대조군 — 진단 자체는 살아 있다(빈 응답이라서 통과한 것이 아니다).
+    assert "wrong_family" in blob or "family_mismatch" in blob
+
+
+def test_key_prefix_literals_live_in_exactly_one_place() -> None:
+    """★계열 접두는 **`_KEY_TOKENS` 한 곳**에서만 선언된다.
+
+    호출부가 `"gck"` 를 손으로 적기 시작하면 같은 판정이 복제되고, 그중 하나가
+    반드시 뒤처진다(이 저장소가 반복해 데인 형태).
+    """
+    src = (_API / "app/services/billing/toss_payments.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    # 실행되는 줄에서만 센다 — 주석·독스트링은 §검증 규율 4 에 따라 배제.
+    hits = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.value in ("gck", "gsk", "ck", "sk"):
+                hits += 1
+    # `_KEY_TOKENS` 의 4개 키가 전부. 그 밖에 더 있으면 복제가 생긴 것이다.
+    assert hits == 4, f"계열 접두 리터럴이 {hits}곳 — _KEY_TOKENS 밖으로 샜다"
+
+
+def test_required_family_is_bound_to_the_sdk_we_actually_load() -> None:
+    """★계열 요구는 **프론트가 싣는 SDK** 에서 나온다 — 둘이 갈리면 잠금이 거짓말이 된다.
+
+    프론트가 v2 표준 위젯을 그만 싣는 날, 이 테스트가 빨개져서 백엔드도 함께 바꾸게 한다.
+    """
+    sdk = (_API.parents[1] / "apps/web/lib/payments/toss-sdk.ts").read_text(encoding="utf-8")
+    assert 'const SDK_SRC = "https://js.tosspayments.com/v2/standard"' in sdk
+    assert ".widgets(" in sdk, "위젯 API 를 안 쓰면 gck/gsk 요구가 근거를 잃는다"
+    assert toss_payments.REQUIRED_FAMILY == "widget"
 
 
 def test_configured_requires_both_keys(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1000,3 +1126,788 @@ async def test_refund_blocks_other_users_order(_refund_env) -> None:
         )
     assert e.value.http_status == 404
     assert not sent
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★환수는 **상태 이름이 아니라 금액**이 판정한다 (2026-09-06 봉합)
+#
+# 실측한 결함: 부분환불은 `status='paid'` 를 **남기는데**(전액일 때만 전환),
+# `PARTIAL_CANCELED` 가 `_REVOKED_STATUSES` 에 들어 있어서 정상적인 부분환불 뒤
+# 토스가 보낸 취소 웹훅 하나로 **주문 전액이 재환수**됐다.
+# 사용자는 3,000원만 돌려받고 10,000원어치 코인을 잃는다 — 공격자가 필요 없다.
+#
+# ★두 모집단을 **같은 실행에서** 가른다. 한쪽만 단언하면 "아무것도 환수하지 않는"
+#   구현이 만점을 받는다.
+# ═══════════════════════════════════════════════════════════════════════════
+class _ClawRes:
+    """`WITH prev … UPDATE … SELECT after, applied` 의 반환을 흉내낸다."""
+
+    def __init__(self, pair=None):
+        self._pair = pair
+
+    def mappings(self):
+        return _Mapped(None)
+
+    def first(self):
+        return self._pair
+
+    def scalar(self):
+        return None
+
+
+class _ReconcileSession:
+    """`reconcile_order` 가 실제로 쓰는 SQL 에만 응답하는 최소 세션."""
+
+    def __init__(self, order_row, *, balance_after=0.0, applied=0.0):
+        self.order_row = order_row
+        self.sql: list[str] = []
+        self.params: list[dict] = []
+        self._balance_after = balance_after
+        self._applied = applied
+
+    async def execute(self, stmt, params=None):
+        s = str(getattr(stmt, "text", stmt))
+        self.sql.append(s)
+        self.params.append(dict(params or {}))
+        if "FROM coin_orders WHERE id" in s:
+            return _Res(self.order_row)
+        if "WITH prev AS" in s:
+            return _ClawRes((self._balance_after, self._applied))
+        return _Res()
+
+    async def commit(self):
+        pass
+
+    async def rollback(self):
+        pass
+
+
+def _reconcile_row(**over):
+    base = {
+        "id": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+        "user_id": "user-A",
+        "order_no": "CO20260906-CAFEBABE",
+        "amount_krw": 10_000.0,
+        "status": "paid",
+        "provider": "toss",
+        "provider_ref": "pk_live_1",
+        "refunded_krw": 0.0,
+        "paid_at": "2026-09-06T00:00:00Z",
+    }
+    base.update(over)
+    return base
+
+
+@pytest.fixture
+def _reconcile_env(monkeypatch: pytest.MonkeyPatch):
+    """벤더 조회·영수증·원장을 가로챈다. 원장 기록을 **값까지** 검사할 수 있게 모은다."""
+    ledger: list[dict] = []
+    receipts: list[dict] = []
+
+    async def fake_record(**kw):
+        receipts.append(kw)
+        return "rcpt-x"
+
+    async def fake_append(**kw):
+        ledger.append(kw)
+        return None
+
+    monkeypatch.setattr(_tos.coin_orders_service, "ensure_schema", lambda db: _noop())
+    monkeypatch.setattr(_tos, "ensure_refund_schema", lambda db: _noop())
+    monkeypatch.setattr(_tos.payment_receipts, "record", fake_record)
+    monkeypatch.setattr(_tos.coin_ledger_service, "append_event", fake_append)
+    return ledger, receipts
+
+
+def _stub_vendor(monkeypatch: pytest.MonkeyPatch, payment):
+    async def fake_fetch(*, payment_key, order_id):
+        return payment
+
+    monkeypatch.setattr(_tos, "_fetch_payment", fake_fetch)
+
+
+@pytest.mark.asyncio
+async def test_full_cancel_still_claws_back_everything(
+    _reconcile_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """모집단 ① — **진짜 전면 취소**는 종전과 같이 전액을 환수해야 한다.
+
+    ★이쪽을 함께 단언하지 않으면 "아무것도 환수 안 함"이 봉합으로 통과한다.
+    """
+    ledger, _ = _reconcile_env
+    _stub_vendor(monkeypatch, {"status": "CANCELED", "paymentKey": "pk_live_1"})
+    db = _ReconcileSession(_reconcile_row(), balance_after=0.0, applied=10_000.0)
+
+    out = await _tos.reconcile_order(db, order_id=_reconcile_row()["id"], actor_id="admin")
+
+    assert out["action"] == "clawed_back"
+    claw_params = [p for s, p in zip(db.sql, db.params, strict=True) if "WITH prev AS" in s]
+    assert claw_params and claw_params[0]["a"] == 10_000.0, "전액이 환수 대상이어야 한다"
+    assert ledger and ledger[0]["amount_krw"] == -10_000.0
+
+
+@pytest.mark.asyncio
+async def test_partial_refund_is_not_a_second_clawback(
+    _reconcile_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """모집단 ② — ★**여기가 실측한 결함이다.**
+
+    10,000원 결제 · 3,000원 정상 부분환불 · 벤더 잔액 7,000원.
+    우리가 유효하다고 보는 액(10,000−3,000=7,000) == 벤더 잔액(7,000) → **환수 0**.
+    종전 코드는 여기서 10,000원을 통째로 뺐다.
+    """
+    ledger, _ = _reconcile_env
+    _stub_vendor(
+        monkeypatch,
+        {"status": "PARTIAL_CANCELED", "paymentKey": "pk_live_1", "balanceAmount": 7_000},
+    )
+    db = _ReconcileSession(_reconcile_row(refunded_krw=3_000.0))
+
+    out = await _tos.reconcile_order(db, order_id=_reconcile_row()["id"], actor_id="admin")
+
+    assert out["action"] == "already_consistent", out
+    assert not any("WITH prev AS" in s for s in db.sql), "환수 UPDATE 가 실행됐다"
+    assert ledger == [], "환수하지 않았는데 원장에 기록이 생겼다"
+    # ★「환수 안 함」에도 **판정 근거**가 실려야 한다 — 없으면 관리자가 옳은지 알 수 없다
+    #   (전수 변이에서 이 두 줄의 삭제가 생존했다: `[34,36,38/163]`).
+    assert out["expected_remaining_krw"] == 7_000.0
+    assert out["vendor_remaining_krw"] == 7_000.0
+    assert out["our_status"] == "paid" and out["vendor_status"] == "PARTIAL_CANCELED"
+
+
+@pytest.mark.asyncio
+async def test_partial_clawback_takes_only_the_difference(
+    _reconcile_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """벤더가 우리가 아는 것보다 **더** 취소했으면 그 **차이만** 환수한다.
+
+    10,000 결제 · 우리 기록 3,000 환불 · 벤더 잔액 4,000
+    → 우리 유효 7,000 vs 벤더 4,000 → **3,000만** 환수(전액 아님).
+    """
+    ledger, _ = _reconcile_env
+    _stub_vendor(
+        monkeypatch,
+        {"status": "PARTIAL_CANCELED", "paymentKey": "pk_live_1", "balanceAmount": 4_000},
+    )
+    db = _ReconcileSession(_reconcile_row(refunded_krw=3_000.0), balance_after=7_000.0, applied=3_000.0)
+
+    out = await _tos.reconcile_order(db, order_id=_reconcile_row()["id"], actor_id="admin")
+
+    assert out["action"] == "clawed_back"
+    assert out["clawed_back_krw"] == 3_000.0
+    claw_params = [p for s, p in zip(db.sql, db.params, strict=True) if "WITH prev AS" in s]
+    assert claw_params[0]["a"] == 3_000.0, "환수액이 차이가 아니라 전액이다"
+
+
+@pytest.mark.asyncio
+async def test_ledger_records_what_actually_moved_not_the_intent(
+    _reconcile_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★잔액이 모자라 **덜 빠졌으면** 원장도 덜 적어야 한다.
+
+    종전엔 차감이 `GREATEST(0, …)` 로 잘리는데 원장에는 **무조건 전액**을 적어
+    `coin_ledger_events` 합 ≠ `users.topup_krw` 가 됐다(같은 결함의 두 번째 얼굴).
+    """
+    ledger, _ = _reconcile_env
+    _stub_vendor(monkeypatch, {"status": "CANCELED", "paymentKey": "pk_live_1"})
+    # 대상은 10,000 인데 잔액이 2,500 뿐이라 실제로는 2,500 만 빠진다.
+    db = _ReconcileSession(_reconcile_row(), balance_after=0.0, applied=2_500.0)
+
+    out = await _tos.reconcile_order(db, order_id=_reconcile_row()["id"], actor_id="admin")
+
+    assert out["clawed_back_krw"] == 2_500.0
+    assert ledger[0]["amount_krw"] == -2_500.0, "원장이 **의도**를 적었다(실제가 아니라)"
+
+
+@pytest.mark.asyncio
+async def test_unknown_vendor_balance_is_not_zero(
+    _reconcile_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★**모르는 것은 0이 아니다.**
+
+    부분취소인데 `balanceAmount` 가 없으면 환수액을 계산할 수 없다 —
+    그때 전액을 빼는 것이 바로 이 봉합의 대상이었다. 사람에게 넘긴다.
+    """
+    ledger, receipts = _reconcile_env
+    _stub_vendor(monkeypatch, {"status": "PARTIAL_CANCELED", "paymentKey": "pk_live_1"})
+    db = _ReconcileSession(_reconcile_row(refunded_krw=3_000.0))
+
+    out = await _tos.reconcile_order(db, order_id=_reconcile_row()["id"], actor_id="admin")
+
+    assert out["action"] == "clawback_undetermined"
+    assert not any("WITH prev AS" in s for s in db.sql)
+    assert ledger == []
+    assert any(r.get("toss_message", "").startswith("부분취소 잔액") for r in receipts), \
+        "왜 판정 못 했는지 남기지 않으면 조사가 불가능하다"
+
+
+@pytest.mark.asyncio
+async def test_clawback_preserves_paid_at(
+    _reconcile_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★환수는 `paid_at` 을 **지우지 않는다** — 형제가 그것을 잠금으로 선언했다.
+
+    `coin_orders_service` 는 *"진짜 잠금은 `paid_at IS NULL` 이다: 한 번이라도 결제가
+    성립한 주문은 구조적으로 이 절에 들어올 수 없다"* 고 선언한다. 종전 이 자리의
+    `paid_at=NULL` 이 그 전제를 지워, 전자상거래법 시행령 §6①(청약철회 기록 **5년 보존**)
+    대상 주문을 즉시 파기 대상으로 재분류했다.
+    """
+    _stub_vendor(monkeypatch, {"status": "CANCELED", "paymentKey": "pk_live_1"})
+    db = _ReconcileSession(_reconcile_row(), balance_after=0.0, applied=10_000.0)
+
+    await _tos.reconcile_order(db, order_id=_reconcile_row()["id"], actor_id="admin")
+
+    updates = [s for s in db.sql if "UPDATE coin_orders SET status" in s]
+    assert updates, "상태 되돌리기가 아예 없다(공허한 초록 방지)"
+    for s in updates:
+        assert "paid_at" not in s, f"환수가 paid_at 을 건드린다: {s}"
+
+
+def test_partial_cancel_is_not_a_full_revocation() -> None:
+    """★상태 집합의 **의미**를 잠근다 — 다시 합쳐지면 결함이 되살아난다."""
+    assert "PARTIAL_CANCELED" not in _tos._REVOKED_STATUSES
+    assert "PARTIAL_CANCELED" in _tos._PARTIALLY_REVOKED_STATUSES
+    # 그래도 **검토 대상**에는 남아 있어야 한다(빠뜨리면 진짜 초과취소를 놓친다).
+    assert "PARTIAL_CANCELED" in _tos._ALL_REVOKING_STATUSES
+    assert _tos._REVOKED_STATUSES <= _tos._ALL_REVOKING_STATUSES
+
+
+@pytest.mark.parametrize(
+    ("payment", "status", "expected"),
+    [
+        ({}, "CANCELED", 0.0),
+        ({}, "EXPIRED", 0.0),
+        ({"balanceAmount": 7000}, "PARTIAL_CANCELED", 7000.0),
+        ({"balanceAmount": "7000"}, "PARTIAL_CANCELED", 7000.0),
+        # ★미상 — 0 으로 뭉개면 전액 환수가 된다.
+        ({}, "PARTIAL_CANCELED", None),
+        ({"balanceAmount": "nope"}, "PARTIAL_CANCELED", None),
+    ],
+)
+def test_vendor_remaining_distinguishes_zero_from_unknown(payment, status, expected) -> None:
+    assert _tos._vendor_remaining_krw(payment, status) == expected
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★재조회로 살아 돌아온 결제도 **금액을 대조한다** (형제 불일치 봉합)
+# ═══════════════════════════════════════════════════════════════════════════
+def test_amount_reconciliation_is_a_single_shared_function() -> None:
+    """★두 경로가 **같은 문장**을 쓰는가 — 판정에 쓰이는 `totalAmount` 는 한 곳뿐.
+
+    종전에는 `reconcile_order` 에만 대조가 있고 `confirm` 경로에는 **0회**였다.
+    한쪽만 있는 검증은 없는 것과 같다 — 결함은 검증이 없는 쪽으로 흐른다.
+    """
+    src = (_API / "app/services/billing/toss_orders_service.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    # 실행되는 **비교문** 중 totalAmount 를 읽는 것을 센다(주석·독스트링·로그문구 배제).
+    judging = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        seg = ast.get_source_segment(src, node) or ""
+        if "totalAmount" in seg:
+            judging += 1
+    assert judging == 1, f"금액 판정이 {judging}곳 — 공용화가 깨졌다(복제는 갈라진다)"
+
+
+@pytest.mark.asyncio
+async def test_reresolved_payment_with_wrong_amount_does_not_grant(
+    _capture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★소액 결제의 `paymentKey` 로 고액 주문이 지급되면 안 된다.
+
+    승인 요청(`confirm`)은 서버 금액을 실어 보내 벤더가 대신 걸러 주지만,
+    **재조회(`get_payment`)에는 그 방어가 없다** — 벤더에게 금액을 말하지 않고 그냥 묻는다.
+    """
+    sent, receipts = _capture
+
+    async def timeout_confirm(**kw):
+        raise TossOutcomeUnknownError("타임아웃", payment_key=kw.get("payment_key"))
+
+    async def cheap_payment(*, payment_key, order_id):
+        # 다른(소액) 주문의 승인 건이 그대로 돌아온다.
+        return {"status": "DONE", "totalAmount": 1_000, "paymentKey": payment_key}
+
+    monkeypatch.setattr(_tos.toss_payments, "confirm", timeout_confirm)
+    monkeypatch.setattr(_tos, "_try_resolve", cheap_payment)
+
+    granted: list[dict] = []
+
+    async def spy_confirm_order(db, **kw):
+        granted.append(kw)
+        return {"id": kw["order_id"], "order_no": "x", "status": "paid", "coin_krw": 12_000.0}
+
+    monkeypatch.setattr(_tos.coin_orders_service, "confirm_order", spy_confirm_order)
+
+    db = _OrderSession(_order())
+    with pytest.raises(_tos.PaymentRejectedError) as ei:
+        await _tos.confirm_toss_payment(
+            db, order_id=_order()["id"], payment_key="pk_cheap",
+            claimed_amount=10_000, current_user_id="user-A",
+        )
+    assert ei.value.code == _tos.CODE_AMOUNT_MISMATCH
+    assert granted == [], "★금액이 안 맞는데 지급됐다"
+
+
+@pytest.mark.asyncio
+async def test_reresolved_payment_with_right_amount_still_grants(
+    _capture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★반대 방향 — 금액이 맞으면 **복구가 실제로 일어나야** 한다.
+
+    이쪽을 함께 걸지 않으면 "재조회 결과를 전부 거절"하는 구현이 만점을 받고,
+    「돈만 낸 상태」의 복구 경로가 통째로 죽는다.
+    """
+    sent, receipts = _capture
+
+    async def timeout_confirm(**kw):
+        raise TossOutcomeUnknownError("타임아웃", payment_key=kw.get("payment_key"))
+
+    async def right_payment(*, payment_key, order_id):
+        return {"status": "DONE", "totalAmount": 10_000, "paymentKey": payment_key}
+
+    monkeypatch.setattr(_tos.toss_payments, "confirm", timeout_confirm)
+    monkeypatch.setattr(_tos, "_try_resolve", right_payment)
+
+    granted: list[dict] = []
+
+    async def spy_confirm_order(db, **kw):
+        granted.append(kw)
+        return {"id": kw["order_id"], "order_no": "x", "status": "paid", "coin_krw": 12_000.0}
+
+    monkeypatch.setattr(_tos.coin_orders_service, "confirm_order", spy_confirm_order)
+
+    db = _OrderSession(_order())
+    out = await _tos.confirm_toss_payment(
+        db, order_id=_order()["id"], payment_key="pk_right",
+        claimed_amount=10_000, current_user_id="user-A",
+    )
+    assert granted, "★금액이 맞는데도 복구가 안 됐다 — 봉합이 정상 경로를 죽였다"
+    assert out["status"] == "paid"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★변이 도구가 드러낸 구멍을 메운다 (mutate_changed.py · 2026-09-06)
+#
+# 생존 23건을 분류한 결과 **진짜 구멍 셋**이 나왔다. 나머지는 아래 §설명에 적는다.
+#
+#   ① `:1038` 조건무력화 생존 — `confirm` 경로의 금액 대조는 잠갔는데 **형제
+#      (`reconcile`) 경로의 사용은 안 잠갔다.** 오늘 고친 바로 그 「형제 불일치」를
+#      내가 다시 만들었다(§"방금 고친 결함을 다음 파일에서 내가 만든다").
+#   ② `:1003-1004` SELECT 문자열 생존 — 가짜 세션이 SELECT **내용과 무관하게** 행을
+#      돌려줘서 `refunded_krw` 를 SELECT 에서 지워도 초록이다(스텁이 층을 우회).
+#      → **실제로 실행된 SQL 문자열**을 검사한다.
+#   ③ 차단 영수증의 **기계 필드**(코드)가 무잠금 — 왜 차단했는지 안 남기면 조사 불가.
+# ═══════════════════════════════════════════════════════════════════════════
+@pytest.mark.asyncio
+async def test_reconcile_blocks_grant_when_vendor_amount_differs(
+    _reconcile_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★형제 경로(`reconcile_order`)의 금액 대조도 **행위로** 잠근다.
+
+    변이 `if not vendor_amount_matches(...)` → 무력화가 **생존**했다.
+    한쪽 경로만 잠그면 결함은 잠기지 않은 쪽으로 흐른다 — 오늘 고친 그 형태다.
+    """
+    ledger, receipts = _reconcile_env
+    _stub_vendor(
+        monkeypatch,
+        {"status": "DONE", "paymentKey": "pk_live_1", "totalAmount": 1_000},
+    )
+    granted: list[dict] = []
+
+    async def spy_confirm_order(db, **kw):
+        granted.append(kw)
+        return {"id": kw["order_id"], "order_no": "x", "status": "paid", "coin_krw": 1.0}
+
+    monkeypatch.setattr(_tos.coin_orders_service, "confirm_order", spy_confirm_order)
+    db = _ReconcileSession(_reconcile_row(status="pending"))
+
+    out = await _tos.reconcile_order(db, order_id=_reconcile_row()["id"], actor_id="admin")
+
+    assert out["action"] == "amount_mismatch", out
+    assert granted == [], "★벤더 1,000원 · 우리 10,000원인데 지급됐다"
+    assert any(r.get("toss_code") == _tos.CODE_AMOUNT_MISMATCH for r in receipts), \
+        "왜 막았는지 기계가 읽을 수 있는 코드로 남기지 않았다"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_grants_when_vendor_amount_matches(
+    _reconcile_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★반대 방향 — 금액이 맞으면 **복구가 실제로 일어난다**.
+
+    이쪽이 없으면 "전부 거절"이 만점을 받고 「돈만 낸 상태」 복구가 죽는다.
+    """
+    _stub_vendor(
+        monkeypatch,
+        {"status": "DONE", "paymentKey": "pk_live_1", "totalAmount": 10_000},
+    )
+    granted: list[dict] = []
+
+    async def spy_confirm_order(db, **kw):
+        granted.append(kw)
+        return {"id": kw["order_id"], "order_no": "x", "status": "paid", "coin_krw": 12_000.0}
+
+    monkeypatch.setattr(_tos.coin_orders_service, "confirm_order", spy_confirm_order)
+    db = _ReconcileSession(_reconcile_row(status="pending"))
+
+    out = await _tos.reconcile_order(db, order_id=_reconcile_row()["id"], actor_id="admin")
+
+    assert granted, "★금액이 맞는데 복구가 안 됐다 — 대조가 정상 경로를 죽였다"
+    assert out["action"] == "granted", out
+
+
+@pytest.mark.asyncio
+async def test_reconcile_actually_selects_refunded_krw(
+    _reconcile_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★**실행된 SQL** 이 `refunded_krw` 를 실제로 요구하는지 본다.
+
+    가짜 세션은 SELECT 내용과 무관하게 행을 돌려준다 — 그래서 컬럼을 지워도 테스트가
+    초록이었다(변이 생존으로 실증). 스텁이 우회하는 층은 **그 층을 직접 태워야** 한다.
+    """
+    _stub_vendor(monkeypatch, {"status": "CANCELED", "paymentKey": "pk_live_1"})
+    db = _ReconcileSession(_reconcile_row(), balance_after=0.0, applied=10_000.0)
+
+    await _tos.reconcile_order(db, order_id=_reconcile_row()["id"], actor_id="admin")
+
+    selects = [s for s in db.sql if "FROM coin_orders WHERE id" in s]
+    assert selects, "주문 조회 자체가 없다(공허한 초록 방지)"
+    assert "refunded_krw" in selects[0], \
+        "★환수 판정이 refunded_krw 를 읽지 않는다 — 부분환불 뒤 전액 재환수가 되살아난다"
+    # ★대조군 — 이 단언이 「무엇이든 통과」가 아님을 보인다.
+    assert "존재하지않는컬럼" not in selects[0]
+
+
+@pytest.mark.asyncio
+async def test_confirm_records_machine_readable_reason_when_blocking(
+    _capture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """차단했으면 **왜 차단했는지**를 기계가 읽을 수 있게 남긴다.
+
+    사람이 읽는 문구(`toss_message`)는 다듬을 때마다 깨지는 취약한 락이 되므로 단언하지
+    않는다 — **코드와 이벤트 종류**만 잠근다(계약이지 산문이 아니다).
+    """
+    sent, receipts = _capture
+
+    async def timeout_confirm(**kw):
+        raise TossOutcomeUnknownError("타임아웃", payment_key=kw.get("payment_key"))
+
+    async def cheap(*, payment_key, order_id):
+        return {"status": "DONE", "totalAmount": 1_000, "paymentKey": payment_key}
+
+    monkeypatch.setattr(_tos.toss_payments, "confirm", timeout_confirm)
+    monkeypatch.setattr(_tos, "_try_resolve", cheap)
+
+    db = _OrderSession(_order())
+    with pytest.raises(_tos.PaymentRejectedError):
+        await _tos.confirm_toss_payment(
+            db, order_id=_order()["id"], payment_key="pk_cheap",
+            claimed_amount=10_000, current_user_id="user-A",
+        )
+    blocked = [r for r in receipts if r.get("event") == _pr.EVENT_BLOCKED]
+    assert blocked, "차단하면서 아무 기록도 남기지 않았다"
+    assert blocked[-1]["toss_code"] == _tos.CODE_AMOUNT_MISMATCH
+
+
+@pytest.mark.asyncio
+async def test_clawback_result_carries_the_two_numbers_a_human_needs(
+    _reconcile_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """환수 결과에 **판정 근거 두 수**가 실린다 — 없으면 관리자가 옳은지 알 수 없다.
+
+    (`expected_remaining_krw` = 우리가 유효하다고 본 액 · `vendor_remaining_krw` = 벤더 잔액)
+    """
+    _stub_vendor(
+        monkeypatch,
+        {"status": "PARTIAL_CANCELED", "paymentKey": "pk_live_1", "balanceAmount": 4_000},
+    )
+    db = _ReconcileSession(_reconcile_row(refunded_krw=3_000.0), balance_after=7_000.0, applied=3_000.0)
+
+    out = await _tos.reconcile_order(db, order_id=_reconcile_row()["id"], actor_id="admin")
+
+    assert out["expected_remaining_krw"] == 7_000.0
+    assert out["vendor_remaining_krw"] == 4_000.0
+    # 두 수의 차가 실제 환수액과 맞아야 판정이 설명된다.
+    assert out["expected_remaining_krw"] - out["vendor_remaining_krw"] == out["clawed_back_krw"]
+
+
+# ── ★설명하고 넘어가는 생존 (변이 점수 부풀리기 방지) ────────────────────────
+#
+# 위 락을 넣은 뒤에도 남는 생존은 아래 부류이고, **구멍이 아니다**:
+#
+#  · **반환 dict 의 키 이름 문자열**(`"order_id"`·`"our_status"` 등) — 응답 스키마의
+#    이름을 바꾸면 소비처(관리자 화면)가 깨지지만, 그 결속은 **프론트 쪽 계약 테스트**의
+#    몫이다. 여기서 키 이름까지 단언하면 같은 계약이 두 곳에 복제된다.
+#  · **사람이 읽는 문구**(`note`·`toss_message`) — 계약이 아니라 표현이라, 다듬을 때마다
+#    깨지는 취약한 락이 된다. 이 저장소 규율이 명시적으로 그것을 금한다.
+#  · **영수증의 부수 인자**(`raw=payment`·`user_id=` 등) — 같은 호출의 다른 인자들이
+#    이미 잠겨 있어 호출 자체가 사라지면 CAUGHT 된다(이중 가드).
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★전수 변이(160건 · base 556f56bfff11)가 드러낸 **게이트 자신의 무잠금**
+#
+# 가장 중요한 생존이 **마지막(160/160)** 에 나왔다:
+#
+#     billing.py:522  return "toss" if key_pairing_ok() else "manual_only"
+#
+# 이 문자열을 `"simulated"` 로 바꿔도 **아무 테스트가 알아채지 못했다.**
+# 그런데 그 변경은 이 PR 이 커밋 메시지에서 스스로 경고한 바로 그것이다 —
+# `simulated` 는 `POST /orders/{id}/confirm` 한 번으로 **무료 충전**이 되는 경로다.
+#
+# ★`--max 40` 실행에서는 이 줄에 **도달조차 못 했다**(절단은 소스 순서다).
+#   "변이를 돌렸다"가 감사의 증거가 되려면 **절단되지 않은 실행**이어야 한다.
+# ═══════════════════════════════════════════════════════════════════════════
+class _FakeSettings:
+    def __init__(self, simulated: bool):
+        self.billing_simulated_payments = simulated
+
+
+@pytest.mark.parametrize(
+    ("sk", "ck", "simulated", "expected"),
+    [
+        # ① 쓸 수 있는 키 → 결제창을 켠다.
+        ("test_gsk_x1234567", "test_gck_y1234567", False, "toss"),
+        ("test_gsk_x1234567", "test_gck_y1234567", True, "toss"),
+        # ② ★키는 있는데 **못 쓴다** → 닫는다. 시뮬레이션으로 내려가면 게이트 우회다.
+        ("test_sk_x1234567", "test_ck_y1234567", False, "manual_only"),
+        ("test_sk_x1234567", "test_ck_y1234567", True, "manual_only"),
+        ("test_gsk_x1234567", "live_gck_y1234567", True, "manual_only"),
+        ("test_gsk_x1234567", "test_gsk_y1234567", True, "manual_only"),
+        # ③ 키가 아예 없다 → 종전 계약 그대로(회귀 아님을 잠근다).
+        ("", "", True, "simulated"),
+        ("", "", False, "manual_only"),
+    ],
+)
+def test_payment_mode_gate_never_falls_through_to_free_topup(
+    monkeypatch: pytest.MonkeyPatch, sk: str, ck: str, simulated: bool, expected: str
+) -> None:
+    """★**세 모집단**을 같은 표에서 가른다.
+
+    ②가 이 잠금의 핵심이다 — "키가 있는데 짝이 틀리다"를 `simulated` 로 떨어뜨리면
+    결제 게이트가 통째로 우회된다. `manual_only` 로 **닫아야** 한다.
+    """
+    import routers.billing as _billing
+
+    if sk:
+        monkeypatch.setenv("TOSS_SECRET_KEY", sk)
+    else:
+        monkeypatch.delenv("TOSS_SECRET_KEY", raising=False)
+    if ck:
+        monkeypatch.setenv("TOSS_CLIENT_KEY", ck)
+    else:
+        monkeypatch.delenv("TOSS_CLIENT_KEY", raising=False)
+
+    assert _billing.resolve_payment_mode(_FakeSettings(simulated)) == expected
+
+
+def test_bad_keys_never_produce_simulated_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★위 표의 ②를 **한 문장으로** 다시 못 박는다 — 이것이 돈이 걸린 불변식이다.
+
+    표는 케이스가 늘면 사람이 훑고 넘어가는데, 이 단언은 **원리**를 말한다:
+    *"키가 존재하는 한, 그 키가 나빠도 무료 경로는 열리지 않는다."*
+    """
+    import routers.billing as _billing
+
+    for sk, ck in [
+        ("test_sk_x1234567", "test_ck_y1234567"),
+        ("live_gsk_x1234567", "test_gck_y1234567"),
+        ("test_gsk_x1234567", "garbage"),
+        ("test_gck_x1234567", "test_gck_y1234567"),
+    ]:
+        monkeypatch.setenv("TOSS_SECRET_KEY", sk)
+        monkeypatch.setenv("TOSS_CLIENT_KEY", ck)
+        mode = _billing.resolve_payment_mode(_FakeSettings(True))
+        assert mode != "simulated", f"({sk[:12]}…, {ck[:12]}…) 가 무료 충전 경로를 열었다"
+
+
+def test_missing_keys_are_not_configured_not_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★**미설정**과 **형식 오류**는 다른 사실이다 — 뭉개면 관리자가 오독한다.
+
+    변이 `if not (ck_raw and sk_raw):` 무력화가 생존했다 = 빈 키가 「형식 불량」으로
+    보고돼도 아무도 몰랐다는 뜻이다. 미설정은 **장애가 아니라 상태**다(severity=info).
+    """
+    monkeypatch.delenv("TOSS_SECRET_KEY", raising=False)
+    monkeypatch.delenv("TOSS_CLIENT_KEY", raising=False)
+    d = toss_payments.key_diagnosis()
+    assert d["code"] == "not_configured"
+    assert d["severity"] == "info", "미설정을 오류로 보고하면 진짜 사고가 묻힌다"
+
+    # ★대조군 — 한쪽만 있어도 여전히 미설정이고, **형식이 깨진 것과는 다르다**.
+    monkeypatch.setenv("TOSS_SECRET_KEY", "test_gsk_x1234567")
+    assert toss_payments.key_diagnosis()["code"] == "not_configured"
+    monkeypatch.setenv("TOSS_CLIENT_KEY", "garbage")
+    assert toss_payments.key_diagnosis()["code"] == "client_key_malformed"
+
+
+def test_wrong_family_says_which_block_to_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★*"틀렸다"* 만으로는 못 고친다 — **무엇을 갖고 있고 무엇이 필요한지** 말해야 한다."""
+    monkeypatch.setenv("TOSS_SECRET_KEY", "test_sk_x1234567")
+    monkeypatch.setenv("TOSS_CLIENT_KEY", "test_ck_y1234567")
+    d = toss_payments.key_diagnosis()
+    assert d["code"] == "wrong_family"
+    assert d["found_family"] == "API 개별 연동 키"
+    assert d["required_family"] == "주문서형·결제창형 연동 키"
+    # ★두 값이 **달라야** 진단이다(같으면 무엇을 바꾸라는 말인지 알 수 없다).
+    assert d["found_family"] != d["required_family"]
+
+
+def test_health_contract_carries_the_field_scripts_read() -> None:
+    """`scripts/verify-toss-live.sh` 가 `key_diagnosis` 를 읽는다 — 이름이 바뀌면 조용히 죽는다.
+
+    ★소비처가 저장소 안에 있으므로 여기서 결속한다(밖에 있으면 그쪽 계약 테스트의 몫이다).
+    """
+    import os
+
+    os.environ["TOSS_SECRET_KEY"] = "test_gsk_x1234567"
+    os.environ["TOSS_CLIENT_KEY"] = "test_gck_y1234567"
+    try:
+        assert "key_diagnosis" in toss_payments.config_status()
+    finally:
+        os.environ.pop("TOSS_SECRET_KEY", None)
+        os.environ.pop("TOSS_CLIENT_KEY", None)
+    script = (_API.parents[2] / "scripts/verify-toss-live.sh").read_text(encoding="utf-8")
+    assert "key_diagnosis" in script, "스크립트가 그 필드를 안 읽으면 이 결속은 공허하다"
+    # ★대조군 — 스크립트를 실제로 읽었다(빈 파일이라 통과한 것이 아니다).
+    assert "NOT_FOUND_PAYMENT" in script
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★진단이 **화면까지 도달하는가** — 만들어 두고 아무도 안 읽으면 소비처 0이다
+# ═══════════════════════════════════════════════════════════════════════════
+def test_health_warning_text_is_derived_from_the_diagnosis() -> None:
+    """★종전 문구는 이제 **거짓말**이다 — 계열 오류를 「환경 혼용」이라 부르면 안 된다.
+
+    `key_pairing_ok=false` 의 사유가 하나가 아닌데 문구가 하나면, 소유자는
+    test/live 만 계속 확인하다가 진짜 원인(계열·역할)에 영영 도달하지 못한다.
+    """
+    src = (_API / "routers/billing.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    # 실행되는 줄만 본다 — 위 설명 주석에도 같은 문구가 있으므로 소스 grep 은 위양성이다.
+    literals = [
+        n.value for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    ]
+    assert not any(
+        "다른 환경(테스트/라이브)입니다" in t for t in literals
+    ), "★사유를 하나로 단정하는 옛 문구가 실행 경로에 남아 있다"
+    # ★대조군 — 이 검사기가 실제로 문자열을 보고 있다(빈 목록이라 통과한 것이 아니다).
+    assert any("시뮬레이션 결제가 켜져 있습니다" in t for t in literals), \
+        "리터럴 수집이 죽었다 — 위 「없음」을 신뢰하지 마라"
+
+
+@pytest.mark.asyncio
+async def test_admin_health_warning_tells_the_owner_which_block_to_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★계열이 틀렸을 때 **화면이 받는 문자열**에 조치가 실려야 한다.
+
+    화면은 `warnings` 만 렌더하므로(`PaymentAdminPanel.tsx:226`), 여기에 안 실리면
+    진단은 존재하지만 **아무도 보지 못한다**.
+    """
+    import routers.billing as _billing
+
+    monkeypatch.setenv("TOSS_SECRET_KEY", "test_sk_x1234567")
+    monkeypatch.setenv("TOSS_CLIENT_KEY", "test_ck_y1234567")
+
+    async def allow(db, current):
+        return None
+
+    monkeypatch.setattr(_billing, "_require_super_admin", allow)
+    out = await _billing.admin_payment_health(
+        current=object(), db=object(), settings=_FakeSettings(False)
+    )
+    joined = " ".join(out["warnings"])
+    assert "주문서형" in joined, "어느 블록을 복사해야 하는지 화면에 안 나온다"
+    assert out["payment_mode"] == "manual_only"
+
+    # ★두 모집단 — 정상 키에서는 그 경고가 **사라져야** 한다(항상 경고하면 곧 무시된다).
+    monkeypatch.setenv("TOSS_SECRET_KEY", "test_gsk_x1234567")
+    monkeypatch.setenv("TOSS_CLIENT_KEY", "test_gck_y1234567")
+    ok_out = await _billing.admin_payment_health(
+        current=object(), db=object(), settings=_FakeSettings(False)
+    )
+    assert not any("주문서형" in w for w in ok_out["warnings"])
+    assert ok_out["payment_mode"] == "toss"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★변이 잔재가 **커밋에 실렸다** — 산문으로 "조심하자"가 아니라 기계로 막는다
+#
+# 2026-09-06 실측: 전수 변이가 도는 동안 `git add -A` 로 커밋하는 바람에
+# `toss_payments.py:248` 의 조치 문구가 **`"__MUTATED__"` 인 채로 커밋·푸시**됐다
+# (커밋 `db9c155e0`). 저장소 규율 §B-7 이 *"커밋 먼저 → 변이 → 원복"* 을 적어 뒀는데,
+# 나는 그 순서를 **거꾸로** 밟았다.
+#
+# ★**테스트는 이것을 못 잡았다** — 진단 문구는 「비어 있지 않은지」만 단언하고
+#   `"__MUTATED__"` 는 비어 있지 않다. 그것은 옳은 설계다(산문을 단언하면 취약한 락이
+#   된다). 그러므로 **다른 축**으로 잡아야 한다: 변이 도구의 **표식 자체**를 금지한다.
+#
+# ★규율이 문서에만 있으면 지켜지지 않는다(이 저장소가 같은 형태로 이미 데였다).
+# ═══════════════════════════════════════════════════════════════════════════
+def test_no_mutation_sentinel_survives_into_shipped_source() -> None:
+    """변이 도구의 표식이 **커밋된 소스**에 남아 있지 않다.
+
+    ## ★판정 지점이 「워킹트리」가 아니라 「HEAD」인 이유 (2026-09-06 · 두 번째 교정)
+
+    처음에는 워킹트리 파일을 읽었다. 그랬더니 **변이 도구 자신이 이 가드에 걸렸다** —
+    도구는 치환 문자열로 `__MUTATED__` 를 쓰므로, 그 파일들의 **모든 문자열 변이가
+    자동으로 CAUGHT** 이 됐다. 실측: 문자열변경 40건 → **40 kill · 생존 0**
+    (직전 실행에서는 같은 부류가 30건 넘게 생존했다 — 그것들은 산문이라 생존이 정상이다).
+
+    즉 이 가드가 **변이 점수를 부풀리고 도구를 눈멀게 했다.** 도구 자신이 경고하는
+    *"이중 가드면 그 사실을 코드에 적어라(변이 점수 부풀리기 방지)"* 의 정확한 사례다.
+
+    ★고칠 것은 가드의 존재가 아니라 **판정 지점**이다. 실제 결함은
+    *"표식이 워킹트리에 있다"* 가 아니라 **"표식이 커밋됐다"** 였다(커밋 `db9c155e0`).
+    그러므로 **`git show HEAD:<경로>`** 를 본다:
+
+      · 변이 실행은 워킹트리만 고치므로 **이 가드를 건드리지 않는다** → 도구가 시력을 회복한다
+      · 표식이 실제로 커밋되면 **그 커밋에서 빨개진다** → CI 가 머지 전에 잡는다
+    """
+    import subprocess
+    import sys
+
+    root = _API.parents[1]  # propai-platform
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from tests._scan_guard import assert_absent
+
+    repo = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=root, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    rel = [
+        str(f.relative_to(repo))
+        for f in sorted(
+            list((_API / "app/services/billing").glob("*.py"))
+            + [_API / "routers/billing.py"]
+        )
+    ]
+    assert len(rel) >= 5, "모집단이 비었다 — 공허한 초록 방지"
+
+    chunks = []
+    for r in rel:
+        got = subprocess.run(
+            ["git", "show", f"HEAD:{r}"], cwd=repo, capture_output=True, text=True
+        )
+        # 아직 커밋되지 않은 새 파일은 **판정 대상이 아니다**(커밋된 것을 보는 가드다).
+        if got.returncode == 0:
+            chunks.append(got.stdout)
+    assert chunks, "HEAD 에서 아무 파일도 못 읽었다 — 검사기가 죽었다"
+
+    assert_absent(
+        "\n".join(chunks),
+        pattern=r"__MUTATED__",
+        # ★대조군: 이 모집단에 **반드시** 있는 것 — 이 PR 이 만든 함수 이름.
+        #   없으면 경로·수집이 틀린 것이지 "깨끗한" 것이 아니다.
+        positive_control=r"def key_diagnosis",
+        reason=(
+            "커밋된 런타임 결제 코드에 변이 도구의 표식이 남아 있다"
+            "(§B-7: 변이가 도는 중에 커밋하지 마라. 2026-09-06 에 실제로 어겼다)"
+        ),
+    )

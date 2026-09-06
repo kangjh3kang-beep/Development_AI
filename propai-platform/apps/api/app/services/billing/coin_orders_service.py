@@ -112,14 +112,46 @@ def _order_dict(r: Any) -> dict[str, Any]:
         "paid_at": r["paid_at"].isoformat() if r["paid_at"] else None,
         "canceled_at": r["canceled_at"].isoformat() if r["canceled_at"] else None,
         "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        # ★무통장입금 사용자가 **어떤 이름으로 입금해야 하는지** 화면이 말할 수 있게 한다.
+        #   이 값이 없으면 사용자는 아무 이름으로 보내고, 관리자는 대사하지 못한다.
+        #   두 쿼리(INSERT RETURNING · list SELECT) **모두** 이 컬럼을 실어야 한다.
+        "depositor_name": r["buyer_name"],
     }
+
+
+#: 입금자명 상한 — 은행 입금자명 표기 한도를 넘지 않는 선.
+#: ★더 길면 통장에 **잘려 찍혀서** 어차피 대사에 못 쓴다(길이를 늘리는 것이 친절이 아니다).
+DEPOSITOR_NAME_MAX = 20
+
+
+def sanitize_depositor_name(raw: str | None) -> str | None:
+    """무통장입금 **실제 입금자명** 위생. 쓸 수 없으면 `None`(호출자가 가입자명으로 되돌린다).
+
+    ★화면과 관리자 목록에 그대로 그려지고 **은행 내역과 눈으로 대사**되는 값이다.
+      제어문자·과도한 공백이 섞이면 두 문자열이 사람 눈에 같아 보이는데 안 맞는다.
+    """
+    if raw is None:
+        return None
+    # 제어문자 제거 후 공백 정규화 — "홍  길동\t" 과 "홍 길동" 이 다른 값이 되지 않게.
+    cleaned = " ".join("".join(ch for ch in raw if ch.isprintable()).split())
+    if not cleaned:
+        return None
+    return cleaned[:DEPOSITOR_NAME_MAX]
 
 
 async def create_order(
     db: AsyncSession, *, user_id: str, tenant_id: str | None,
     package_key: str, amount_krw: float | None = None,
+    depositor_name: str | None = None,
 ) -> dict[str, Any]:
-    """충전 주문 생성(pending). 금액 서버 결정 + 구매자 법정보존 스냅샷 + 미결제 상한."""
+    """충전 주문 생성(pending). 금액 서버 결정 + 구매자 법정보존 스냅샷 + 미결제 상한.
+
+    ★`depositor_name` 은 **무통장입금 대사용**이다. 비우면 **종전대로 가입자명**을 쓴다
+      (회귀 0) — 회사·가족 명의로 입금하는 사람만 적는다. 그 값이 없으면 관리자가
+      은행 입출금 내역과 이 주문을 **맞출 수 없다**.
+    ★인자를 **맨 뒤 · 키워드 전용**으로 넣는다 — 앞에 넣으면 위치인자 호출부가 조용히
+      밀린다(이 저장소에 그 사고가 한 세션에 4회 난 실측이 있다).
+    """
     amount = resolve_order_amount(package_key, amount_krw)  # ValueError → 라우터 400
     await ensure_schema(db)
 
@@ -154,11 +186,15 @@ async def create_order(
         "(order_no, user_id, tenant_id, package_key, amount_krw, coin_krw, buyer_name, buyer_email)"
         " VALUES(:no,:u,:t,:pk,:a,:c,:bn,:be)"
         " RETURNING id, order_no, package_key, amount_krw, coin_krw, status, provider,"
-        " fail_reason, paid_at, canceled_at, created_at"
+        " fail_reason, paid_at, canceled_at, created_at, buyer_name"
     ), {
         "no": order_no, "u": user_id, "t": tenant_id, "pk": package_key,
         "a": amount, "c": amount,  # v1: 1:1 지급(보너스는 billing_config 후속 연동점)
-        "bn": (buyer[0] if buyer else None), "be": (buyer[1] if buyer else None),
+        # ★입금자명을 준 경우 **그것**이 대사 키다. 안 준 경우에만 가입자명 스냅샷.
+        #   (전상법 §6 구매자 기록으로서의 역할은 두 경우 모두 유지된다)
+        "bn": (sanitize_depositor_name(depositor_name)
+               or (buyer[0] if buyer else None)),
+        "be": (buyer[1] if buyer else None),
     })).mappings().first()
     await db.commit()
     return _order_dict(row)
@@ -181,7 +217,7 @@ async def list_orders(
     offset = max(0, int(offset or 0))
     rows = (await db.execute(text(
         "SELECT id, order_no, package_key, amount_krw, coin_krw, status, provider,"
-        " fail_reason, paid_at, canceled_at, created_at"
+        " fail_reason, paid_at, canceled_at, created_at, buyer_name"
         " FROM coin_orders WHERE user_id=:u ORDER BY created_at DESC LIMIT :l OFFSET :o"
     ), {"u": user_id, "l": limit, "o": offset})).mappings().all()
     return [_order_dict(r) for r in rows]
