@@ -32,15 +32,49 @@ import path from "node:path";
 const WEB = path.resolve(__dirname, "..", "..");
 
 describe("로컬 전수 선재 실패 원장", () => {
-  it("★원인이 「환경(모듈 해석)」임을 못 박는다 — 고쳐지면 원장을 갱신하라", () => {
-    // packages/ui 가 앱의 node_modules 밖에 있어서 react 를 못 찾는 구조인가
+  it("★원인이 「환경(모듈 해석)」임을 못 박는다 — 두 환경 형태를 **각각** 단언한다", () => {
+    // ★★2026-09-06 CI 적발 — 첫 판은 `expect(hasOwnReact).toBe(false)` **무조건**이었다.
+    //   그런데 **바로 위 문서 블록 23줄이 답을 이미 적고 있었다**: *"CI 는 정상 설치라
+    //   초록이다."* 정상 설치면 `packages/ui/node_modules/react` 가 **있다** — 그래서
+    //   이 락이 CI 에서 빨개졌다(필수 체크 `Frontend (type-check + lint + test)`).
+    //   근본은 **환경 축에 두 모집단이 있는데 한쪽만 단언한 것**이다(§D-19 경계는 양방향).
+    //   내가 쓴 설명이 옳았고 내가 건 단언이 그 설명과 모순됐다.
+    //   → 형태를 **관측해서 가르고**, 두 가지가 **서로 다른 것을 실제로 단언**하게 한다.
     const pkgUi = path.resolve(WEB, "../../packages/ui");
     expect(fs.existsSync(pkgUi), "packages/ui 가 없다 — 원인 구조가 바뀌었다").toBe(true);
+
+    // 원장이 지목한 바로 그 임포트 원천이 실재하는가(공허진리 방지 — 여기가 비면
+    // 아래 두 갈래 모두 «해석할 것이 없어서» 참이 된다).
+    const importer = path.join(pkgUi, "src", "components", "button.tsx");
+    expect(fs.existsSync(importer),
+      "원장이 지목한 임포트 원천이 사라졌다 — 원인 구조가 바뀌었으니 원장을 다시 재라",
+    ).toBe(true);
+
     const own = path.join(pkgUi, "node_modules", "react");
-    expect(fs.existsSync(own),
-      "packages/ui 가 자기 react 를 갖게 됐다 — 해석 실패가 사라졌을 수 있으니 " +
-      "선재 실패 9건을 **다시 재고** 이 원장을 갱신하라",
-    ).toBe(false);
+    if (fs.existsSync(own)) {
+      // ── 형태 B: 정상 설치(CI) — 원장의 「선재 9건」은 **이 환경에 적용되지 않는다.**
+      //   그러면 그 사실을 검사로 말해야 한다: 실패했던 그 임포트가 **실제로 해석되는지**.
+      //   (프로즈가 아니라 파일 실재로 판정한다 — 문구는 다듬을 때마다 깨진다.)
+      const resolvable =
+        fs.existsSync(path.join(own, "jsx-dev-runtime.js")) ||
+        fs.existsSync(path.join(own, "jsx-dev-runtime", "package.json")) ||
+        fs.existsSync(path.join(own, "jsx-dev-runtime.mjs"));
+      expect(resolvable,
+        "packages/ui 가 자기 react 를 갖는데 `react/jsx-dev-runtime` 이 그 안에 없다 — " +
+        "원장이 적은 원인(모듈 해석)과 다른 형태다. **다시 재고 원장을 갱신하라**",
+      ).toBe(true);
+    } else {
+      // ── 형태 A: 로컬 미설치 — 원장이 측정된 그 형태다. 원인 구조가 그대로인지 본다.
+      //   ★여기서 해석이 **되면** 원인이 사라진 것이므로 원장을 갱신해야 한다.
+      const rootReact = path.resolve(WEB, "..", "..", "node_modules", "react");
+      const hoistedResolvable =
+        fs.existsSync(path.join(rootReact, "jsx-dev-runtime.js")) ||
+        fs.existsSync(path.join(rootReact, "jsx-dev-runtime", "package.json"));
+      expect(hoistedResolvable,
+        "packages/ui 가 자기 react 가 없는데 워크스페이스 루트에서 해석이 된다 — " +
+        "선재 실패 9건의 원인이 사라졌을 수 있으니 **다시 재고** 이 원장을 갱신하라",
+      ).toBe(false);
+    }
   });
 
   it("★선재 판정의 근거가 문서에 남아 있다(다음 사람이 되짚을 수 있게)", () => {
