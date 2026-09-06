@@ -1845,16 +1845,26 @@ async def test_admin_health_warning_tells_the_owner_which_block_to_copy(
 # ★규율이 문서에만 있으면 지켜지지 않는다(이 저장소가 같은 형태로 이미 데였다).
 # ═══════════════════════════════════════════════════════════════════════════
 def test_no_mutation_sentinel_survives_into_shipped_source() -> None:
-    """변이 도구의 표식이 **출하되는 소스**에 남아 있지 않다.
+    """변이 도구의 표식이 **커밋된 소스**에 남아 있지 않다.
 
-    ★`tests/_scan_guard.assert_absent` 를 쓴다 — `positive_control` 이 **필수 키워드
-      인자**라 대조군 없는 호출이 문법적으로 불가능하고, **대조군 파괴는
-      `ScannerDeadError`, 진짜 위반은 `AssertionError`** 로 갈린다(뭉치면
-      *"검사기가 죽었다"* 가 *"깨끗하다"* 로 읽힌다).
-    ★검사 범위는 **런타임 코드만**이다 — 테스트 파일에는 이 표식이 설명 목적으로
-      정당하게 등장한다(실제로 `test_comparable_sample_wiring.py:704` 에 있다).
-      범위를 넓히면 그 정당한 등장이 위양성이 된다.
+    ## ★판정 지점이 「워킹트리」가 아니라 「HEAD」인 이유 (2026-09-06 · 두 번째 교정)
+
+    처음에는 워킹트리 파일을 읽었다. 그랬더니 **변이 도구 자신이 이 가드에 걸렸다** —
+    도구는 치환 문자열로 `__MUTATED__` 를 쓰므로, 그 파일들의 **모든 문자열 변이가
+    자동으로 CAUGHT** 이 됐다. 실측: 문자열변경 40건 → **40 kill · 생존 0**
+    (직전 실행에서는 같은 부류가 30건 넘게 생존했다 — 그것들은 산문이라 생존이 정상이다).
+
+    즉 이 가드가 **변이 점수를 부풀리고 도구를 눈멀게 했다.** 도구 자신이 경고하는
+    *"이중 가드면 그 사실을 코드에 적어라(변이 점수 부풀리기 방지)"* 의 정확한 사례다.
+
+    ★고칠 것은 가드의 존재가 아니라 **판정 지점**이다. 실제 결함은
+    *"표식이 워킹트리에 있다"* 가 아니라 **"표식이 커밋됐다"** 였다(커밋 `db9c155e0`).
+    그러므로 **`git show HEAD:<경로>`** 를 본다:
+
+      · 변이 실행은 워킹트리만 고치므로 **이 가드를 건드리지 않는다** → 도구가 시력을 회복한다
+      · 표식이 실제로 커밋되면 **그 커밋에서 빨개진다** → CI 가 머지 전에 잡는다
     """
+    import subprocess
     import sys
 
     root = _API.parents[1]  # propai-platform
@@ -1862,25 +1872,38 @@ def test_no_mutation_sentinel_survives_into_shipped_source() -> None:
         sys.path.insert(0, str(root))
     from tests._scan_guard import assert_absent
 
-    targets = sorted(
-        list((_API / "app/services/billing").glob("*.py"))
-        + [_API / "routers/billing.py"]
-    )
-    assert len(targets) >= 5, "모집단이 비었다 — 공허한 초록 방지"
-    # ★파일마다 따로 부르지 않고 **이어 붙여** 한 번에 검사한다.
-    #   빈 `__init__.py` 처럼 대조군이 원리적으로 없는 파일이 섞이면
-    #   `ScannerDeadError`(검사기 사망)가 나는데, 그것은 진짜 사망이 아니라
-    #   **내 대조군 선택이 틀린 것**이다. (실제로 그렇게 한 번 빨개졌다 —
-    #   도구가 「위반 0」과 「검사기 죽음」을 다른 예외로 가르기 때문에 즉시 드러났다)
-    blob = "\n".join(f.read_text(encoding="utf-8") for f in targets)
+    repo = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=root, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    rel = [
+        str(f.relative_to(repo))
+        for f in sorted(
+            list((_API / "app/services/billing").glob("*.py"))
+            + [_API / "routers/billing.py"]
+        )
+    ]
+    assert len(rel) >= 5, "모집단이 비었다 — 공허한 초록 방지"
+
+    chunks = []
+    for r in rel:
+        got = subprocess.run(
+            ["git", "show", f"HEAD:{r}"], cwd=repo, capture_output=True, text=True
+        )
+        # 아직 커밋되지 않은 새 파일은 **판정 대상이 아니다**(커밋된 것을 보는 가드다).
+        if got.returncode == 0:
+            chunks.append(got.stdout)
+    assert chunks, "HEAD 에서 아무 파일도 못 읽었다 — 검사기가 죽었다"
+
     assert_absent(
-        blob,
+        "\n".join(chunks),
         pattern=r"__MUTATED__",
         # ★대조군: 이 모집단에 **반드시** 있는 것 — 이 PR 이 만든 함수 이름.
         #   없으면 경로·수집이 틀린 것이지 "깨끗한" 것이 아니다.
         positive_control=r"def key_diagnosis",
         reason=(
-            "런타임 결제 코드에 변이 도구의 표식이 남아 커밋됐다"
-            "(§B-7: 커밋 먼저 → 변이 → 원복. 2026-09-06 에 실제로 어겼다)"
+            "커밋된 런타임 결제 코드에 변이 도구의 표식이 남아 있다"
+            "(§B-7: 변이가 도는 중에 커밋하지 마라. 2026-09-06 에 실제로 어겼다)"
         ),
     )
