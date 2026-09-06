@@ -81,6 +81,7 @@ def _suspects() -> tuple[list[tuple[str, str, str, int]], int]:
             if not names:
                 continue
             for n in ast.walk(fn):
+                # ㉠ 점 접근:  current_user.consent_pending
                 if (
                     isinstance(n, ast.Attribute)
                     and isinstance(n.value, ast.Name)
@@ -89,6 +90,32 @@ def _suspects() -> tuple[list[tuple[str, str, str, int]], int]:
                     and n.attr not in _PYDANTIC_OK
                 ):
                     out.append((str(p.relative_to(API_ROOT)), fn.name, f"{n.value.id}.{n.attr}", n.lineno))
+                # ㉡ ★getattr 접근:  getattr(current_user, "consent_pending", False)
+                #    **사고의 실제 형태가 이것이었다.** ㉠만 보면 락이 사고를 못 잡는다 —
+                #    2026-09-06 변이로 실증(사고 재현 변이가 SURVIVED 했다).
+                #    ★그리고 기본값이 있는 형태가 더 위험하다: 없으면 AttributeError 로
+                #      시끄럽게 터지는데, 기본값이 그 침묵을 만든다.
+                if (
+                    isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Name)
+                    and n.func.id == "getattr"
+                    and n.args
+                    and isinstance(n.args[0], ast.Name)
+                    and n.args[0].id in names
+                    and len(n.args) >= 2
+                    and isinstance(n.args[1], ast.Constant)
+                    and isinstance(n.args[1].value, str)
+                    and n.args[1].value not in fields
+                    and n.args[1].value not in _PYDANTIC_OK
+                ):
+                    out.append(
+                        (
+                            str(p.relative_to(API_ROOT)),
+                            fn.name,
+                            f'getattr({n.args[0].id}, "{n.args[1].value}")',
+                            n.lineno,
+                        )
+                    )
     return out, scanned
 
 
