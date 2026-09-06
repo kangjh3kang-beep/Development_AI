@@ -168,3 +168,47 @@ class TestConsentGateIsEnforced:
         """★낱말 포함으로 판정하면 /api/v1/xxx/legal 같은 것도 열린다."""
         src = self._main_src()
         assert "path.startswith(_CONSENT_EXEMPT_PREFIXES)" in src
+
+
+class TestBackfillIsNotAutoApplied:
+    """★소급이 **배포 부수효과로** 적용되지 않는지 잠근다.
+
+    2026-09-06 실측: `infra/deploy-zero-downtime.sh:234` 가 트래픽 전환 **전에**
+    `alembic upgrade head` 를 돌린다. 그래서 versions/ 에 소급을 두면
+    머지 → 배포 → 소급이 **한 덩어리**가 되어 «확증 후 소급» 이 불가능해진다.
+    소급 대상 8명에 **사용자 본인과 super_admin** 이 포함되므로 부수효과로 일어나면 안 된다.
+    """
+
+    def _versions_dir(self):
+        from pathlib import Path
+
+        return Path(__file__).resolve().parents[1] / "database" / "migrations" / "versions"
+
+    def test_배포되는_리비전은_소급을_실행하지_않는다(self):
+        p = self._versions_dir() / "v62_9_consent_pending.py"
+        assert p.exists(), "컬럼 리비전이 없다 — 판정 불가"
+        src = p.read_text(encoding="utf-8")
+        assert "add_column" in src            # ★대조군 — 이 리비전이 하는 일은 있다
+        assert "BACKFILL_SQL" not in src      # ★소급은 여기 없다
+
+    def test_versions_안에_소급_리비전이_없다(self):
+        """★파일 하나만 보지 않는다 — 디렉토리 전수로 «어디에도 없음»을 본다."""
+        hits = [
+            p.name
+            for p in self._versions_dir().glob("*.py")
+            if "BACKFILL_SQL" in p.read_text(encoding="utf-8")
+        ]
+        assert hits == [], f"소급이 배포 경로에 있다: {hits}"
+
+    def test_소급_리비전이_승인_대기_자리에_보관돼_있다(self):
+        """★«없다»와 «잃어버렸다»는 다르다 — 대기 파일이 실재하는지도 본다."""
+        from pathlib import Path
+
+        p = (
+            Path(__file__).resolve().parents[3]
+            / "_workspace" / "pending_migrations" / "v62_10_consent_backfill.py.pending"
+        )
+        assert p.exists(), f"소급 리비전 대기 파일이 없다: {p}"
+        src = p.read_text(encoding="utf-8")
+        assert "BACKFILL_SQL" in src
+        assert "사용자 승인" in src

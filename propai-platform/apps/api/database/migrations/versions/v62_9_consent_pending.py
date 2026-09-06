@@ -1,4 +1,4 @@
-"""v62 — users.consent_pending + **기존 미동의자 소급 채움**.
+"""v62 — users.consent_pending 컬럼만 만든다(★소급은 다음 리비전).
 
 Revision ID: v62_9_consent_pending
 Revises: v62_8_run_execution
@@ -31,7 +31,6 @@ branch_labels = None
 depends_on = None
 
 from apps.api.database.consent_backfill import (  # noqa: E402
-    BACKFILL_SQL,
     CONSENT_PENDING_COLUMN as _COL,
 )
 
@@ -57,7 +56,13 @@ def upgrade() -> None:
             ),
         )
 
-    op.execute(sa.text(BACKFILL_SQL))
+    # ★★소급 UPDATE 는 **이 리비전에 없다.** 여기서 돌리면
+    #   머지 → api 배포(deploy-zero-downtime.sh:234 `alembic upgrade head`, 트래픽 전환 前)
+    #   → 소급이 **한 덩어리로** 적용된다. 즉 «배포를 확증한 뒤 소급» 이 원리적으로 불가능해진다.
+    #   2026-09-06 실측: 소급 대상 8명에 **사용자 본인 계정과 super_admin 이 포함**되고,
+    #   복구에 **본인의 동의 행동**이 필요하다 — 배포 부수효과로 일어날 일이 아니다.
+    #   → 소급은 별도 리비전(v62_10)에서, **사용자 승인 뒤에** 적용한다.
+    #     SQL 자체는 database/consent_backfill.py 에 단일 원천으로 있다.
 
 
 def downgrade() -> None:
