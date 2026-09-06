@@ -766,10 +766,16 @@ async def admin_payment_health(
     await _require_super_admin(db, current)
     cfg = toss_payments.config_status()
     warnings: list[str] = []
-    if cfg["configured"] and not cfg["key_pairing_ok"]:
-        warnings.append(
-            "★클라이언트 키와 시크릿 키가 다른 환경(테스트/라이브)입니다 — 결제가 거절됩니다."
-        )
+    # ★진단을 **`warnings` 에 실어 보낸다** — 화면은 `warnings` 만 렌더한다
+    #   (`PaymentAdminPanel.tsx:226`). 새 필드를 만들어 두고 화면이 안 읽으면 그것은
+    #   소비처 0이고, 관리자는 여전히 못 고친다.
+    # ★종전 문구는 이제 **거짓말이 된다**: `key_pairing_ok=false` 의 사유가 환경 혼용
+    #   하나가 아니기 때문이다(역할 뒤바뀜·계열 불일치·형식 오류). 「계열이 틀렸다」를
+    #   *"테스트/라이브가 다릅니다"* 로 안내하면 소유자를 **틀린 곳으로 보낸다** —
+    #   그 사람은 test/live 만 계속 확인하게 된다.
+    diag = cfg["key_diagnosis"]
+    if cfg["configured"] and not diag["ok"]:
+        warnings.append(f"★{diag['message']} → {diag['action']}")
     if cfg["configured"] and cfg["test_mode"]:
         warnings.append("★테스트 키를 사용 중입니다 — 실제 결제가 일어나지 않습니다.")
     if settings.billing_simulated_payments:

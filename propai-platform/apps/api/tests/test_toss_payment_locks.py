@@ -1769,3 +1769,62 @@ def test_health_contract_carries_the_field_scripts_read() -> None:
     assert "key_diagnosis" in script, "스크립트가 그 필드를 안 읽으면 이 결속은 공허하다"
     # ★대조군 — 스크립트를 실제로 읽었다(빈 파일이라 통과한 것이 아니다).
     assert "NOT_FOUND_PAYMENT" in script
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★진단이 **화면까지 도달하는가** — 만들어 두고 아무도 안 읽으면 소비처 0이다
+# ═══════════════════════════════════════════════════════════════════════════
+def test_health_warning_text_is_derived_from_the_diagnosis() -> None:
+    """★종전 문구는 이제 **거짓말**이다 — 계열 오류를 「환경 혼용」이라 부르면 안 된다.
+
+    `key_pairing_ok=false` 의 사유가 하나가 아닌데 문구가 하나면, 소유자는
+    test/live 만 계속 확인하다가 진짜 원인(계열·역할)에 영영 도달하지 못한다.
+    """
+    src = (_API / "routers/billing.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    # 실행되는 줄만 본다 — 위 설명 주석에도 같은 문구가 있으므로 소스 grep 은 위양성이다.
+    literals = [
+        n.value for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    ]
+    assert not any(
+        "다른 환경(테스트/라이브)입니다" in t for t in literals
+    ), "★사유를 하나로 단정하는 옛 문구가 실행 경로에 남아 있다"
+    # ★대조군 — 이 검사기가 실제로 문자열을 보고 있다(빈 목록이라 통과한 것이 아니다).
+    assert any("시뮬레이션 결제가 켜져 있습니다" in t for t in literals), \
+        "리터럴 수집이 죽었다 — 위 「없음」을 신뢰하지 마라"
+
+
+@pytest.mark.asyncio
+async def test_admin_health_warning_tells_the_owner_which_block_to_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★계열이 틀렸을 때 **화면이 받는 문자열**에 조치가 실려야 한다.
+
+    화면은 `warnings` 만 렌더하므로(`PaymentAdminPanel.tsx:226`), 여기에 안 실리면
+    진단은 존재하지만 **아무도 보지 못한다**.
+    """
+    import routers.billing as _billing
+
+    monkeypatch.setenv("TOSS_SECRET_KEY", "test_sk_x1234567")
+    monkeypatch.setenv("TOSS_CLIENT_KEY", "test_ck_y1234567")
+
+    async def allow(db, current):
+        return None
+
+    monkeypatch.setattr(_billing, "_require_super_admin", allow)
+    out = await _billing.admin_payment_health(
+        current=object(), db=object(), settings=_FakeSettings(False)
+    )
+    joined = " ".join(out["warnings"])
+    assert "주문서형" in joined, "어느 블록을 복사해야 하는지 화면에 안 나온다"
+    assert out["payment_mode"] == "manual_only"
+
+    # ★두 모집단 — 정상 키에서는 그 경고가 **사라져야** 한다(항상 경고하면 곧 무시된다).
+    monkeypatch.setenv("TOSS_SECRET_KEY", "test_gsk_x1234567")
+    monkeypatch.setenv("TOSS_CLIENT_KEY", "test_gck_y1234567")
+    ok_out = await _billing.admin_payment_health(
+        current=object(), db=object(), settings=_FakeSettings(False)
+    )
+    assert not any("주문서형" in w for w in ok_out["warnings"])
+    assert ok_out["payment_mode"] == "toss"
