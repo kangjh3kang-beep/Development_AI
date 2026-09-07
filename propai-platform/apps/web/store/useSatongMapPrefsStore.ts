@@ -112,11 +112,20 @@ export function defaultSatongMapControls(): SatongMapLayerState["controlsByLayer
  *   오른쪽 메뉴에서 선택 시 나타나야 하지 않나?"* — 맞다. 배경 위에 주황 경계선이
  *   전면에 깔려 **지도 자체를 읽기 어렵다.**
  *
- * ★종전 주석은 *"`cadastre` 는 기반 레이어라 끄지 못한다"* 였다. **그 사유가 실재하지 않았다** —
- *   `showCadastreTile` 은 **WMS 타일 오버레이만** 가드하고(`SatongMultiMap.tsx`),
- *   필지 선택은 `boundaryFeatures`/`staged` 에 의존해 그 플래그를 **참조하지 않는다**.
- *   그 파일이 스스로 적어 두었다 — *"지적 안내 effect 는 deps 가 [mapReady, showCadastreTile,
- *   aerialView] 라 **선택을 직접 참조할 수 없다**"*. ⇒ 끄는 것이 안전하다.
+ * ★종전 주석은 *"`cadastre` 는 기반 레이어라 끄지 못한다"* 였다. 그 사유는 **절반만** 실재했다.
+ *
+ * ★★정정(같은 날 · 적대 리뷰 MAJOR-1) — 초판 주석은 여기에
+ *   *"필지 선택은 그 플래그를 **참조하지 않는다** ⇒ 끄는 것이 안전하다"* 라고 적었다.
+ *   **거짓이었다.** 「전수 추적」이라 썼지만 `showCadastreTile` 이라는 **변수명**으로 찾았고,
+ *   실제 축은 `hasSatongLayer(state,"cadastre")` **호출**이었다. 소비처는 **둘**이다:
+ *     · `SatongMultiMap.tsx` `showCadastreTile` — WMS 타일(전체 필지 그물망). ← 신고 대상
+ *     · `SatongMultiMap.tsx` 오버레이 effect     — **선택·등록 필지의 폴리곤**. ← 못 셌다
+ *   그대로 냈으면 기본이 꺼지면서 **등록한 필지가 지도에서 사라졌을 것**이다(안내문도 무음).
+ *
+ * ⇒ 처방은 「끄지 않는다」가 아니라 **축을 가르는 것**이다. 두 번째 소비처는
+ *   `satongParcelBaseVisible()` 로 옮겨 **레이어가 아니라 컨트롤**(`필지 경계`)에 매달았다.
+ *   그러면 신고①(그물망 OFF)은 지켜지고 선택 폴리곤은 산다.
+ *   ★잠금: `components/map/__tests__/SatongMultiMap.overlayPlan.test.ts`.
  *
  * ★**목적이 다른 화면은 이 기본값을 쓰지 않는다** — 주소검색 미리보기·토지조서·용도지역
  *   신호·구획도는 각자 `enabledLayerIds` 를 명시한다(필지를 고르라고 띄운 지도에서
@@ -203,6 +212,14 @@ export const useSatongMapPrefs = create<SatongMapPrefsState>()(
        *   ★`enabledLayersCustomized` 는 **끄지 않는다.** 그것을 false 로 돌리면 사용자가
        *     **직접 켠 다른 레이어까지** 기본값으로 덮인다(위 `merge` 게이트가 그렇게 동작한다).
        */
+      // ★설명 가능한 등가 변이(적대 리뷰 MINOR-6): 아래 `version >= 2` 를 `>= 3` 으로 바꿔도
+      //   **어떤 테스트도 갈리지 않는다.** `migrate` 는 저장 버전이 현재(2)와 **다를 때만**
+      //   불리므로 이 함수 안에서 `version === 2` 는 **도달 불가**하고, 도달하는 값(0·1·3·…)에
+      //   대해 두 식의 답이 같기 때문이다. 판별력이 있는 것은 `>= 0`(v1 통과)과 `>= 99`(v3 정리)
+      //   두 방향이고 그 둘은 잠겨 있다. 점수용 단언을 더 만들지 않고 여기에 사유를 적는다.
+      // ★남은 부채(MINOR-5): 저장분의 `version` 이 **숫자가 아니면** zustand 가 migrate 를
+      //   아예 안 부르고 미마이그레이션 상태로 merge 에 간다(`middleware.js:376` 의 앞 절).
+      //   zustand 는 항상 숫자로 쓰므로 도달성은 낮다 — **미측정**이며 부채로 적어 둔다.
       migrate: (persisted, version) => {
         const p = (persisted ?? {}) as Partial<SatongMapPrefsState>;
         if (version >= 2 || !Array.isArray(p.enabledLayerIds)) {

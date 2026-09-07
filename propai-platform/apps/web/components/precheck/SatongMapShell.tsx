@@ -85,6 +85,7 @@ import {
   type SatongMapFeature,
   type SatongMapLayerId,
   type SatongMapLayerState,
+  SATONG_CADASTRE_LAYER_INDEPENDENT_CONTROL_IDS,
   capacityRatio,
   resolveVWorldBaseLayer,
 } from "@/lib/satong-map-layers";
@@ -2420,7 +2421,8 @@ export function SatongMapShell({
   }, []);
 
   // 레이어 on/off — 팝오버 헤더 확정 버튼용(패널 토글 없이 켜짐/꺼짐만 바꾼다).
-  // 지적도는 기반 레이어라 끄지 않는다.
+  // ★2026-09-07 — 종전 주석은 *"지적도는 기반 레이어라 끄지 않는다"* 였다. 이 PR 이 그
+  //   계약을 뒤집었다(사용자 신고①). 지적도 다른 레이어와 **같게** 켜고 끈다.
   // ★UX 트랙 C2(2026-07-24): 종전엔 좌상단 활성 칩도 이 토글+패널전환을 함께 하는
   //   handleLayerClick을 통해 호출했으나("끄면서 동시에 그 레이어의 설정 팝오버를 여는"
   //   이중 조작 버그였다), 칩을 표시 전용 배지로 강등하며 그 호출부가 사라졌다 —
@@ -2439,7 +2441,15 @@ export function SatongMapShell({
     // ★이미 켜져 있으면 **같은 참조**를 돌려주는 계약은 스토어 액션으로 옮겼다.
     //   무조건 새로 만들면 mapLayerState memo 가 재계산돼 layerState identity 가 바뀌고,
     //   그걸 deps 로 쓰는 필지 오버레이·POI effect 가 전량 파괴·재생성된다(깜빡임의 근원).
-    ensureLayerEnabled(layerId);
+    // ★★2026-09-07(적대 리뷰 MAJOR-2) — **무조건** 켜지 않는다.
+    //   지적의 일부 컨트롤은 레이어 on/off 와 **독립으로** 렌더된다(`satongParcelBaseVisible` ·
+    //   `satongSelectionLabelsVisible`). 그것을 누를 때 레이어까지 켜면, 방금 지적을 끈
+    //   사용자에게 **주황 경계선이 되돌아온다** — 「끌 수 없다」는 신고 그 자체의 재생이다.
+    //   (이 경로는 변경 전엔 도달 불가였다 — cadastre 를 끌 수 없었으므로. 이 PR 이 만든 자리다.)
+    const layerIndependent =
+      layerId === "cadastre" &&
+      (SATONG_CADASTRE_LAYER_INDEPENDENT_CONTROL_IDS as readonly string[]).includes(control.id);
+    if (!layerIndependent) ensureLayerEnabled(layerId);
     setLayerControls((prev) => {
       const current = new Set(prev[layerId] ?? []);
       if (layerId === "terrain") {

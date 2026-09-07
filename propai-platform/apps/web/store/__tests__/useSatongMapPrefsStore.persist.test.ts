@@ -389,6 +389,14 @@ describe("★★레이어 활성 상태 — 사용자 신고의 **남은 절반*
     expect(useSatongMapPrefs.getState().enabledLayersCustomized).toBe(false);
   });
 
+  // ★★설명 가능한 생존(적대 리뷰 MINOR-3 · §변이 규율 «설명할 수 없는 생존만 진짜 구멍»):
+  //   아래 `toEqual(defaultEnabledLayerIds())` 는 **지금은 판별력이 0** 이다 —
+  //   SSOT 가 `[]` 를 돌려주므로 구현이 `[]` 를 하드코딩해도 값이 같다(변이 SURVIVED).
+  //   ★이것은 이 PR 이 **만든** 결함이 아니라 이 PR 이 **드러낸** 것이다(종전엔 `["cadastre"]`
+  //     라 판별력이 있었다). SSOT 가 다시 비지 않게 되는 순간 축이 되살아난다.
+  //   ★값으로는 가를 수 없다 — 두 구현이 같은 배열을 만든다. 그래서 **부채로 남긴다.**
+  it.todo("resetEnabledLayers ↔ defaultEnabledLayerIds 결속 — 기본값이 빈 동안은 값으로 못 가른다");
+
   it("resetEnabledLayers 가 기본으로 되돌리고 «골랐다» 도 끈다", () => {
     useSatongMapPrefs.getState().ensureLayerEnabled("poi");
     expect(useSatongMapPrefs.getState().enabledLayersCustomized).toBe(true); // 대조군
