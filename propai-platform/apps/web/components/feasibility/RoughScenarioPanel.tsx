@@ -19,6 +19,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEV_TYPE_PRESETS } from "@/lib/dev-type-presets";
 import { EditableTile } from "@/components/feasibility/EditableTile";
+import { EXCLUSIVE_TO_SUPPLY_RATIO } from "@/lib/area-notation";
 import { useSearchParams } from "next/navigation";
 import {
   ComposedChart,
@@ -702,7 +703,9 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
                   value={briefOv.exclusive_ratio}
                   onSave={setBrief("exclusive_ratio")}
                   step="0.001"
-                  hint="전용/공급 (0.30~1.00) · 미입력 시 사례 관례 0.747 — 분양가 환산에 쓰입니다"
+                  // ★힌트 문구의 숫자도 **정본에서 파생**한다. 리터럴로 적으면 ①정본이 바뀔 때
+                  //   조용히 낡고 ②전용률 사본 래칫에 **위양성**으로 걸린다(실제로 걸렸다).
+                  hint={`전용/공급 (0.30~1.00) · 미입력 시 사례 관례 ${EXCLUSIVE_TO_SUPPLY_RATIO} — 분양가 환산에 쓰입니다`}
                 />
                 {/* ★읽기 전용 유지 — 필지 선택의 **파생값**이라 여기서 덮으면 지도·법규
                     판정과 조용히 갈린다. 파생값은 상류(필지 선택)에서 고친다. */}
