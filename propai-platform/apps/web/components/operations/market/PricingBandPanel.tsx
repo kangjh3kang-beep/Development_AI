@@ -19,11 +19,18 @@ import { DataSourceBadge } from "./DataSourceBadge";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { formatManwon as man } from "@/lib/formatters";
 
-// 1평 = 3.305785㎡ — market_report_service.py:55 PYEONG_SQM 상수 미러(신규 산식 금지).
-const PYEONG_SQM = 3.305785;
-// 전용률(전용/공급) 표준 가정 — 백엔드 suggest.py:27 `_JEONYULRYUL` 미러(신규 계수 금지).
-//   전용 평당가 × 전용률 = 공급 평당가(총액 고정, 공급면적>전용면적이므로 평당가는 낮아진다).
-const EXCLUSIVE_TO_SUPPLY_RATIO = 0.747;
+// ★★2026-09-07 — 여기 있던 `PYEONG_SQM = 3.305785` 와 `EXCLUSIVE_TO_SUPPLY_RATIO = 0.747`
+//   **평면 상수 두 개를 지우고 정본에서 가져온다.** 둘 다 주석에 *"미러(신규 계수 금지)"*
+//   라고 적어 두었는데, **미러는 원본이 움직여도 따라오지 않는다** — 실측으로 프론트 안에서만
+//   0.75(`area-notation`) ↔ 0.747(여기) 두 값이 돌았고, 84㎡ 기준 공급면적이
+//   **112.0㎡(33.88평) ↔ 112.4㎡(34.02평)** 로 갈렸다.
+//   전용 평당가 × 전용률 = 공급 평당가(총액 고정 — 공급면적>전용면적이라 평당가는 낮아진다).
+import {
+  EXCLUSIVE_TO_SUPPLY_RATIO,
+  PYEONG_SQM,
+  REF_EXCLUSIVE_SQM,
+  formatAreaDual,
+} from "@/lib/area-notation";
 
 /**
  * 아이디어#4(지불여력→개략수지 원클릭 퍼널) 단위변환 — 지불여력 상한(cap)을
@@ -38,7 +45,7 @@ const EXCLUSIVE_TO_SUPPLY_RATIO = 0.747;
  *   (node-body-builders.ts:71-76이 문서화한 "전용률 미적용 시 매출 부풀림" 재발). (2)를 더해 축을 맞춘다.
  */
 export function capManwonToPricePerPyeongWon(capManwon: number): number {
-  const exclusivePerPyeongManwon = Math.round(capManwon / (84.0 / PYEONG_SQM));
+  const exclusivePerPyeongManwon = Math.round(capManwon / (REF_EXCLUSIVE_SQM / PYEONG_SQM));
   const exclusivePerPyeongWon = exclusivePerPyeongManwon * 10000;
   // 전용 → 공급 평당가(rough override의 실제 소비 basis). round로 정수 유지(백엔드 int 캐스트 정합).
   return Math.round(exclusivePerPyeongWon * EXCLUSIVE_TO_SUPPLY_RATIO);
@@ -159,7 +166,13 @@ export function PricingBandPanel({ data }: { data?: PricingBand | null }) {
         {/* 1차(핵심): 시장 비교 적정 분양가 */}
         <div className="sa-di-tiles sa-di-tiles--3">
           <div className="sa-di-tile">
-            <span className="sa-di-tile__label">주변 실거래 기준 (84㎡)</span>
+            <span className="sa-di-tile__label">
+              {/* ★2026-09-07 사용자 지적 — 종전 `(84㎡)` 은 **기준이 없어** 「전용이 34평」
+                  으로 읽혔다. 전용 84㎡ 는 25.4평이고 34평형은 **공급** 통칭이다.
+                  `area-notation` 정본을 **실제로 부른다**(그 모듈은 만들어 놓고 소비처가
+                  0이었다 — 처방을 만들고 배선하지 않은 그 형태). */}
+              주변 실거래 기준 ({formatAreaDual(REF_EXCLUSIVE_SQM)})
+            </span>
             <span className="sa-di-tile__value">{man(mr.comparable_trade_10k)}</span>
           </div>
           <div className="sa-di-tile sa-di-tile--accent">
