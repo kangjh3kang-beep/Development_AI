@@ -58,6 +58,15 @@ export interface RouteRegistryItem {
   adminOnly?: boolean;
   assetOpsOnly?: boolean;
   prefetch?: false;
+  /**
+   * ★이 라우트를 **독자 창으로** 여는가(2026-09-08).
+   *
+   * 현장앱(분양앱)은 자체 manifest·자체 셸을 가진 **별도 앱 정체성**이라, 플랫폼 창을
+   * 빼앗으며 들어가면 사용자가 플랫폼으로 돌아올 길을 잃는다(사용자 신고 2026-09-08).
+   * ★경로 문자열을 소비처에서 특수처리하지 않고 **여기 SSOT 에 선언**한다 — 손으로 든
+   *   목록은 곧 상한이 되고, 새 앱형 라우트가 생기면 조용히 빠진다.
+   */
+  launch?: "app-window";
   apiDependencies?: string[];
 }
 
@@ -502,6 +511,8 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     status: "live",
     scope: "global",
     lifecyclePhase: "market",
+    // ★현장앱은 독자 창으로 연다 — 같은 창에서 이동하면 플랫폼 이용자가 복귀로를 잃는다.
+    launch: "app-window",
     apiDependencies: ["/sales/sites"],
   },
   {

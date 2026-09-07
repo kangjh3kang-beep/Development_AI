@@ -1,0 +1,87 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { launchFieldApp } from "@/lib/field-app-launch";
+import { FIELD_APP_WINDOW_NAME } from "@/lib/field-app-shell";
+
+/**
+ * ★공용 창 열기(`launchFieldApp`)의 계약 — **3분기가 서로 다른 값을 낸다.**
+ *
+ * 왜 불리언이 아닌가: 호출부는 «기본 이동을 막을지» 를 이 값으로 정한다.
+ *   창이 떴는데 안 막으면 → **원래 창까지 현장앱으로 이동해 사용자가 플랫폼을 잃는다**(신고 본체)
+ *   못 떴는데 막으면     → **버튼이 죽는다**
+ * 두 실패가 정반대라 하나의 불리언으로 뭉갤 수 없다.
+ *
+ * ★세 모집단이 **서로 다른 반환값**을 내야 한다. 같은 값이면 배선을 끊어도 통과한다.
+ */
+
+const origOpen = window.open;
+
+beforeEach(() => {
+  window.name = "";
+});
+
+afterEach(() => {
+  window.open = origOpen;
+  window.name = "";
+  vi.restoreAllMocks();
+});
+
+describe("launchFieldApp — 3분기가 서로 갈린다", () => {
+  it("① 전용 창이 열리면 'window' 를 내고, **현장앱 이름**으로 연다", () => {
+    const focus = vi.fn();
+    const open = vi.fn(() => ({ focus }) as unknown as Window);
+    window.open = open as unknown as typeof window.open;
+
+    expect(launchFieldApp("/ko/sales/sites")).toBe("window");
+
+    // 이름이 곧 현장앱 정체성 판별자다 — 하드코딩하지 않고 정본 상수와 결속시킨다.
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open.mock.calls[0]![1]).toBe(FIELD_APP_WINDOW_NAME);
+    expect(open.mock.calls[0]![0]).toBe("/ko/sales/sites");
+    expect(focus).toHaveBeenCalled();
+  });
+
+  it("② 팝업이 차단되면 새 탭으로 폴백하고 'tab' 을 낸다", () => {
+    const open = vi
+      .fn()
+      .mockReturnValueOnce(null) // 팝업 차단
+      .mockReturnValueOnce({} as Window); // 새 탭은 허용
+    window.open = open as unknown as typeof window.open;
+
+    expect(launchFieldApp("/ko/sales/sites")).toBe("tab");
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(open.mock.calls[1]![1]).toBe("_blank");
+    // 이름을 못 주는 대신 역참조를 끊는다.
+    expect(String(open.mock.calls[1]![2])).toContain("noopener");
+  });
+
+  it("③ 둘 다 차단되면 'same' 을 낸다 — 호출부가 기본 이동을 살려 두게", () => {
+    const open = vi.fn().mockReturnValue(null);
+    window.open = open as unknown as typeof window.open;
+
+    expect(launchFieldApp("/ko/sales/sites")).toBe("same");
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  it("★url 을 생략하면 현재 주소를 연다(어포던스의 「별도 창으로 열기」 경로)", () => {
+    const open = vi.fn(() => ({ focus: vi.fn() }) as unknown as Window);
+    window.open = open as unknown as typeof window.open;
+
+    launchFieldApp();
+
+    expect(open.mock.calls[0]![0]).toBe(window.location.href);
+  });
+
+  it("★팝업 features 는 지키지 못할 약속(location=no)을 담지 않는다", () => {
+    // 현대 브라우저가 무시해 주소창이 남는다 — 2026-09-07 라이브 실측으로 확정된 사실이다.
+    // 이 단언이 없으면 «주소창을 숨긴다» 는 거짓 약속이 다시 기어든다.
+    const open = vi.fn(() => ({ focus: vi.fn() }) as unknown as Window);
+    window.open = open as unknown as typeof window.open;
+
+    launchFieldApp("/ko/sales/sites");
+
+    const feat = String(open.mock.calls[0]![2]);
+    expect(feat).not.toContain("location=no");
+    expect(feat).toContain("popup=yes"); // 양성 대조 — features 자체는 살아 있다
+  });
+});

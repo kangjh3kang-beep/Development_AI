@@ -10,6 +10,7 @@ import { idempotencyHeaders } from "@/lib/idempotency";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectStore } from "@/store/useProjectStore";
 import type { Locale } from "@/i18n/config";
+import FieldAppLaunchLink from "@/components/sales-app/FieldAppLaunchLink";
 
 type DevType = { value: string; label: string };
 
@@ -99,10 +100,13 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
           <h1 className="mt-0.5 text-lg font-black text-[var(--text-primary)]">분양 현장 관리</h1>
           <p className="mt-0.5 text-xs text-[var(--text-secondary)]">시행·관리자 경로입니다. 현장을 만들고 설정·요약을 운영합니다. 현장 직원처럼 역할별 앱 화면을 쓰려면 <b className="text-[var(--accent-strong)]">‘현장앱 진입’</b>(2차 비밀번호)을 사용하세요.</p>
         </div>
-        <Link href={`/${locale}/sales/sites`}
+        {/* ★현장앱은 **새 창**으로 연다(2026-09-08 사용자 신고). 평범한 <Link> 였을 때는
+            같은 창에서 이동해 **플랫폼 이용자가 플랫폼을 잃었다** — 현장앱 셸에는 복귀로가
+            없기 때문이다. href 는 그대로 두므로 가운데클릭·새탭열기·팝업차단 폴백이 전부 산다. */}
+        <FieldAppLaunchLink href={`/${locale}/sales/sites`}
           className="ml-auto rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-black text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]">
           내 현장(앱) →
-        </Link>
+        </FieldAppLaunchLink>
         <Link href={`/${locale}/sales/projection`}
           className="rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)]">
           시행사 요약 보기 →

@@ -13,6 +13,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchAuthMeRole, fetchIsAdmin } from "@/lib/use-is-admin";
 import { useUiReset } from "@/store/useUiReset";
+import { launchFieldApp } from "@/lib/field-app-launch";
 import {
   type NavNode,
   type NavSection,
@@ -111,7 +112,16 @@ export function SidebarNav({ sections }: { sections: NavSection[] }) {
         key={node.id}
         href={node.href!}
         prefetch={node.prefetch}
-        onClick={() => {
+        onClick={(e) => {
+          // ★독자 창 라우트(현장앱)는 **지금 창을 빼앗지 않는다**(2026-09-08 사용자 신고).
+          //   판정은 레지스트리 SSOT(`launch`)에서 오고, 창 열기는 공용 함수 하나를 거친다 —
+          //   경로 문자열을 여기서 특수처리하면 새 앱형 라우트가 조용히 빠진다(목록형 회피).
+          if (node.launch === "app-window" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+            if (launchFieldApp(node.href!) !== "same") {
+              e.preventDefault();
+              return;
+            }
+          }
           if (active && HOME_RE.test(node.href!)) goHome();
         }}
         className={leafClass(active)}
