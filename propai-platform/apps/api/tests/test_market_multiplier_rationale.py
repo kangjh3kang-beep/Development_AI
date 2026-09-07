@@ -141,7 +141,18 @@ def test_three_scopes_are_reachable_and_distinct(addr: str, expected_scope: str)
 
 
 def test_scope_rationales_differ_from_each_other() -> None:
-    """등록 지역 / 광역 폴백 / 전국 폴백이 서로 구별 가능해야 한다(사용자가 알 권리)."""
+    """등록 지역 / 광역 폴백 / 전국 폴백이 서로 구별 가능해야 한다(사용자가 알 권리).
+
+    ★알려진 생존(구멍 아님 · 2026-09-07 변이 ⑦): REGION 문구의 앞 절을 DEFAULT 문구로
+      바꿔 넣어도 이 락은 초록이다 — 뒤 절("시·군·구 세부 계수 미등록")이 남아 세 문자열이
+      **여전히 서로 다르기** 때문이다. 즉 이 락은 «문구가 옳은가» 가 아니라 «층위가 구별
+      가능한가» 를 잠근다. **의도된 경계다**:
+        · 기계 판독 축(층위 코드)은 위 `test_three_scopes_are_reachable_and_distinct` 가
+          잠근다 — 변이 ⑥(REGION→DISTRICT 오보)이 CAUGHT 됐다.
+        · 산문 문구 자체는 일부러 단언하지 않는다(CLAUDE.md §30). 계약이 아니라 표현이라,
+          문구를 다듬을 때마다 깨지는 취약한 락이 되고 그런 락은 곧 꺼진다.
+      ⇒ 점수를 올리려고 문구를 단언하지 말 것. 문구가 틀리는 것은 리뷰가 잡을 일이다.
+    """
     texts = {
         mm.resolve_market_multiplier(a)[1]
         for a in (_ADDR_DISTRICT, _ADDR_REGION, _ADDR_DEFAULT)
