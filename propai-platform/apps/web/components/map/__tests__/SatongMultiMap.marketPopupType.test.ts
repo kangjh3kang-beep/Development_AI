@@ -158,7 +158,14 @@ describe("★신고③ — 팝업이 「무엇의 거래인지」 말한다", ()
       const src = scan("components/map/SatongMultiMap.tsx");
       const i = src.indexOf("const typeLabel =");
       expect(i, "배지 조립부를 못 찾았다 — 조회기 사망").toBeGreaterThan(-1);
-      expect(src.slice(i, i + 300)).toContain("MARKET_TYPE_LABELS");
+      const block = src.slice(i, i + 300);
+      // ★★「이름이 있다」로 보면 안 된다 — 바로 위 `hasOwnProperty.call(MARKET_TYPE_LABELS, …)`
+      //   가드 줄에 그 이름이 **이미 있어서**, 값을 인라인 리터럴 맵에서 얻는 변이가 **SURVIVED**
+      //   했다(실측). ***이름이 있는 것과 그것을 쓰는 것은 다르다.***
+      //   → **실제 조회식**을 본다.
+      expect(block, `배지 조립부: ${block.slice(0, 200)}`).toContain("? MARKET_TYPE_LABELS[marketType]");
+      // ★음성 — 인라인 리터럴 맵으로 갈아끼우지 않았다(두 벌 어휘의 씨앗).
+      expect(block).not.toMatch(/\?\s*\(\{\s*apt\s*:/);
     });
   });
 
