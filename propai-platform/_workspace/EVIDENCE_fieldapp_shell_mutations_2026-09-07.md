@@ -28,6 +28,8 @@ r7     CAUGHT    기준선 41건
 r8     CAUGHT    기준선 41건
 r9     CAUGHT    기준선 41건
 r10    CAUGHT    기준선 42건
+f1     CAUGHT    기준선 50건
+f2     CAUGHT    기준선 50건
 ```
 
 ★기준선 수열(15 → 27 → 33 → 41)이 커밋 타임라인과 일치한다:
@@ -55,17 +57,24 @@ r10    CAUGHT    기준선 42건
 | `r1` | `FieldNav.tsx` | `{open.items.map(` → `{groups.flatMap((g) => g.items).map(` | ★**적대 리뷰가 SURVIVED 로 실증한 변이** |
 | `r2` | `FieldNav.tsx` | `backdrop-blur sm:block` → `sm:hidden` | ★같음(반응형 축) |
 | `r3` | `FieldAppAffordance.tsx` | `noopener,noreferrer` → `__MUT__` | ★같음(역탭내빙) |
-| `r4` | `FieldAppAffordance.tsx` | `if (standalone)` → `if (standalone \|\| inSeparateWindow)` | 되돌린 BLOCKER 복원 |
+| `r4` | `FieldAppAffordance.tsx` | `if (standalone)` → `if (standalone \|\| inSeparateWindow)` | 되돌린 BLOCKER 복원 — ★**이 파일에서만** CAUGHT 였다(아래 정정) |
 | `r5` | `SiteWorkspaceClient.tsx` | `onNavigate={setTab} />` → `onNavigate={() => {}} />` | 셸 배선(핸들러) |
 | `r6` | `FieldNav.tsx` | `groups.find(g => g.title === activeGroupTitle) ??` → `null ??` | 폴백 사슬 |
 | `r7` | `FieldNav.tsx` | `aria-current={holdsActive ? "true" : undefined}` → `undefined` | 활성 그룹 표기 |
 | `r8` | `FieldNav.tsx` | `r6` 과 **동일** | 락 강화 후 재확인 |
 | `r9` | `SiteWorkspaceClient.tsx` | `<FieldAppAffordance />` 뒤에 `<FieldExtraRail tabs={[]} …/>` 삽입 | ★**적대 리뷰 2차가 SURVIVED 로 실증한 「네 번째 표면」** |
+| `f1` | `InstallGuide.tsx` | `if (standalone) {` → `if (standalone \|\| inSeparateWindow) {` | ★**적대 리뷰 재검증이 SURVIVED 로 실증** — B2 의 잠기지 않은 절반 |
+| `f2` | `InstallGuide.tsx` | `{inSeparateWindow && (` → `{false && (` | 별도 창 고지 분기 |
 | `r10` | `FieldNav.tsx` | `className="sa-tabbar"` → `"sa-tab-bar"` | ★**적대 리뷰 3차가 SURVIVED 로 실증** — 셸 W2 표지의 닻 |
 
 ## ③ 판독
 
-- **21회 · 최종 전부 CAUGHT.**
+- **23회 · 최종 전부 CAUGHT.**
+- ★★**정정(적대 리뷰 재검증 MAJOR-1)**: `r4` 는 *"B2 를 잠갔다"* 로 읽혔지만
+  **`FieldAppAffordance.tsx` 한 파일에서만** CAUGHT 였다. **같은 형태의 변이를
+  `InstallGuide.tsx` 에 넣으면 SURVIVED** 였다 — 그 파일에 테스트가 **0건**이었기 때문이다.
+  하필 그쪽이 **iOS 유일 설치 경로**다. `InstallGuide.test.tsx` 를 만들고 `f1`·`f2` 로
+  CAUGHT 를 확인했다. **「잠갔다」와 「절반만 잠갔다」는 다른 문장이다.**
 - ★**중간의 SURVIVED 1건(`r6`)을 지우지 않는다** — M2 락이 `activeGroupTitle` 폴백이 아니라
   `groups[0]` 폴백으로도 만족됐다(활성 탭을 첫 그룹에 뒀기 때문). 활성 탭을 첫 그룹 **밖**으로
   옮겨 고친 뒤 `r8` 에서 CAUGHT 를 받았다.
