@@ -521,7 +521,12 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
               <Section
                 no="Ⅳ"
                 title={
-                  (res.methods?.length ?? 0) >= 2
+                  // ★★2026-09-07 독립 리뷰 적발(CRITICAL-3) — `methods.length >= 2` 는
+                  //   **항상 참**이었다. W5 가 미적용 방법까지 등재해 길이가 **최소 3**이라
+                  //   「민감도」 분기가 **한 번도 렌더되지 않는** 죽은 코드였고,
+                  //   제목↔본문 모순이 **이름만 바뀐 채 그대로**였다.
+                  //   → 축은 «목록에 있는 수»가 아니라 **«실제로 적용된 수»** 다.
+                  (res.methods ?? []).filter((m) => m.applicable !== false).length >= 2
                     ? `방법 간 교차검증 (평균 ${res.cross_check.mean.toLocaleString()}원/㎡ · 편차 CV ${res.cross_check.cv_pct}%)`
                     : `가정 민감도 — 교차검증 아님 (그밖의요인 ±5% · 평균 ${res.cross_check.mean.toLocaleString()}원/㎡ · CV ${res.cross_check.cv_pct}%)`
                 }

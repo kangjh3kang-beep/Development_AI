@@ -1065,7 +1065,11 @@ export function ProjectSiteAnalysisWorkspaceClient({
                               <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-[var(--text-primary)]">
                                 {m.unit_price != null && Number.isFinite(m.unit_price) ? formatCurrency(locale, m.unit_price) : "—"}
                               </td>
-                              <td className="px-3 py-2 leading-relaxed text-[var(--text-secondary)]">{m.rationale}</td>
+                              {/* ★2026-09-07 독립 리뷰(MEDIUM-9) — 미적용 항목은 `rationale` 이
+                                  없어 **근거 칸이 공백**인 3행이 늘었다. 사유를 그린다. */}
+                              <td className="px-3 py-2 leading-relaxed text-[var(--text-secondary)]">
+                                {m.applicable === false ? (m.why_not ?? "—") : m.rationale}
+                              </td>
                             </tr>
                           ))}
                         </tbody>

@@ -57,11 +57,18 @@ describe("탁상감정 보고서 라벨", () => {
     const idx = src.indexOf('no="Ⅳ"');
     expect(idx, "§Ⅳ 섹션을 찾지 못했다 — 조회기 사망").toBeGreaterThan(-1);
     const sec = src.slice(idx, idx + 700);
-    // 조건 분기가 있어야 한다(methods 길이로).
-    expect(sec, "제목이 무조건 「교차검증」이다 — 본문의 «교차검증이 아닙니다»와 모순된다")
-      .toMatch(/methods\??\.\s*length/);
-    // 1개일 때 쓰는 문구에 「민감도」가 있어야 한다.
+    // ★★독립 리뷰 적발(MEDIUM-8) — 종전 락은 `/methods\??\.\s*length/` 존재와
+    //   「민감도」 문자열만 봐서, 임계를 `>= 1` 로 바꾸거나 **방향을 `< 2` 로 뒤집어도
+    //   통과**했다(변이 2/2 SURVIVED). **임계도 방향도 안 잠갔다.**
+    // ★그리고 CRITICAL-3 — 축이 `methods.length` 면 W5 등재 때문에 **항상 참**이라
+    //   그 분기는 도달 불가였다. 축은 **적용된 개수**여야 한다.
+    expect(sec, "축이 «적용된 방법 수»가 아니다 — 목록 길이는 W5 등재로 항상 2 이상이다")
+      .toMatch(/filter\(\s*\(m\)\s*=>\s*m\.applicable\s*!==\s*false\s*\)\s*\.length/);
+    // ★임계와 방향을 못 박는다(>= 2 · 그 이상/이하가 아니라 정확히).
+    expect(sec, "임계·방향이 잠기지 않았다").toMatch(/\.length\s*>=\s*2\s*$/m);
+    // 두 갈래 문구가 **둘 다** 있어야 한다(한쪽만 있으면 분기가 죽어도 통과한다).
     expect(sec).toContain("민감도");
+    expect(sec).toContain("교차검증");
   });
 
   it("★미적용 방법의 단가를 **0 으로 그리지 않는다**", () => {

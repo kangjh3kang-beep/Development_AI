@@ -219,7 +219,15 @@ def rate_series_from_rows(rows: list[dict[str, Any]], region_sido: str) -> list[
 
     series = _collect(region_sido) if region_sido else []
     if not series:
-        # ★★2026-09-07 라이브 적발 — 이 폴백이 **fail-open** 이었다.
+        # ★★2026-09-07 라이브 적발 — 이 폴백은 **fail-open 이다(현재형 · 미수정)**.
+        #   ★독립 리뷰 적발(HIGH-6): 종전 주석이 *"…이었다"* 라는 **과거형**이라
+        #     리뷰어·다음 세션이 **해결된 것으로 오독**한다(§C-12 «무잠금과 미수정을
+        #     섞어 쓰지 마라»). 코드는 **바뀌지 않았다** — 아래 줄 그대로다.
+        #   ★왜 안 고쳤나: R-ONE **원시 행의 지역 필드 표기를 확인하지 못했다**(시크릿이
+        #     서버 프로세스에만 있어 조회 불가). 표기를 모르는 채 필터를 손대면 다른 곳이
+        #     샌다. 그래서 **소비처에서 판정 거부**로 막았다(곱셈·배지 두 축).
+        #   ★★남은 소비처(이 fail-open 을 계속 먹는다): `trend_from_rows`(차트) ·
+        #     `rate_series_scope` · `land_price_index.monthly_rate_series_async`.
         #   `_collect(None)` 은 **모든 지역**을 돌려준다. 지역 필터가 안 맞으면(원천의
         #   표기가 달라지면) 조용히 전국+17개 시도가 한 시계열로 섞였고, 소비처는 그것을
         #   「경기 24개월」로 읽었다. 실측: 라이브 시계열 24개의 **기간 고유가 1개**

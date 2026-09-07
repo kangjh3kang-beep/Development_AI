@@ -70,6 +70,26 @@ def test_진짜_24개월이면_계수를_만든다() -> None:
     assert f is not None and 1.0 < f < 1.3, f"정상 시계열인데 판정을 거부했다: {f}"
 
 
+def test_임계가_요청_개월수에_결속된다() -> None:
+    """★독립 리뷰 적발(MEDIUM-7) — 임계를 `< 2` 로 바꿔도 **통과**했다(변이 SURVIVED).
+
+    종전 락은 «고유 기간 **1개**»만 잡아서, 「요청 개월 수만큼 있어야 한다」는 **계약
+    자체가 무잠금**이었다. 고유 3개 × 8지역 = 24행짜리 오염도 통과했다.
+    → **두 모집단**: `distinct == months-1`(거부) ↔ `distinct == months`(허용).
+    """
+    MONTHS = 12
+    # ① 고유 11개월 × 지역 중복으로 12행 — **거부**여야 한다.
+    short = _real_series(MONTHS - 1, "경기") + [_row("202607", 0.15, "경기")]
+    assert len(short) == MONTHS
+    f_short = cumulative_factor_from_rows(short, "경기", months=MONTHS)
+    assert f_short is None, (
+        f"고유 {MONTHS - 1}개월인데 {MONTHS}개월 누적계수 {f_short} 를 만들었다 — "
+        "임계가 요청 개월 수에 결속되지 않았다(«고유 1개»만 막는 구현이 통과한다)")
+    # ② 고유 12개월 — **허용**이어야 한다(위양성 축).
+    ok = _real_series(MONTHS, "경기")
+    assert cumulative_factor_from_rows(ok, "경기", months=MONTHS) is not None
+
+
 def test_고유기간_계수는_지역중복을_센다() -> None:
     assert distinct_period_count([("202607", 0.1)] * 24) == 1
     assert distinct_period_count([(f"2026{m:02d}", 0.1) for m in range(1, 13)]) == 12

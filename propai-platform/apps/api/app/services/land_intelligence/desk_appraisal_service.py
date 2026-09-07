@@ -129,7 +129,11 @@ def _shape_factor(irregularity: float | None) -> tuple[float, str]:
 # ★지목은 등기·대장의 표시이고 용도지역은 도시계획이라 **원래 어긋날 수 있다**(농지에
 #   상업지역이 지정되는 일은 흔하다). 다만 그때 감정평가는 **현황과 공부 중 무엇을
 #   기준으로 삼았는지**를 밝혀야 하므로, 조용히 넘기면 안 된다.
-_NON_DAE_JIMOK = {"답", "전", "임야", "과수원", "목장용지", "구거", "유지", "하천", "제방", "도로"}
+# ★독립 리뷰 적발(MEDIUM-11) — 종전엔 10개 **손 목록**이라 잡종지·공장용지·창고용지·
+#   학교용지·주차장·주유소용지·종교용지·묘지·철도용지·수도용지·광천지·염전·양어장·
+#   공원·체육용지·유원지·사적지가 **전부 빠져** 있었다(실측: 잡종지+일반상업 → conflicts 0).
+#   → **「대」가 아닌 것**으로 파생시킨다(목록은 곧 상한).
+_DAE_JIMOK = {"대"}
 _URBAN_ZONES = ("상업지역", "주거지역", "공업지역", "준주거", "준공업")
 
 
@@ -145,16 +149,28 @@ def _subject_consistency(subject: dict[str, Any] | None) -> dict[str, Any]:
     s = subject or {}
     jimok = str(s.get("land_category") or s.get("jimok") or "").strip()
     zone = str(s.get("zone_type") or s.get("land_use") or "").strip()
-    usage = str(s.get("usage") or s.get("use_status") or "").strip()
+    # ★★2026-09-07 독립 리뷰 적발(HIGH-5) — 이 줄이 **프로덕션이 만들지 않는 키**를
+    #   읽고 있었다. 생산자(:298)는 **`land_use_situation`** 으로 넣는데 여기는
+    #   `usage`/`use_status` 를 읽어 **이용상황 규칙이 원리적으로 발화 불가**였다.
+    #   ★내 테스트는 합성 키(`usage`)를 먹여 초록이었다 — 「사유가 도달하는가」만 재고
+    #     **「그 사유가 발생하는가」를 안 쟀다**.
+    #   ★★정답이 바로 옆에 있었다: PDF 어댑터가 같은 필드를 `land_use_situation` 으로
+    #     읽고 있다(§29 형제를 먼저 봐라).
+    usage = str(
+        s.get("land_use_situation") or s.get("usage") or s.get("use_status") or ""
+    ).strip()
     conflicts: list[dict[str, str]] = []
-    if jimok and zone and jimok in _NON_DAE_JIMOK and any(z in zone for z in _URBAN_ZONES):
+    if jimok and zone and jimok not in _DAE_JIMOK and any(z in zone for z in _URBAN_ZONES):
         conflicts.append({
             "field_a": f"지목 {jimok}", "field_b": f"용도지역 {zone}",
             "note": ("지목이 「대」가 아닌데 도시지역 용도가 지정돼 있습니다. "
                      "지목 미변경 상태일 수 있으며(정상), 그때 평가는 **현황과 공부 중 "
                      "무엇을 기준으로 했는지**를 밝혀야 합니다."),
         })
-    if jimok and usage and jimok in _NON_DAE_JIMOK and usage not in ("전", "답", "임야", "자연림", "농경지"):
+    # ★독립 리뷰 적발(MEDIUM-10) — 화이트리스트가 5개뿐이라 `도로 ↔ 도로` 처럼
+    #   **자기 자신과 충돌**했다("공부상 지목과 현황 이용이 다릅니다" — 같은데도).
+    #   → 같은 값이면 충돌이 아니다(당연한 것을 명시). 화이트리스트도 지운다.
+    if jimok and usage and jimok not in _DAE_JIMOK and usage != jimok:
         conflicts.append({
             "field_a": f"지목 {jimok}", "field_b": f"이용상황 {usage}",
             "note": ("공부상 지목과 현황 이용이 다릅니다. 감정평가는 **현황 기준**이 "

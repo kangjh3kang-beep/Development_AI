@@ -140,12 +140,25 @@ async def land_price_trend(address: str = "") -> dict[str, Any] | None:
     #   기간 고유가 **1개**(전부 202607)였다 — 24개월이 아니라 **같은 달의 24개 지역**.
     #   값만 주면 소비처가 라벨을 지어낸다. **무엇인지를 값과 함께** 준다.
     from app.services.external_api.reb_client import distinct_period_count, rate_series_from_rows, rate_series_scope
+    # ★★2026-09-07 독립 리뷰 적발(CRITICAL-2) — 종전엔 `distinct_periods` 를
+    #   **36개월 전체 fetch** 위에서 세고 배지는 `>= 24` 로 판단했다. 그런데 판정 거부
+    #   (`cumulative_factor_from_rows`)는 **마지막 24개 원소** 위에서 센다. **축이 달랐다.**
+    #   실측(17지역 × 36개월 = 612행, 지역 필터 불일치):
+    #       distinct_periods(전체) = 36  → is_time_series **True** → 배지 안 뜸
+    #       cumulative_factor      = None(같은 데이터를 «못 믿는다»고 거부)
+    #       차트 monthly 기간 고유수 = **2 / 24**   ← 사용자가 보는 것은 이쪽
+    #   **두 지표가 같은 데이터에 반대로 답했다.** → **같은 창**에서 센다.
+    _MONTHS = 24
     series = rate_series_from_rows(rows, sido)
+    window = series[-_MONTHS:] if _MONTHS > 0 else series
     t["scope"] = rate_series_scope(rows, sido)
-    t["distinct_periods"] = distinct_period_count(series)
-    t["requested_months"] = 24
-    # 시계열로 쓸 수 있는가 — 고유 기간이 요청보다 적으면 **시계열이 아니다**.
-    t["is_time_series"] = t["distinct_periods"] >= 24
+    t["distinct_periods"] = distinct_period_count(window)
+    t["requested_months"] = _MONTHS
+    # 시계열로 쓸 수 있는가 — **판정 거부와 같은 기준**이다(두 지표가 갈리지 않게).
+    t["is_time_series"] = t["distinct_periods"] >= _MONTHS
+    # ★차트가 그리는 것과 이 판정이 같은 것을 보는지 확인 가능하게 함께 싣는다.
+    t["chart_distinct_periods"] = distinct_period_count(
+        [(str(m.get("period") or ""), 0.0) for m in (t.get("monthly") or [])])
     return t
 
 
