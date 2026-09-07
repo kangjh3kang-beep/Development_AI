@@ -131,8 +131,22 @@ async def land_price_trend(address: str = "") -> dict[str, Any] | None:
     rows = await fetch_land_price_changes(months=36)
     if not rows:
         return None
-    t = trend_from_rows(rows, _sido_of(address), months=24)
-    return t or None
+    sido = _sido_of(address)
+    t = trend_from_rows(rows, sido, months=24)
+    if not t:
+        return None
+    # ★★2026-09-07 — **범위와 고유 기간 수를 함께 싣는다.**
+    #   화면이 이 시계열을 조건 없이 「R-ONE 실데이터」라고 라벨링했는데, 실측하니
+    #   기간 고유가 **1개**(전부 202607)였다 — 24개월이 아니라 **같은 달의 24개 지역**.
+    #   값만 주면 소비처가 라벨을 지어낸다. **무엇인지를 값과 함께** 준다.
+    from app.services.external_api.reb_client import distinct_period_count, rate_series_from_rows, rate_series_scope
+    series = rate_series_from_rows(rows, sido)
+    t["scope"] = rate_series_scope(rows, sido)
+    t["distinct_periods"] = distinct_period_count(series)
+    t["requested_months"] = 24
+    # 시계열로 쓸 수 있는가 — 고유 기간이 요청보다 적으면 **시계열이 아니다**.
+    t["is_time_series"] = t["distinct_periods"] >= 24
+    return t
 
 
 async def get_market_stats(address: str = "", base_year: int | None = None) -> dict[str, Any]:

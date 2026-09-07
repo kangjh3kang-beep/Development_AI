@@ -219,9 +219,40 @@ def rate_series_from_rows(rows: list[dict[str, Any]], region_sido: str) -> list[
 
     series = _collect(region_sido) if region_sido else []
     if not series:
+        # ★★2026-09-07 라이브 적발 — 이 폴백이 **fail-open** 이었다.
+        #   `_collect(None)` 은 **모든 지역**을 돌려준다. 지역 필터가 안 맞으면(원천의
+        #   표기가 달라지면) 조용히 전국+17개 시도가 한 시계열로 섞였고, 소비처는 그것을
+        #   「경기 24개월」로 읽었다. 실측: 라이브 시계열 24개의 **기간 고유가 1개**
+        #   (전부 `202607`) — 24개월이 아니라 **같은 달의 24개 지역**이었다.
+        #   그 24개를 ∏(1+r/100) 로 곱해 **1.0414** 를 만들고 채택 단가에 곱했다.
         series = _collect("전국") or _collect(None)
     series.sort(key=lambda x: x[0])
     return series
+
+
+def rate_series_scope(rows: list[dict[str, Any]], region_sido: str) -> str:
+    """시계열이 **어느 범위**에서 나왔는지 — 소비처가 라벨을 거짓으로 쓰지 않게.
+
+    ★값만 주면 소비처가 「지역 실데이터」라고 단정한다(실제로 화면이 그랬다).
+    """
+    if region_sido and rate_series_from_rows(rows, region_sido) and _has_region(rows, region_sido):
+        return region_sido
+    if _has_region(rows, "전국"):
+        return "전국"
+    return "미상(지역 필터 불일치 — 전체 행)"
+
+
+def _has_region(rows: list[dict[str, Any]], needle: str) -> bool:
+    keys = ("CLS_NM", "CLS_FULLNM", "REGION_NM", "REGION")
+    return any(
+        isinstance(row, dict) and needle in " ".join(str(row.get(k, "")) for k in keys)
+        for row in rows or []
+    )
+
+
+def distinct_period_count(series: list[tuple[str, float]]) -> int:
+    """시계열의 **고유 기간 수**. 지역이 섞이면 같은 기간이 반복된다."""
+    return len({t for t, _ in series if t})
 
 
 def cumulative_factor_from_rows(
@@ -232,6 +263,13 @@ def cumulative_factor_from_rows(
     if not series:
         return None
     recent = series[-months:] if months > 0 else series
+    # ★★**판정 거부** — 요청한 개월 수만큼 **고유 기간**이 없으면 누적계수를 만들지 않는다.
+    #   같은 달의 여러 지역을 곱하면 «24개월 누적»이 아니라 **지역 개수만큼의 거듭제곱**이다.
+    #   실측(2026-09-07): 고유 기간 **1개**인 24행으로 1.0414 를 만들어 토지가액을
+    #   근거 없이 +4.14% 부풀렸다. **하는 척하느니 안 하는 것이 옳다** —
+    #   None 을 돌려주면 `land_price_index` 가 근사테이블로 폴백하고 그 출처를 밝힌다.
+    if months > 0 and distinct_period_count(recent) < months:
+        return None
     factor = 1.0
     for _t, rate in recent:
         factor *= (1 + rate / 100.0)

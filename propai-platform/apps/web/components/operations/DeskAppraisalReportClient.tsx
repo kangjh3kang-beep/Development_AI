@@ -464,9 +464,20 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
               ) : null}
             </Section>
 
-            {/* IV. 복수 시나리오 교차검증 */}
+            {/* IV. 가정 민감도 / (방법 2개 이상일 때만) 교차검증 */}
+            {/* ★★2026-09-07 — 제목이 **「복수 시나리오 교차검증」** 인데 본문 note 는
+                *"이는 교차검증이 아닙니다"* 라고 말했다. **제목과 본문이 정면 모순**이고,
+                읽는 사람은 **제목을 믿는다**. 교차검증은 «독립된 방법이 2개 이상»일 때만
+                성립한다 — 자기 가정을 ±5% 흔든 것은 **민감도**다. */}
             {res.cross_check && (
-              <Section no="Ⅳ" title={`복수 시나리오 교차검증 (평균 ${res.cross_check.mean.toLocaleString()}원/㎡ · 편차 CV ${res.cross_check.cv_pct}%)`}>
+              <Section
+                no="Ⅳ"
+                title={
+                  (res.methods?.length ?? 0) >= 2
+                    ? `방법 간 교차검증 (평균 ${res.cross_check.mean.toLocaleString()}원/㎡ · 편차 CV ${res.cross_check.cv_pct}%)`
+                    : `가정 민감도 — 교차검증 아님 (그밖의요인 ±5% · 평균 ${res.cross_check.mean.toLocaleString()}원/㎡ · CV ${res.cross_check.cv_pct}%)`
+                }
+              >
                 <div className="flex gap-1.5">
                   {(res.cross_check.firms ?? []).map((v, i) => (
                     <div key={i} className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-1 py-2 text-center">
@@ -522,7 +533,19 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
                 const col = (v: number) => (v >= 0 ? "#10b981" : "#ef4444");
                 return (
                   <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
-                    <p className="mb-2 text-[11px] font-bold text-[var(--text-tertiary)]">지가변동률 추이 ({ms.region || "전국"}) — R-ONE 실데이터</p>
+                    {/* ★★2026-09-07 — 종전엔 이 문구가 **조건 없이** 「R-ONE 실데이터」였다.
+                        실측: 시계열 24개의 **기간 고유가 1개**(전부 202607) — 24개월이 아니라
+                        **같은 달의 24개 지역**이었는데 화면은 「실데이터」라고 단정했다.
+                        같은 파일의 형제들(cap_rate·전월세)은 이미 `source === "R-ONE"` 로
+                        분기하고 있었다 — **여기만 안 했다**. 백엔드가 주는 scope 를 읽는다. */}
+                    <p className="mb-2 text-[11px] font-bold text-[var(--text-tertiary)]">
+                      지가변동률 추이 ({tr?.scope || ms.region || "전국"})
+                      {tr?.is_time_series === false && (
+                        <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-bold text-amber-800">
+                          시계열 아님 — 고유 기간 {tr?.distinct_periods ?? "?"}개/{tr?.requested_months ?? 24}개월
+                        </span>
+                      )}
+                    </p>
                     {!!monthly.length && (
                       <div>
                         <p className="text-[10px] text-[var(--text-hint)]">월별(최근 {monthly.length}개월, %)</p>

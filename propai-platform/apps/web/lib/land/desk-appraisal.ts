@@ -69,7 +69,17 @@ export type DeskAppraisalResult = {
   market_stats?: {
     region?: string;
     rone_available?: boolean; cap_rate?: Stat; jeonse_conversion_rate?: Stat; housing_time_adjust?: Stat;
-    land_price_trend?: { monthly?: { period: string; rate: number }[]; yearly?: { year: string; rate: number }[] } | null;
+    land_price_trend?: {
+      monthly?: { period: string; rate: number }[];
+      yearly?: { year: string; rate: number }[];
+      /** ★시계열의 실제 범위 — 화면이 라벨을 지어내지 않게(2026-09-07). */
+      scope?: string;
+      /** 고유 기간 수. 지역이 섞이면 같은 기간이 반복된다. */
+      distinct_periods?: number;
+      requested_months?: number;
+      /** false 면 **시계열이 아니다**(같은 달의 여러 지역). */
+      is_time_series?: boolean;
+    } | null;
   };
   disclaimer: string;
 };
