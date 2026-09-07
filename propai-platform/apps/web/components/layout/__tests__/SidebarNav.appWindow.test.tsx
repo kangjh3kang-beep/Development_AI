@@ -98,6 +98,19 @@ describe("사이드바 — 앱형 라우트는 창을 빼앗지 않는다(3층 �
     expect(notPrevented).toBe(true); // 평범한 이동 그대로
   });
 
+  it("★★tab 폴백 — 새 탭으로 열려도 기본 이동을 막는다(적대 리뷰 M-2)", () => {
+    window.open = vi
+      .fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>()
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce({} as Window) as unknown as typeof window.open;
+
+    pathname = "/ko/sales/sites";
+    render(<SidebarNav sections={sections} />);
+    const link = screen.getByRole("link", { name: /내 분양 현장/ });
+
+    expect(fireEvent.click(link)).toBe(false); // 탭이어도 막는다
+  });
+
   it("★⑤ 팝업이 차단되면 사이드바도 기본 이동을 막지 않는다(오늘의 동작 폴백)", () => {
     window.open = vi.fn(() => null) as unknown as typeof window.open;
 

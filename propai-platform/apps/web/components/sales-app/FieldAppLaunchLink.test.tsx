@@ -56,6 +56,22 @@ describe("FieldAppLaunchLink — 두 모집단이 반대 결과를 낸다", () =
     expect(notPrevented).toBe(true); // ★막지 않았다 — 최악의 경우가 회귀가 아니다
   });
 
+  it("★★tab 폴백 — 팝업이 막혀 **새 탭**으로 열려도 기본 이동을 막는다", () => {
+    // 적대 리뷰 M-2: 이 갈래가 무잠금이라 `!== "same"` → `=== "window"` 변이가 **생존**했다.
+    // 그 변이의 실제 동작은 «새 탭이 열리고 + 원래 창도 현장앱으로 이동» = **신고 증상 재현**이다.
+    // 모집단이 둘이 아니라 **셋**(window/tab/same)인데 tab 만 안 태우고 있었다.
+    window.open = vi
+      .fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>()
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce({} as Window) as unknown as typeof window.open;
+    const { el, seen } = renderLink();
+
+    const notPrevented = fireEvent.click(el);
+
+    expect(seen).toEqual(["tab"]);
+    expect(notPrevented).toBe(false); // ★탭이어도 막는다 — 원래 창을 잃으면 안 된다
+  });
+
   it("★href 를 유지한다 — 가운데클릭·「새 탭에서 열기」·링크 복사가 살아 있어야 한다", () => {
     window.open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window) as typeof window.open;
     const { el } = renderLink();
