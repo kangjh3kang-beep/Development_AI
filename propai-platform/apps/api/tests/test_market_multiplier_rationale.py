@@ -37,7 +37,10 @@ from app.services.land_intelligence import market_multiplier as mm
 from app.services.land_intelligence.comprehensive_analysis_service import (
     ComprehensiveAnalysisService,
 )
-from app.services.land_intelligence.land_price_estimator import _market_multiplier
+from app.services.land_intelligence.land_price_estimator import (
+    _market_multiplier,
+    estimate_land_price,
+)
 
 # ★금지 형태 — 「현실화율」 뒤 가까운 곳에 숫자+% 가 오는 **수치 단정**.
 #   낱말 자체를 금지하지 않는다(정정문·설명은 그 낱말을 써야 한다). 금지하는 것은 **수치 주장**이다.
@@ -207,3 +210,121 @@ def test_class_attribute_aliases_point_at_the_same_ssot_objects() -> None:
     """★별칭이 **복사본이 아니라 같은 객체**여야 SSOT 가 갈라지지 않는다."""
     assert ComprehensiveAnalysisService.MARKET_MULTIPLIER_MAP is mm.MARKET_MULTIPLIER_MAP
     assert ComprehensiveAnalysisService.MARKET_MULTIPLIER_REGION is mm.MARKET_MULTIPLIER_REGION
+
+
+# ─────────────────────────────────────────────────────────────
+# ★기계 변이가 낸 구멍 봉합(2026-09-07 · scripts/mutate_changed.py 47건 중 27 생존 트리아지)
+#   base: origin/main -> 63a7e126ca40(공통 조상). 아래 넷은 **설명할 수 없는 생존**이었다.
+#   손으로 고른 변이 8건은 이 자리를 하나도 짚지 못했다 — 기계로 뽑아야 하는 이유다.
+# ─────────────────────────────────────────────────────────────
+
+# 구멍 1 — 계수 회귀 락이 **손으로 고른 5개**였고 모집단은 49+14 였다.
+#   맵에서 한 줄을 지워도(예: 마포구 1.5) 파생형 테스트는 **모집단과 함께 깎여** 초록이었다
+#   (자기지시적 기대값의 전형). 마포구가 사라지면 서울 1.4 로 **조용히 재라우팅**된다 — 금액이 바뀐다.
+#   => 표 전체를 **독립 오라클**(아래 명시 리터럴)로 못 박는다. 계수를 바꾸려면 이 표도 함께
+#      고쳐야 하고, 그것이 **의도된 마찰**이다 — 이 표는 토지가액을 움직인다.
+_EXPECTED_MAP = {
+    "강남구": 1.8, "서초구": 1.7, "송파구": 1.6,
+    "용산구": 1.6, "마포구": 1.5, "성동구": 1.5,
+    "광진구": 1.4, "영등포구": 1.4, "동작구": 1.4,
+    "강동구": 1.4, "관악구": 1.3, "구로구": 1.3,
+    "금천구": 1.2, "노원구": 1.3, "도봉구": 1.2,
+    "중랑구": 1.2, "강북구": 1.2, "성북구": 1.3,
+    "은평구": 1.2, "서대문구": 1.3, "종로구": 1.5,
+    "중구": 1.5, "양천구": 1.3, "강서구": 1.3,
+    "성남시": 1.4, "분당": 1.5, "판교": 1.6,
+    "수원시": 1.3, "용인시": 1.3, "화성시": 1.2,
+    "고양시": 1.3, "일산": 1.3, "의정부시": 1.2,
+    "남양주시": 1.2, "구리시": 1.3, "파주시": 1.1,
+    "양주시": 1.1, "안양시": 1.3, "안산시": 1.2,
+    "시흥시": 1.2, "김포시": 1.2, "광명시": 1.4,
+    "하남시": 1.4, "부천시": 1.2, "광주시": 1.2,
+    "해운대구": 1.4, "수영구": 1.3, "연수구": 1.3,
+    "송도": 1.4,
+}
+
+_EXPECTED_REGION = {
+    "서울특별시": 1.4, "서울": 1.4, "경기도": 1.2,
+    "경기": 1.2, "인천광역시": 1.2, "인천": 1.2,
+    "부산광역시": 1.2, "부산": 1.2, "대구광역시": 1.15,
+    "대전광역시": 1.15, "광주광역시": 1.1, "울산광역시": 1.15,
+    "세종특별자치시": 1.2, "제주특별자치도": 1.15,
+}
+
+
+def test_full_multiplier_table_is_frozen() -> None:
+    """전수 락 — 표의 **모든** 항목이 불변임을 독립 오라클로 단언한다.
+
+    이 PR 의 계약은 "계수는 바꾸지 않는다" 이므로 표 전체가 계약이다. 대표 5개만 잠그면
+    나머지 58개는 무잠금이고, 실제로 기계 변이가 그 자리를 22건 관통했다.
+    """
+    assert mm.MARKET_MULTIPLIER_MAP == _EXPECTED_MAP
+    assert mm.MARKET_MULTIPLIER_REGION == _EXPECTED_REGION
+    # 개수도 따로 못 박는다 — dict 비교가 통과해도 "항목이 추가됐는지" 를 사람이 읽게.
+    assert len(mm.MARKET_MULTIPLIER_MAP) == 49
+    assert len(mm.MARKET_MULTIPLIER_REGION) == 14
+
+
+# 구멍 2 — 한정어를 **자기 상수로 단언**해, 상수를 정반대 뜻으로 바꿔도 전부 통과했다.
+#   UNVERIFIED_CAVEAT 를 "실거래로 검증된 현실화율입니다" 로 바꾸면, "한정어가 실렸다" 는 락이
+#   오히려 거짓을 실어 나른다(자기 상수를 단언하는 락은 정반대 주장을 통과시킨다).
+#   => **금지된 모양**으로 잠근다 — 한정어는 검증을 **주장해서는 안 된다**.
+_CLAIMS_VERIFICATION = re.compile(r"(검증된|확인된|실측된)\s*현실화율(?!이\s*아)")
+
+
+def test_caveat_constant_does_not_claim_verification() -> None:
+    """한정어가 "검증됐다" 고 주장하면 그것 자체가 이 PR 이 고친 결함의 재발이다."""
+    # 탐지축이 살아 있는가(양성 대조) — 없으면 아래 단언은 공허하다.
+    assert _CLAIMS_VERIFICATION.search("실거래로 검증된 현실화율입니다"), "검사기 사망"
+    # 판별력 — 현재 문구(부정형)는 잡히지 않아야 한다.
+    assert not _CLAIMS_VERIFICATION.search(mm.UNVERIFIED_CAVEAT), mm.UNVERIFIED_CAVEAT
+    assert mm.UNVERIFIED_CAVEAT.strip(), "한정어가 비었다 — 배선 락이 공허해진다"
+
+
+# 구멍 3 — 층위 코드가 서로 **구별되는지**를 아무도 단언하지 않았다.
+def test_scope_codes_are_pairwise_distinct() -> None:
+    """세 층위 코드는 기계 판독 축이다 — 겹치면 층위 판정이 통째로 무의미해진다."""
+    codes = (mm.SCOPE_DISTRICT, mm.SCOPE_REGION, mm.SCOPE_DEFAULT)
+    assert len(set(codes)) == 3, codes
+    assert all(c.strip() for c in codes)
+
+
+# 구멍 4 — 헬퍼만 태우고 **실제 출력면**을 안 태웠다. 사용자가 보는 것은 estimator 의 반환
+#   payload(trust.basis / evidence[].basis / rationale)이고, 그 자리에도 같은 거짓 모델이
+#   따로 적혀 있었다(land_price_estimator 의 trust.basis — 전역 스윕이 찾아낸 다섯 번째 자리).
+#   => 스텁이 아니라 **진짜 함수를 태워** 모든 사용자 노출 문자열을 한 번에 훑는다.
+def _collect_user_facing_strings(payload: object) -> list[str]:
+    """payload 안의 사용자 노출 문자열을 **파생형으로** 수집(손으로 키를 나열하지 않는다)."""
+    out: list[str] = []
+
+    def walk(node: object) -> None:
+        if isinstance(node, str):
+            out.append(node)
+        elif isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, (list, tuple)):
+            for v in node:
+                walk(v)
+
+    walk(payload)
+    return out
+
+
+@pytest.mark.asyncio
+async def test_real_estimator_payload_carries_no_fabricated_rate() -> None:
+    """실제 층을 태운다 — 공시지가와 면적을 주면 외부호출 경로를 타지 않는다(무과금/무네트워크).
+
+    두 모집단을 가른다: 조작 형태는 **없어야** 하고, 검사기는 **살아 있어야** 한다.
+    """
+    payload = await estimate_land_price(
+        address=_ADDR_DISTRICT, area_sqm=500.0, official_price_per_sqm=1_000_000.0
+    )
+    strings = _collect_user_facing_strings(payload)
+    assert len(strings) >= 5, f"수집기가 죽었다 — 문자열 {len(strings)}건"
+
+    offenders = [t for t in strings if _FABRICATED_RATE.search(t)]
+    assert not offenders, "실제 출력면에 조작된 현실화율이 실렸다: " + " | ".join(offenders)
+
+    # 양성 대조 — 같은 검사기가 옛 형태를 실제로 잡는가(대조군 없는 "0건" 은 근거가 아니다).
+    assert [t for t in strings + [_OLD_FORM] if _FABRICATED_RATE.search(t)] == [_OLD_FORM]
