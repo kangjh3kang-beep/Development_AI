@@ -227,21 +227,28 @@ describe("FieldDesktopNav 계약(L1) — 활성 그룹만 펼친다", () => {
 });
 
 describe("★M2·M3 — 상태가 어긋나도 화면이 무너지지 않는다", () => {
-  it("M2 펼친 그룹이 권한 변경으로 사라져도 **패널이 남는다**(초판은 통째로 증발했다)", () => {
+  it("M2 펼친 그룹이 사라지면 **활성 탭이 속한 그룹**으로 되돌아온다(첫 그룹이 아니라)", () => {
+    // ★활성 탭을 **첫 그룹 밖**(Operations 의 worklog)에 둔다. 초판 락은 활성 탭이 Sales(=groups[0])
+    //   에 있어서, 폴백이 `activeGroupTitle` 이든 `groups[0]` 이든 결과가 같았다 —
+    //   그래서 `activeGroupTitle` 폴백을 지우는 변이가 **SURVIVED** 했다(실측).
+    const ACTIVE = "worklog"; // Operations 그룹
+    expect(MENU_GROUPS[0].keys).not.toContain(ACTIVE); // 대조군 — 첫 그룹이 아님을 못 박는다
+
     const { container, rerender } = render(
-      <FieldDesktopNav tabs={DEV_TABS} activeTab="units" onNavigate={() => {}} />,
+      <FieldDesktopNav tabs={DEV_TABS} activeTab={ACTIVE} onNavigate={() => {}} />,
     );
     fireEvent.click(screen.getByRole("tab", { name: /Money/ }));
-    expect(container.querySelector('[role="tabpanel"]')).toBeTruthy(); // 전제
+    expect(renderedKeys(container.querySelector('[role="tabpanel"]')!)).toContain("payments"); // 전제
 
-    // Money 그룹의 탭이 권한에서 빠진다(활성 탭 units 는 그대로).
+    // Money 그룹의 탭이 권한에서 빠진다(활성 탭은 그대로).
     const shrunk = DEV_TABS.filter((t) => !["payments", "loan", "resale", "tax"].includes(t.key));
-    rerender(<FieldDesktopNav tabs={shrunk} activeTab="units" onNavigate={() => {}} />);
+    rerender(<FieldDesktopNav tabs={shrunk} activeTab={ACTIVE} onNavigate={() => {}} />);
 
     const panel = container.querySelector('[role="tabpanel"]');
-    expect(panel).toBeTruthy();
-    // 활성 탭이 속한 그룹으로 되돌아왔다.
-    expect(renderedKeys(panel!)).toContain("units");
+    expect(panel).toBeTruthy(); // 초판은 여기서 통째로 증발했다
+    // ★첫 그룹이 아니라 **활성 탭이 속한 그룹**이 펼쳐진다.
+    expect(renderedKeys(panel!)).toContain(ACTIVE);
+    expect(renderedKeys(panel!)).not.toContain(MENU_GROUPS[0].keys[0]);
   });
 
   it("M3 다른 그룹을 펼쳐도 **현재 위치가 보조기술에 남는다**(활성 그룹 칩이 aria-current)", () => {
