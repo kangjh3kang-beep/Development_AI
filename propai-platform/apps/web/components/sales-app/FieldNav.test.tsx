@@ -160,6 +160,15 @@ describe("IA SSOT 상한(m4) — 「상단이 길어지지 않는다」가 참�
     // 두 모집단 — 상한이 **실제로 빡빡한지** 확인(아무 값이나 넣은 상수가 아니다).
     expect(Math.max(...MENU_GROUPS.map((g) => g.keys.length))).toBe(MENU_GROUP_MAX);
   });
+
+  it("★그룹 제목이 유일하다 — 제목이 그룹의 **신원**이기 때문이다(적대 리뷰 m5 권고)", () => {
+    // `FieldDesktopNav` 는 `key={g.title}` 와 `find(g => g.title === openTitle)` 로 그룹을
+    // 식별한다. 제목이 겹치면 React key 충돌 + 엉뚱한 그룹이 열린다.
+    // 안정 id 도입은 SSOT 계약 변경이라 범위 밖으로 뒀고, **유일성만** 못 박는다.
+    const titles = MENU_GROUPS.map((g) => g.title);
+    expect(titles.length).toBeGreaterThan(1); // 공허 방지
+    expect(new Set(titles).size).toBe(titles.length);
+  });
 });
 
 describe("FieldDesktopNav 계약(L1) — 활성 그룹만 펼친다", () => {
