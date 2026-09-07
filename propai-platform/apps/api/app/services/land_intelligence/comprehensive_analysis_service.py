@@ -1418,8 +1418,10 @@ class ComprehensiveAnalysisService:
         Returns:
             (보정계수, 산정 근거 설명) — 근거 문구는 계수로부터 어떤 통계도 **역산하지 않는다**.
         """
-        mult, rationale, _scope = _market_multiplier_mod.resolve_market_multiplier(address)
-        return mult, rationale
+        v = _market_multiplier_mod.resolve_market_multiplier(address)
+        # ★여기는 `annotations` 에 들어가는 **독립 문장** 자리라 `.sentence` 를 쓴다
+        #   (수식 안 연산 항 자리는 `.short` — land_price_estimator 참조 · 독립 리뷰 M-4).
+        return v.multiplier, v.sentence
 
     def _calc_land_prices(self, base: dict, land_area: float) -> dict[str, Any]:
         prices = base.get("official_prices", [])

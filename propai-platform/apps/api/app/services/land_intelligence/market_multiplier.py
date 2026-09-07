@@ -27,6 +27,8 @@
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 # 지역별 공시지가 대비 시세 보정계수(사전 설정 휴리스틱 · **측정된 현실화율이 아니다**).
 #
 # ★종전 주석은 여기에 "서울 강남권: 현실화율 약 50~65% → 1.5~2.0배" 같은 밴드를 적어 두었으나
@@ -37,8 +39,15 @@ from __future__ import annotations
 #        더해졌다면 `100/계수` 는 **애초에 현실화율이 아니다** — 코드가 자기 모델과 모순했다.
 #   근거 없는 밴드를 주석에 남기면 다음 사람이 **재검증하지 않고 신뢰한다.**
 #
-# 값의 출처·정확도는 **미측정**이다. 이 계수를 바꾸려면 표준지공시지가↔실거래 대조 근거가
-# 필요하다(별도 캠페인).
+# ★값의 출처는 **문서화돼 있지 않다**. 다만 «잴 수 없다» 는 뜻이 **아니다**(2026-09-07 정정 —
+#   독립 리뷰 M-5). 종전에 여기 «대조 데이터원이 이 저장소에 없다» 고 적었는데 **거짓에 가까웠다**:
+#     · 개별공시지가↔실거래 대조는 **가능하다** — `external_api/molit_service.py` ·
+#       `land_intelligence/realtx_report_service.py` · `market/comparable_sample.py` 가 실재한다.
+#     · 실제로 형제 세션이 쟀다 — `_workspace/PLAN_desk_appraisal_market_reality_2026-09-07.md`
+#       §1 표 9~10행: 남양주 화도읍 일반상업지역 12개월 3,291건에서 중앙 4,038,261원/㎡ →
+#       **실측 배수 1.448배(현실화율 69%)**. 이 표의 남양주 값 **1.2배(83%)** 와 어긋난다.
+#   ⇒ 미확보인 것은 «데이터원» 이 아니라 **전국 계수를 갱신할 표본**이다(위 실측은 n=3 · 1개 읍면).
+#     그 갱신은 별도 캠페인이고, «잴 수 없다» 를 승계해 막다른 길로 가지 말 것(CLAUDE.md §C-10).
 MARKET_MULTIPLIER_MAP: dict[str, float] = {
     # 서울 강남권 (공시지가 대비 시세 괴리가 큰 지역)
     "강남구": 1.8, "서초구": 1.7, "송파구": 1.6, "용산구": 1.6,
@@ -77,45 +86,110 @@ MARKET_MULTIPLIER_REGION: dict[str, float] = {
 # 지역이 하나도 매칭되지 않을 때의 기본 계수.
 DEFAULT_MULTIPLIER: float = 1.2
 
-# ★사유 문구에 **반드시** 실리는 한정어. 계수가 측정치가 아님을 표면에서 끊어 말한다.
-#   형제 배지(field_audit MARKET_PRICE_METHODOLOGY)와 같은 언어를 쓴다 — 한 화면의 두 표면이
-#   서로 모순되지 않게.
+# ★★출처 판정용 **안정 코드** — 표시 문구와 **분리**한다(2026-09-07 · 독립 리뷰 M-2).
+#   왜: 종전에는 한정어 **문자열**이 유일한 판정 근거였다. 그래서 그 상수를
+#   `"국토교통부 실거래가 통계로 산출된 지역 계수입니다"` 처럼 **없는 출처를 지어내는 문구**로
+#   바꿔도 락이 전부 초록이었다(리뷰어가 변이로 실증). 낱말을 잠그면 **속성이 아니라 어휘**를
+#   잠그는 것이라, 다른 낱말로 같은 거짓이 재발한다.
+#   ★이 처방은 이 저장소에 **이미 있었다** — `field_audit/invariants/market_methodology.py` 가
+#   같은 이유로 `source_kind` 를 도입했다("표시 문구가 유일한 판정 근거라, 출처 문구를 쉬운 말로
+#   바꾸면 이 상시 배지가 아무 에러 없이 영구 침묵했다"). 형제를 따른다.
+PROVENANCE_UNVERIFIED_PRESET = "UNVERIFIED_PRESET"
+
+# 표시용 한정어(문구는 다듬을 수 있다 — 계약은 위 코드다).
 UNVERIFIED_CAVEAT = "실거래로 검증된 현실화율이 아닌 사전 설정 참고 계수입니다"
+
+# ★수식 안에 끼워 넣는 **짧은 형태**(2026-09-07 · 독립 리뷰 M-4).
+#   왜 둘이 필요한가: `desk_appraisal_service` 는 사유를 **곱셈식의 연산 항 주석**으로 쓴다
+#   (`… × 그밖의요인 1.2({사유})`). 거기에 문장형(마침표 포함)을 넣었더니 51~62자가 102~104자가
+#   되고 **괄호가 3중 중첩**되며 수식 한가운데 **문장 종결 마침표**가 박혔다. 한정어가 정직해도
+#   그 자리는 문장이 아니라 **항**을 기대한다. ⇒ 표현을 자리에 맞게 나눈다.
+SHORT_CAVEAT = "실거래 미검증"
 
 # 매칭 층위 — 사유 문자열과 별개의 **안정 식별자**(표시 문구를 다듬어도 판정이 안 죽게).
 SCOPE_DISTRICT = "DISTRICT"
 SCOPE_REGION = "REGION"
 SCOPE_DEFAULT = "DEFAULT"
+# ★주소 자체가 없을 때 — 「미등록」과 **다른 사실**이다(2026-09-07 · 독립 리뷰 m-2).
+#   SSOT 통합의 부수효과로 `comprehensive` 경로가 `None` 주소에 TypeError 대신 폴백하게 됐는데,
+#   그것을 SCOPE_DEFAULT 로 뭉치면 «주소를 모른다» 가 «지역별 계수가 미등록이다» 라는
+#   **다른 주장**으로 렌더된다(모름을 유효값으로 표현 — 이 저장소가 반복해 데인 형태).
+SCOPE_UNKNOWN = "UNKNOWN_ADDRESS"
 
 
-def resolve_market_multiplier(address: str) -> tuple[float, str, str]:
-    """주소 → (보정계수, 사유 문자열, 매칭 층위 코드).
+class MultiplierVerdict(NamedTuple):
+    """계수와 **그것을 말하는 세 가지 방식**을 함께 나른다.
 
-    ★사유 문자열은 **계수로부터 어떤 통계도 역산하지 않는다.** 종전에는 `100/계수` 를
-      「현실화율」이라 인쇄해, 고른 값을 고른 이유처럼 말했다. 지금은 «사전 설정 계수를
-      적용했다» 는 사실과 «검증된 현실화율이 아니다» 라는 한정어만 말한다.
-
-    세 층위가 **서로 다른 문자열**을 낸다 — 사용자가 "이 지역이 실제로 등록돼 있는가" 와
-    "전국 기본값으로 떨어졌는가" 를 구별할 수 있어야 하기 때문이다. 종전 폴백 문구는
-    그 구별을 담고 있었으나 지역 매칭 문구가 거짓 통계를 실어 상쇄됐다.
+    · `multiplier` — 곱해지는 값
+    · `short`      — 수식 안 연산 항 주석용(짧다 · 마침표 없다)
+    · `sentence`   — 독립 문장용(주석·근거 줄)
+    · `scope`      — 어느 층위에서 매칭됐나(기계 판독 축)
+    · `provenance` — **출처 판정용 안정 코드**(표시 문구와 분리 — 문구를 바꿔도 안 죽는다)
     """
-    addr = address or ""
+
+    multiplier: float
+    short: str
+    sentence: str
+    scope: str
+    provenance: str
+
+
+def resolve_market_multiplier(address: str) -> MultiplierVerdict:
+    """주소 → 계수와 사유. **계수로부터 어떤 통계도 역산하지 않는다.**
+
+    종전에는 `100/계수` 를 「현실화율」이라 인쇄해, 고른 값을 고른 이유처럼 말했다. 지금은
+    «사전 설정 계수를 적용했다» 는 사실과 «검증된 현실화율이 아니다» 라는 한정어만 말한다.
+
+    네 층위가 **서로 다른** 문자열을 낸다 — 사용자가 "이 지역이 실제로 등록돼 있는가" ·
+    "광역으로 떨어졌는가" · "전국 기본값인가" · "주소를 아예 모르는가" 를 구별해야 하기 때문이다.
+    """
+    if not (address or "").strip():
+        return MultiplierVerdict(
+            DEFAULT_MULTIPLIER,
+            f"주소 미상 · 전국 기본 계수 · {SHORT_CAVEAT}",
+            (
+                f"주소가 확인되지 않아 전국 기본 보정계수 {DEFAULT_MULTIPLIER}배를 적용했습니다"
+                f"(지역별 계수의 미등록 여부는 **확인되지 않았습니다** · {UNVERIFIED_CAVEAT})."
+            ),
+            SCOPE_UNKNOWN,
+            PROVENANCE_UNVERIFIED_PRESET,
+        )
+
+    addr = address
 
     for district, mult in MARKET_MULTIPLIER_MAP.items():
         if district in addr:
-            return mult, (
-                f"{district}에 대해 사전 설정된 지역 시세보정계수 {mult}배를 적용했습니다"
-                f"({UNVERIFIED_CAVEAT})."
-            ), SCOPE_DISTRICT
+            return MultiplierVerdict(
+                mult,
+                f"{district} 사전설정 계수 · {SHORT_CAVEAT}",
+                (
+                    f"{district}에 대해 사전 설정된 지역 시세보정계수 {mult}배를 적용했습니다"
+                    f"({UNVERIFIED_CAVEAT})."
+                ),
+                SCOPE_DISTRICT,
+                PROVENANCE_UNVERIFIED_PRESET,
+            )
 
     for region, mult in MARKET_MULTIPLIER_REGION.items():
         if region in addr:
-            return mult, (
-                f"{region} 광역 단위의 사전 설정 시세보정계수 {mult}배를 적용했습니다"
-                f"(시·군·구 세부 계수 미등록 · {UNVERIFIED_CAVEAT})."
-            ), SCOPE_REGION
+            return MultiplierVerdict(
+                mult,
+                f"{region} 광역 사전설정 계수 · 시군구 미등록 · {SHORT_CAVEAT}",
+                (
+                    f"{region} 광역 단위의 사전 설정 시세보정계수 {mult}배를 적용했습니다"
+                    f"(시·군·구 세부 계수 미등록 · {UNVERIFIED_CAVEAT})."
+                ),
+                SCOPE_REGION,
+                PROVENANCE_UNVERIFIED_PRESET,
+            )
 
-    return DEFAULT_MULTIPLIER, (
-        f"지역별 보정계수가 미등록되어 전국 기본 보정계수 {DEFAULT_MULTIPLIER}배를 적용했습니다"
-        f"({UNVERIFIED_CAVEAT})."
-    ), SCOPE_DEFAULT
+    return MultiplierVerdict(
+        DEFAULT_MULTIPLIER,
+        f"전국 기본 계수 · 지역 미등록 · {SHORT_CAVEAT}",
+        (
+            f"지역별 보정계수가 미등록되어 전국 기본 보정계수 {DEFAULT_MULTIPLIER}배를 적용했습니다"
+            f"({UNVERIFIED_CAVEAT})."
+        ),
+        SCOPE_DEFAULT,
+        PROVENANCE_UNVERIFIED_PRESET,
+    )

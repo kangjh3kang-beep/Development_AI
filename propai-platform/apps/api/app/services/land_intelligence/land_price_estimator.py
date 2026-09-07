@@ -21,9 +21,16 @@ from app.services.land_intelligence import market_multiplier as _mm
 
 
 def _market_multiplier(address: str) -> tuple[float, str]:
-    """주소 → (보정계수, 사유). SSOT 위임 — 계수로부터 통계를 역산하지 않는다."""
-    mult, rationale, _scope = _mm.resolve_market_multiplier(address)
-    return mult, rationale
+    """주소 → (보정계수, **짧은** 사유). SSOT 위임 — 계수로부터 통계를 역산하지 않는다.
+
+    ★왜 짧은 형태인가(2026-09-07 · 독립 리뷰 M-4): 이 함수의 두 소비처가 모두 사유를
+      **곱셈식 안의 연산 항 주석**으로 쓴다 — 아래 `rationale` 과
+      `desk_appraisal_service` 의 `… × 그밖의요인 {계수}({사유})`. 문장형(마침표 포함)을 넣으면
+      괄호가 3중으로 중첩되고 수식 한가운데 문장 종결부가 박힌다. 자리에 맞는 표현을 고른다.
+      독립 문장이 필요한 곳(예: comprehensive 의 분석 주석)은 `.sentence` 를 쓴다.
+    """
+    v = _mm.resolve_market_multiplier(address)
+    return v.multiplier, v.short
 
 
 def _price_evidence(
@@ -138,6 +145,10 @@ async def estimate_land_price(
         "trust": {
             "method": "single_source",
             "basis": "개별공시지가 × 사전 설정 지역 보정계수(실거래 미검증)",
+            # ★출처 판정용 안정 코드 — 표시 문구(basis)와 분리한다. 문구를 쉬운 말로
+            #   바꿔도 «이 값의 출처가 미검증 사전설정» 이라는 계약은 안 죽는다
+            #   (형제 선례: field_audit market_methodology 의 source_kind).
+            "basis_kind": _mm.PROVENANCE_UNVERIFIED_PRESET,
             "confidence": 0.7,
             "recheck_recommended": True,
             "cross_validation": None,
