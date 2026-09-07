@@ -132,9 +132,26 @@ def _exclusive_ratio_for(dev_type: str, building_type: str | None) -> tuple[floa
 # ★★**아파트 계열만 넣는다.** 오피스텔·단독·상업의 관례 전용률은 **재보지 않았다** —
 #   지어내면 그 숫자가 다음 사람에게 근거처럼 읽힌다. 미등록 종별은 **현행 동작을 그대로
 #   유지**(대상 `dev_type` 정본)하고, 그 사실을 근거에 적는다.
+# 국민평형 전용면적(㎡) — 관례 전용률의 분자. `_REF_SUPPLY_SQM`(112.4)이 분모다.
+_STANDARD_EXCLUSIVE_SQM = 84.0
+
+
+def _apt_comparable_ratio() -> float:
+    """아파트 계열 사례 관례 전용률 — **리터럴을 쓰지 않고 표준 공급면적에서 파생**한다.
+
+    ★`0.747` 을 여기 또 적으면 이 저장소의 **다섯 번째 사본**이 된다(실측: `_JEONYULRYUL`
+      0.747 · `area-notation` 0.75 · `PricingBandPanel` 0.747 …). 사본은 **값이 갈릴 때
+      조용하다** — 프론트 안에서만 0.75/0.747 두 값이 돌아 84㎡ 기준 공급면적이
+      112.0㎡(33.88평) ↔ 112.4㎡(34.02평) 로 갈렸다.
+    → 「84타입 표준 공급면적」 하나만 정본으로 두고 **나눠서 얻는다.**
+    """
+    from app.services.sales.pricing.suggest import _REF_SUPPLY_SQM
+    return round(_STANDARD_EXCLUSIVE_SQM / _REF_SUPPLY_SQM, 3)
+
+
 _COMPARABLE_SUPPLY_RATIO: dict[str, float] = {
-    "apt": 0.747,
-    "apt_presale": 0.747,
+    "apt": _apt_comparable_ratio(),
+    "apt_presale": _apt_comparable_ratio(),
 }
 
 

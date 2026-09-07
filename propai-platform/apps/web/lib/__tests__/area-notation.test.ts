@@ -54,7 +54,16 @@ describe("면적 표기 SSOT — 전용은 ㎡, 공급은 평형", () => {
     expect(formatPyeonghyeong(84)).toBe("34평형");
     expect(formatPyeonghyeong(84)).not.toContain("㎡");
     // 병행 표기는 **어느 쪽이 전용인지 말한다**
-    expect(formatAreaDual(84)).toBe("전용 84㎡ (34평형)");
+    // ★★2026-09-07 사용자 지적 — 종전 `"전용 84㎡ (34평형)"` 은 괄호 안 값에 **기준이
+    //   없어** 「전용이 34평」으로 읽혔다. 실제 전용 84㎡ = **25.4평**, 34평형은 **공급**이다.
+    //   이 락은 이제 «두 값이 각각 자기 기준을 말하는가» 를 본다(형식 문자열이 아니라).
+    const dual = formatAreaDual(84);
+    expect(dual).toBe("전용 84㎡(25.4평) · 공급 34평형");
+    // ★판별자 — 옛 형식이 갖지 못했던 것. 「34」가 **공급 쪽에만** 붙어야 한다.
+    expect(dual.slice(dual.indexOf("공급"))).toContain("34");
+    expect(dual.slice(0, dual.indexOf("공급"))).not.toContain("34");
+    // ★전용을 평으로도 보여 준다 — 사용자가 «84㎡가 몇 평인가» 를 화면에서 알 수 있게.
+    expect(dual).toContain("25.4평");
     // ★음성 대조군 — 전용 84 와 공급 84 는 **다른 값**이다(뒤바뀌면 실패)
     expect(toPyeonghyeong(84)!.pyeong).not.toBe(Math.round(84 / PYEONG_SQM));
   });
