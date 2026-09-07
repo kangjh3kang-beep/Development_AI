@@ -1014,6 +1014,11 @@ async def parcel_purchase_strategy(
                     # ★액션 라벨을 문자열로 다시 적으면 계약 상수와 갈라진다(상수 이름이 바뀌어도
                     #   이 줄은 조용히 0 을 세고, 성장루프는 "판정보류 없음"으로 오독한다).
                     "undecided_rows": strategy["summary"]["by_action"].get(ACTION_UNDECIDED, 0),
+                    # ★★사유별로 가른 값도 함께 보낸다 — 정수 하나로는 성장루프가
+                    #   「사용자가 입력을 안 했다」와 「제품에 입력 필드가 없다」를 **구별 못 한다**.
+                    #   특히 `track_input_missing` 은 후자다(시행자유형·관리지역 UI 부재).
+                    #   ★`undecided_rows` 는 **그대로 둔다** — 제거가 아니라 분리다.
+                    "undecided_by_reason": strategy["summary"].get("undecided_by_reason") or {},
                     "secured_ratio_available": strategy["summary"]["secured_ratio_available"],
                     "geometry_unknown": strategy["summary"]["geometry_unknown_count"],
                     "scheme_provided": bool(req.scheme),
@@ -1021,7 +1026,14 @@ async def parcel_purchase_strategy(
                     #   별개다(미등록 사업방식은 문자열이 있어도 `governing_act=None` 이라
                     #   판정보류가 된다). 그 둘을 못 가르면 성장루프가 판정보류의 원인을
                     #   "사용자 미입력"으로 오귀속한다 → 해석 성공 여부를 따로 싣는다.
-                    "scheme_resolved": strategy.get("legal", {}).get("governing_act") is not None,
+                    # ★★2026-09-05 정정 — 이 계기는 **원리적으로 늘 False** 였다.
+                    #   `governing_act` 는 `build_strategy` 의 **최상위**에 있고
+                    #   `legal` 블록에는 없다(그 블록 키는 basis·consent_required·
+                    #   consent_threshold_pct·requires_track_input 넷뿐).
+                    #   ⇒ 위 주석이 «그 둘을 못 가르면 성장루프가 원인을 「사용자 미입력」으로
+                    #     오귀속한다» 고 적어 놓고, **그 구별이 죽어 있었다.**
+                    #   ★계기가 고장이면 그 축의 빈도를 영영 못 재고, 우선순위 판단이 근거를 잃는다.
+                    "scheme_resolved": strategy.get("governing_act") is not None,
                 },
             },
         )

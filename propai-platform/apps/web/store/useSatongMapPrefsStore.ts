@@ -50,7 +50,7 @@ export type SatongMapPrefsState = {
    */
   enabledLayersCustomized: boolean;
   /**
-   * 레이어를 켜고 끈다. ★`cadastre` 는 **기반 레이어라 끄지 않는다**(종전 계약 이식).
+   * 레이어를 켜고 끈다. ★2026-09-07 — `cadastre` 예외를 **제거**했다(사용자 신고 · 사유 부재).
    * ★변화가 없으면 **같은 배열 참조**를 돌려준다 — 그러지 않으면 소비처의 `useMemo` 가
    *   재계산돼 `mapLayerState` identity 가 바뀌고, 그걸 deps 로 쓰는 오버레이·POI effect 가
    *   **전량 파괴·재생성**된다(저장소가 «깜빡임의 근원» 이라 적은 그 축).
@@ -106,11 +106,33 @@ export function defaultSatongMapControls(): SatongMapLayerState["controlsByLayer
  * ★레거시 공유키가 **없다**(신규 스토어) — 그래서 이름 승계 고민이 없다.
  */
 /**
- * 기본으로 켜져 있는 레이어 — 지적도 하나(종전 `new Set(["cadastre"])` 그대로).
- * ★`cadastre` 는 기반 레이어라 끄지 못한다(`toggleLayerEnabled` 가 지킨다).
+ * 기본으로 켜져 있는 레이어 — **없음**.
+ *
+ * ★★2026-09-07 사용자 신고: *"지적 경계선이 항상 나타나는데 기본은 경계선이 없고
+ *   오른쪽 메뉴에서 선택 시 나타나야 하지 않나?"* — 맞다. 배경 위에 주황 경계선이
+ *   전면에 깔려 **지도 자체를 읽기 어렵다.**
+ *
+ * ★종전 주석은 *"`cadastre` 는 기반 레이어라 끄지 못한다"* 였다. 그 사유는 **절반만** 실재했다.
+ *
+ * ★★정정(같은 날 · 적대 리뷰 MAJOR-1) — 초판 주석은 여기에
+ *   *"필지 선택은 그 플래그를 **참조하지 않는다** ⇒ 끄는 것이 안전하다"* 라고 적었다.
+ *   **거짓이었다.** 「전수 추적」이라 썼지만 `showCadastreTile` 이라는 **변수명**으로 찾았고,
+ *   실제 축은 `hasSatongLayer(state,"cadastre")` **호출**이었다. 소비처는 **둘**이다:
+ *     · `SatongMultiMap.tsx` `showCadastreTile` — WMS 타일(전체 필지 그물망). ← 신고 대상
+ *     · `SatongMultiMap.tsx` 오버레이 effect     — **선택·등록 필지의 폴리곤**. ← 못 셌다
+ *   그대로 냈으면 기본이 꺼지면서 **등록한 필지가 지도에서 사라졌을 것**이다(안내문도 무음).
+ *
+ * ⇒ 처방은 「끄지 않는다」가 아니라 **축을 가르는 것**이다. 두 번째 소비처는
+ *   `satongParcelBaseVisible()` 로 옮겨 **레이어가 아니라 컨트롤**(`필지 경계`)에 매달았다.
+ *   그러면 신고①(그물망 OFF)은 지켜지고 선택 폴리곤은 산다.
+ *   ★잠금: `components/map/__tests__/SatongMultiMap.overlayPlan.test.ts`.
+ *
+ * ★**목적이 다른 화면은 이 기본값을 쓰지 않는다** — 주소검색 미리보기·토지조서·용도지역
+ *   신호·구획도는 각자 `enabledLayerIds` 를 명시한다(필지를 고르라고 띄운 지도에서
+ *   경계선을 지우면 무엇을 고르는지 안 보인다). **여기는 「자유 탐색 지도」의 기본값이다.**
  */
 export function defaultEnabledLayerIds(): SatongMapLayerState["enabledLayerIds"] {
-  return ["cadastre"];
+  return [];
 }
 
 export const SATONG_MAP_PREFS_STORE_KEY = "propai-satong-map-prefs";
@@ -123,7 +145,9 @@ export const useSatongMapPrefs = create<SatongMapPrefsState>()(
       toggleLayerEnabled: (id) =>
         set((s) => {
           const has = s.enabledLayerIds.includes(id);
-          if (has && id === "cadastre") return s; // ★기반 레이어 — 못 끈다(변화 없음 = 같은 참조)
+          // ★2026-09-07 — 종전엔 여기서 `cadastre` 를 **끄지 못하게 막았다**.
+          //   그 결과 레일의 「지적」 버튼이 눌러도 무동작인 **죽은 버튼**이었다.
+          //   제약의 사유(선택이 지적 타일에 의존한다)가 **실재하지 않아** 제거한다.
           // ★**실제로 바뀔 때만** 「골랐다」로 표시한다(위 docstring 참조).
           return {
             enabledLayerIds: has
@@ -154,16 +178,58 @@ export const useSatongMapPrefs = create<SatongMapPrefsState>()(
     {
       name: SATONG_MAP_PREFS_STORE_KEY,
       storage: createAccountScopedStorage<SatongMapPrefsState>(),
-      version: 1,
+      version: 2,
       /**
        * ★`version` 만 올리고 `migrate` 를 안 두면 **옛 저장분이 조용히 버려진다**
        *   (실측: v0 블롭을 심었더니 기본값이 이겼다 — 사용자가 껐던 것이 되돌아온다).
-       *   이 스토어의 스키마 변경은 **레이어 추가**뿐이고 그건 아래 `merge` 가 메운다.
-       *   그래서 마이그레이션은 **통과**시키고, 실제 복구는 `merge` 가 한다.
+       *   이 스토어의 스키마 변경은 대개 **레이어 추가**뿐이고 그건 아래 `merge` 가 메운다.
+       *   그래서 기본 방침은 **통과**시키고, 실제 복구는 `merge` 가 한다.
        * ★언제 이걸 바꿔야 하나: 컨트롤 **id 어휘**가 바뀔 때(`selected` ↔ `selected-parcel`
        *   통합이 그 경우다 — 계획서 §3 에 미정으로 적어 뒀다). 그때는 여기서 옛 id 를 옮긴다.
+       *
+       * ★★v1 → v2 (2026-09-07 · 사용자 신고 «지적 경계선이 항상 나타난다»)
+       *   **기본값만 바꾸면 이 신고는 안 고쳐진다.** 아래가 그 이유이고 전부 실측이다
+       *   (`git show origin/main:` 로 변경 전 원문 확인):
+       *
+       *   | 변경 전 사실 | 원문 |
+       *   |---|---|
+       *   | 기본값이 켜져 있었다 | `defaultEnabledLayerIds() → ["cadastre"]` |
+       *   | **끌 수 없었다** | `if (has && id === "cadastre") return s;` |
+       *   | **토글이 안 보였다** | `LAYERS_WITHOUT_POPOVER_TOGGLE = {"terrain","cadastre"}` |
+       *   | 다른 레이어를 켜면 **함께 저장됐다** | `[...s.enabledLayerIds, id]` + `enabledLayersCustomized: true` |
+       *
+       *   그리고 아래 `merge` 는 `enabledLayersCustomized === true` 이면 **저장분을 그대로
+       *   존중한다**(사용자가 끈 레이어를 되살리지 않으려고 일부러 그렇게 뒀다). 귀결:
+       *   ★**지형도를 한 번이라도 켠 적 있는 기존 사용자**는 `{customized:true,
+       *     ids:[…,"cadastre"]}` 를 영구 보관 중이고, 새 기본값 `[]` 는 **그들에게 닿지 않는다.**
+       *
+       *   ★핵심 전제: 저장분 안의 `"cadastre"` 는 **사용자의 선택이 아니다.** 끌 수도 없었고
+       *     토글도 안 보였으므로 «고를 수 있었던 적이 없다» — 그 상태에서 배열에 들어 있는
+       *     것은 오직 **옛 기본값이 얹혀 간 흔적**이다. 그래서 걷어내는 것이 «사용자 의사
+       *     무시»가 아니라 **의사가 아니었던 것의 제거**다.
+       *   ★그래서 **`"cadastre"` 만** 걷어낸다 — 나머지 원소는 진짜 선택이라 손대지 않는다
+       *     (그 대비를 아래 락이 **두 모집단**으로 고정한다).
+       *   ★`enabledLayersCustomized` 는 **끄지 않는다.** 그것을 false 로 돌리면 사용자가
+       *     **직접 켠 다른 레이어까지** 기본값으로 덮인다(위 `merge` 게이트가 그렇게 동작한다).
        */
-      migrate: (persisted) => persisted as SatongMapPrefsState,
+      // ★설명 가능한 등가 변이(적대 리뷰 MINOR-6): 아래 `version >= 2` 를 `>= 3` 으로 바꿔도
+      //   **어떤 테스트도 갈리지 않는다.** `migrate` 는 저장 버전이 현재(2)와 **다를 때만**
+      //   불리므로 이 함수 안에서 `version === 2` 는 **도달 불가**하고, 도달하는 값(0·1·3·…)에
+      //   대해 두 식의 답이 같기 때문이다. 판별력이 있는 것은 `>= 0`(v1 통과)과 `>= 99`(v3 정리)
+      //   두 방향이고 그 둘은 잠겨 있다. 점수용 단언을 더 만들지 않고 여기에 사유를 적는다.
+      // ★남은 부채(MINOR-5): 저장분의 `version` 이 **숫자가 아니면** zustand 가 migrate 를
+      //   아예 안 부르고 미마이그레이션 상태로 merge 에 간다(`middleware.js:376` 의 앞 절).
+      //   zustand 는 항상 숫자로 쓰므로 도달성은 낮다 — **미측정**이며 부채로 적어 둔다.
+      migrate: (persisted, version) => {
+        const p = (persisted ?? {}) as Partial<SatongMapPrefsState>;
+        if (version >= 2 || !Array.isArray(p.enabledLayerIds)) {
+          return persisted as SatongMapPrefsState;
+        }
+        return {
+          ...p,
+          enabledLayerIds: (p.enabledLayerIds as unknown[]).filter((x) => x !== "cadastre"),
+        } as SatongMapPrefsState;
+      },
       /**
        * ★zustand 기본 `merge` 는 **얕다**(top-level spread) — 저장분의 `controlsByLayer` 가
        *   기본값 맵을 **통째로 대체**한다. 그래서 저장 당시 없던 레이어는 **영구히 빠진다.**
