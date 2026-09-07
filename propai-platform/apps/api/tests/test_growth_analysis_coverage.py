@@ -233,7 +233,8 @@ async def _burn_analyze_window(monkeypatch, coverage_by_axis, insight_types):
     for fn in ("_analyze_error_cluster", "_analyze_recurring_verify_errors",
                "_analyze_selection_contamination"):
         monkeypatch.setattr(A, fn, _empty3)
-    for fn in ("_analyze_fallback_rate", "_analyze_quality_drop", "_analyze_latency_regression"):
+    for fn in ("_analyze_fallback_rate", "_analyze_quality_drop", "_analyze_latency_regression",
+               "_analyze_payment_funnel"):
         monkeypatch.setattr(A, fn, _empty)
 
     axis, rows = coverage_by_axis

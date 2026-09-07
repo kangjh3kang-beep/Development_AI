@@ -22,17 +22,30 @@ from apps.api.integrations.molit_client import (
 class TestTradeEndpoints:
     """_TRADE_ENDPOINTS 상수 테스트."""
 
-    def test_6개_유형(self):
-        assert len(_TRADE_ENDPOINTS) == 6
+    def test_필수_유형이_전부_있다(self):
+        """★개수(`== 6`)를 세던 락을 **계약**으로 바꿨다.
 
-    def test_apt_포함(self):
-        assert "apt" in _TRADE_ENDPOINTS
+        개수 락은 **정당한 추가에도 빨개진다** — 실제로 `apt_presale`(분양권 전매)을
+        더했을 때 이 검사가 유일하게 실패했고, **결함이 아니라 성장**이었다.
+        ★그리고 개수만 세면 «apt 를 지우고 다른 걸 넣어도» 통과한다(공허).
+        → **있어야 할 것을 이름으로** 단언하고, **줄어들면** 빨개지게 한다.
+        """
+        required = {"apt", "villa", "house", "officetel", "land", "commercial"}
+        missing = required - set(_TRADE_ENDPOINTS)
+        assert not missing, f"필수 거래 유형이 사라졌다: {sorted(missing)}"
+        # ★하한만 걸면 «무엇을 넣어도 통과» 이므로, 각 값이 실제 MOLIT 엔드포인트인지도 본다
+        for k, v in _TRADE_ENDPOINTS.items():
+            assert v.startswith("getRTMSDataSvc"), f"{k} 의 엔드포인트가 이상하다: {v}"
 
-    def test_officetel_포함(self):
-        assert "officetel" in _TRADE_ENDPOINTS
+    def test_분양권_전매가_배선돼_있다(self):
+        """★★**분양가의 정본 데이터원**(2026-09-06 추가).
 
-    def test_land_포함(self):
-        assert "land" in _TRADE_ENDPOINTS
+        기존 `apt`(매매) API 에는 **미준공 분양 단지가 원리적으로 안 들어온다** —
+        실측: 화도읍 469건 중 「빌리브센트하이」 **0건**, 분양권 API 로는 **17건**.
+        값도 크게 다르다(공급평당 1,044 ↔ 1,868 = **+79%**).
+        이 배선이 빠지면 분양가가 조용히 −44% 로 돌아간다.
+        """
+        assert _TRADE_ENDPOINTS.get("apt_presale") == "getRTMSDataSvcSilvTrade"
 
 
 class TestRentEndpoints:

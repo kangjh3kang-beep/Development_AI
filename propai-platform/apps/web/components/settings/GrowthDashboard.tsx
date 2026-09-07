@@ -47,6 +47,7 @@ type InsightType =
   | "latency_regression"
   | "latency_baseline"
   | "selection_contamination"
+  | "payment_funnel_drop"
   | "stale_reanalysis"
   | "heal_escalation"
   | "improvement_proposal"
@@ -87,6 +88,7 @@ const TYPE_LABELS: Record<string, string> = {
   latency_regression: "지연 회귀(p95)",
   latency_baseline: "지연 기준선(기록)",
   selection_contamination: "선택 오염 관측",
+  payment_funnel_drop: "결제 퍼널 이탈",
   stale_reanalysis: "재분석 제안",
   heal_escalation: "자동치유 무효(사람 점검)",
   improvement_proposal: "개선 제안",
@@ -420,6 +422,30 @@ export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
       if (key) rows.push({ label: "경로", value: key });
       if (p95 !== null) rows.push({ label: "p95 지연", value: `${Math.round(p95).toLocaleString("ko-KR")}ms` });
       rows.push({ label: "성격", value: "회귀 아님(기준선 기록)" });
+      break;
+    }
+    case "payment_funnel_drop": {
+      // 백엔드 키(analyzer._analyze_payment_funnel): view / order_created /
+      // pay_window_opened / pay_window_failed / order_to_pay_drop_pct.
+      const view = num(m.view);
+      const ordered = num(m.order_created);
+      const opened = num(m.pay_window_opened);
+      const failed = num(m.pay_window_failed);
+      const drop = num(m.order_to_pay_drop_pct);
+      if (view !== null) rows.push({ label: "충전화면 진입", value: `${view.toLocaleString("ko-KR")}회` });
+      if (ordered !== null) rows.push({ label: "주문 생성", value: `${ordered.toLocaleString("ko-KR")}건` });
+      if (opened !== null) rows.push({ label: "결제 시도", value: `${opened.toLocaleString("ko-KR")}건` });
+      if (drop !== null) rows.push({ label: "주문→결제 이탈", value: `${drop}%` });
+      const warnAt = num(m.drop_warn_pct);
+      // ★임계를 함께 보여 준다 — 왜 이 건이 떴는지 화면에서 설명된다.
+      if (warnAt !== null) rows.push({ label: "경고 임계", value: `${warnAt}%` });
+      if (failed !== null && failed > 0) {
+        // ★결제창이 **아예 못 뜬** 것 — 사용자 변심이 아니라 우리 결함일 가능성이 높다.
+        rows.push({ label: "★결제창 실패", value: `${failed.toLocaleString("ko-KR")}건` });
+      }
+      // ★관측 경계를 화면에도 적는다 — 「입금까지의 전환율」로 오독되지 않게.
+      const boundary = str(m.observation_boundary);
+      if (boundary) rows.push({ label: "관측 범위", value: boundary });
       break;
     }
     case "selection_contamination": {

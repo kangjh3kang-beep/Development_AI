@@ -636,7 +636,7 @@ async def submit_consent(
     body: ConsentSubmitRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     # ★반환 애노테이션을 쓰지 않는다 — 이 파일은 `from __future__ import annotations` 라
     #   `-> None` 이 **문자열** "None" 이 되고, FastAPI 가 그것을 response_model 로 읽어
@@ -655,11 +655,26 @@ async def submit_consent(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="이용약관과 개인정보처리방침에 동의해야 서비스를 이용할 수 있습니다.",
         )
-    if not getattr(user, "consent_pending", False):
+    # ★DB 사용자를 **직접 읽는다.** 이 파일의 get_current_user 는 jwt_handler 것이고
+    #   `CurrentUser`(user_id·tenant_id·role) 를 준다 — **DB User 가 아니다.**
+    #   2026-09-06 라이브 사고: `user: User = Depends(get_current_user)` 라고
+    #   **타입 애노테이션만** User 로 적고 `getattr(user, "consent_pending", False)` 를 썼더니,
+    #   그 필드가 없어 **항상 False** → 멱등 분기로 빠져 **아무것도 안 하고 204** 를 냈다.
+    #   그 관대한 기본값이 두 번째 결함(`user.id` — CurrentUser 엔 `user_id` 뿐)까지 가렸다.
+    #   ★형제 `/auth/me`(534행)는 처음부터 select(User).where(User.id == current_user.user_id) 였다.
+    row_user = (
+        await db.execute(select(User).where(User.id == current_user.user_id))
+    ).scalar_one_or_none()
+    if row_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="사용자를 찾을 수 없습니다."
+        )
+    # ★기본값 없는 접근 — 필드가 사라지면 **조용히 통과하지 말고 터져야** 한다.
+    if not row_user.consent_pending:
         return Response(status_code=status.HTTP_204_NO_CONTENT)  # 멱등 — 이미 처리됐다
 
     for row in build_consent_rows(
-        user_id=user.id,
+        user_id=row_user.id,
         agree_terms=body.agree_terms,
         agree_privacy=body.agree_privacy,
         agree_marketing=body.agree_marketing,
@@ -667,7 +682,7 @@ async def submit_consent(
         ip=_client_ip(request),
     ):
         db.add(row)
-    user.consent_pending = False
+    row_user.consent_pending = False
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

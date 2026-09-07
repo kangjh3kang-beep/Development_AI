@@ -31,6 +31,16 @@ _TRADE_ENDPOINTS: dict[str, str] = {
     "officetel": "getRTMSDataSvcOffiTrade",
     "land": "getRTMSDataSvcLandTrade",
     "commercial": "getRTMSDataSvcNrgTrade",
+    # ★★분양권·입주권 **전매**(2026-09-06 추가). **신축 분양가의 정본 데이터원**이다.
+    #   기존 `apt`(매매)에는 **미준공 분양 단지가 원리적으로 안 들어온다** — 실측:
+    #   화도읍 469건 중 「빌리브센트하이」 **0건**인데, 이 API 로는 **16건**이 나온다.
+    #   그리고 값이 크게 다르다(같은 화도읍 마석우리 기준·2026-09-06 12개월):
+    #       분양권 전용평당 2,502 / 공급평당 1,876
+    #       기존매매 신축(≤10년) 전용 1,846 / 공급 1,385   → **-26%**
+    #       기존매매 혼합(종전 산출)  전용 1,600 / 공급 1,200   → **-36%**
+    #   ★사용자 신고(«주변 신축 분양이 평당 2,000만원에 육박하는데 왜 1,200인가»)의
+    #     근본 원인이 **연식 보정이 아니라 데이터원**이었다.
+    "apt_presale": "getRTMSDataSvcSilvTrade",
 }
 
 _RENT_ENDPOINTS: dict[str, str] = {

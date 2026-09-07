@@ -39,6 +39,10 @@ _ANALYZER = frozenset({
     "latency_regression",       # p95 가 baseline 대비 회귀
     "latency_baseline",         # ★회귀가 **아닌** 기록(조치 대상 아님 — 기계 참조용)
     "selection_contamination",  # 다필지 선택이 "하나의 부지"가 아닌 관측 빈도
+    # ★결제 퍼널 — 성장루프에 **결제 축이 0개**였다(2026-09-06 라이브 실측:
+    #   인사이트 200건에서 billing·payment·결제·충전 문자열 **전부 0건**).
+    #   충전은 매출의 입구인데 어디서 새는지 아무도 몰랐다.
+    "payment_funnel_drop",
 })
 
 # ── 자가치유 계열이 산출 ────────────────────────────────────────────────────
@@ -81,6 +85,7 @@ NON_ACTIONABLE: frozenset[str] = frozenset({"latency_baseline"})
 #   프론트 `GrowthDashboard.tsx` 의 `TYPE_LABELS` 는 이제 이 표에서 **파생**돼야 하고,
 #   두 표가 갈리면 `tests/unit/test_insight_label_ssot.py` 가 잡는다.
 INSIGHT_LABELS: dict[str, str] = {
+    "payment_funnel_drop": "결제 퍼널 이탈",
     "error_cluster": "오류 군집",
     "fallback_rate": "폴백률",
     "quality_drop": "품질 저하",
@@ -137,6 +142,9 @@ IDENTITY_FIELDS: dict[str, tuple[str, ...] | None] = {
     "latency_regression": ("key",),                        # 2,298행 → 189
     "latency_baseline": ("key",),                          # 577행 → 84
     "selection_contamination": ("verdict",),               # 2행 → 1
+    # ★윈도우당 한 행이라 **최신이 옛것을 승계**하는 것이 맞다. 판별자는 퍼널 이름 —
+    #   다른 퍼널이 생기면 서로 다른 대상이 되어 서로를 닫지 않는다.
+    "payment_funnel_drop": ("funnel",),
     # ★아래는 **정리하지 않는다** — 정체가 없거나, 있어도 승계 개념이 맞지 않는다.
     "stale_reanalysis": None,               # 대상마다 1회성 제안
     "heal_escalation": None,                # critical — 사람이 닫아야 한다
