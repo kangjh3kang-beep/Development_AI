@@ -48,7 +48,7 @@ import { usePwaRuntime } from "@/components/pwa/PwaRuntimeProvider";
  * ★변이 생존 설명(2026-09-07 · scripts/mutate_changed.py) — 점수를 부풀리지 않기 위해 적는다.
  *   이 상수의 **값을 바꾸는 변이는 생존한다.** 구멍이 아니다 — 값 자체는 임의이고, 계약은
  *   *"여는 이름과 판별하는 이름이 **같다**"* 이기 때문이다. 양쪽이 이 상수를 쓰므로 값이 함께
- *   움직이면 동작이 같다. **어긋나는 쪽**은 따로 잠가 뒀다(손 변이 ⑦: window.open 의 이름을
+ *   움직이면 동작이 같다. **어긋나는 쪽**은 따로 잠가 뒀다(증거 파일의 `mut7`: window.open 의 이름을
  *   리터럴로 바꾸면 CAUGHT). 값을 단언하면 그건 자기지시적 기대값이라 아무것도 못 잡는다.
  */
 export const FIELD_APP_WINDOW_NAME = "propai-field-app";
@@ -58,9 +58,16 @@ export type FieldAppShellState = {
   standalone: boolean;
   /** `window.open(..., FIELD_APP_WINDOW_NAME, ...)` 로 연 별도 창 안. */
   inSeparateWindow: boolean;
-  /** ★둘 중 하나라도 참이면 **이미 앱 안**이다 — 앱 어포던스를 노출하지 않는다. */
-  inAppShell: boolean;
 };
+
+/*
+ * ★한때 여기에 `inAppShell: standalone || inSeparateWindow` 가 있었고, 그것 하나로
+ *   어포던스와 **설치 유도를 함께** 껐다 — 팝업 안에서 설치가 원천 봉쇄되고 iOS 의 유일한
+ *   설치 경로가 닫히는 BLOCKER 였다(적대 리뷰). 되돌린 뒤 **필드를 지웠다**:
+ *   소비처 0 인 채 남겨 두면 다음 사람이 집어 쓰면서 같은 결함이 조용히 재발한다
+ *   (§27-d — 갈아 끼우는 변경에 옛 심볼이 남으면 그 자체가 미완 배선의 신호다).
+ *   **축은 각자 고른다**: 설치 억제 = `standalone` · 창 열기 억제 = `inSeparateWindow`.
+ */
 
 /** `window.name` 은 세션 중에 바뀌지 않는다 — 구독할 것이 없다(참조 안정성 위해 모듈 상수). */
 const noSubscribe = () => () => {};
@@ -77,5 +84,5 @@ export function useFieldAppShell(): FieldAppShellState {
   //     하한은 0이라 경고 하나만 늘어도 CI 가 빨개진다 — 경고를 남기지 않는 쪽을 고른다.
   const inSeparateWindow = useSyncExternalStore(noSubscribe, readSeparateWindow, serverSnapshot);
 
-  return { standalone, inSeparateWindow, inAppShell: standalone || inSeparateWindow };
+  return { standalone, inSeparateWindow };
 }

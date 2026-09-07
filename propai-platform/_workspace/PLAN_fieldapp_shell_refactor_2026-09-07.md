@@ -29,7 +29,7 @@
 | # | 전제 | 확인 방법 | **실측 결과** |
 |---|---|---|---|
 | P1 | 현장앱 탭은 21개다 | `roleConfig.ts` 의 `SALES_TABS` 항목 수 파생(`grep -cE '^\s*\{ key: "'`) | **21** (그중 `alwaysOn: true` **7**) |
-| P2 | IA 그룹 SSOT 가 이미 있다 | `roleConfig.ts:184-192` 원문 | **있다** — `BOTTOM_NAV_KEYS = ["home","customers","units","payments"]`(4) + `MENU_GROUPS` **4그룹**(Sales 4 · Money 4 · Operations 9 · My 3) |
+| P2 | IA 그룹 SSOT 가 이미 있다 | `roleConfig.ts:184-192` 원문 **(★merge-base `ff8b2c08c` 기준 — 이 PR 이 `MENU_GROUP_MAX` 를 끼워 넣어 HEAD 에서는 밀렸다)** | **있다** — `BOTTOM_NAV_KEYS = ["home","customers","units","payments"]`(4) + `MENU_GROUPS` **4그룹**(Sales 4 · Money 4 · Operations 9 · My 3) |
 | P3 | 그 SSOT 를 데스크톱은 소비하지 않는다 | `FieldNav.tsx:10` 원문 | *「데스크톱(sm+)은 **기존 상단 탭바 유지** — 이 컴포넌트는 **모바일 전용(sm:hidden)**」* |
 | P4 | 데스크톱은 21탭을 가로로 나열한다 | `SiteWorkspaceClient.tsx:302-320` 원문 | `hidden … sm:block` 스티키 바 + `tabs.map(...)` **전량 렌더** · 헤더 문구 `{tabs.length}개 메뉴 · 내 권한 기준` |
 | P5 | 「앱으로 열기」에 조건이 없다 | `SiteWorkspaceClient.tsx:255-274` 원문 | **무조건 렌더** — `standalone` 도 `window.opener`/`window.name` 도 검사하지 않음 |
@@ -114,7 +114,7 @@
 | **셸(`SiteWorkspaceClient`) 렌더 커버리지 = 0** | **미착수** — 패널 40여 개 임포트라 비용이 크다. `FieldShell.wiring.test.ts` 는 **소스 문자열 검사**이고, 계획서 §5 가 스스로 선언한 *"렌더 결과를 태운다(소스 grep 금지)"* 를 **이 PR 이 어겼다.** 그 사실을 그 파일 머리에 적었다 |
 | **셸의 변이 커버리지 = 0** | `SiteWorkspaceClient.tsx` 변경분이 import·주석·JSX 2줄이라 기계 변이가 **0건 생성**됐다 |
 | `InstallGuide` 동작 변경 | 그 파일 전용 테스트가 **0건**이다. 이 PR 이 가드를 `standalone` → `inAppShell` 로 넓혔다가 되돌렸는데, 그 왕복을 태우는 락이 없다 |
-| e2e 레인 자체 | **CI 가 playwright 를 돌지 않는다**(`.github/workflows/ci.yml` 에 스텝 0건). `field-app-window-name.spec.ts` 는 **강제되는 게이트가 아니라 재현 가능한 측정**이다 |
+| e2e 레인이 **PR 을 막지 않는다** | ★한때 여기에 *"CI 가 playwright 를 돌지 않는다"* 고 적었다 — **거짓**이었다(`ci.yml` 한 파일만 보고 「CI」로 일반화 · §G-26). `.github/workflows/e2e-nightly.yml` 이 **경로 필터 없이** `playwright test` 를 cron `0 18 * * *`(03:00 KST)+수동으로 돌리고 `testDir: "./e2e"` 라 **새 스펙도 수집된다.** 정확히는 **PR 게이트가 아니지만 깨지면 야간 레인이 빨개진다** |
 | 레일 전환의 실제 인지부하 감소 | **사건 미발생** — 이 제품 사용자로 측정한 값이 없다. 성장루프로 사후 관측할 자리 |
 | 국내 경쟁 제품 IA | 공개 자료 **0건**(제품은 실재) |
 | 벤치마크 5종의 URL·접근일 | 조사 산출물에 URL 이 있으나 **이 계획서에는 옮기지 않았다** — 재검증하려면 조사 보고를 봐야 한다 |

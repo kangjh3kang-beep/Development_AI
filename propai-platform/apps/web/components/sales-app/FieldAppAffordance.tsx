@@ -26,7 +26,9 @@ import { usePwaRuntime } from "@/components/pwa/PwaRuntimeProvider";
 import { FIELD_APP_WINDOW_NAME, useFieldAppShell } from "@/lib/field-app-shell";
 
 /*
- * ★변이 생존 설명(2026-09-07 · scripts/mutate_changed.py 45변이 · 생존 28) — 구멍이 아닌 이유.
+ * ★변이 생존 설명(scripts/mutate_changed.py) — 구멍이 아닌 이유.
+ *   ★수치를 값으로 박지 않는다(§28 휘발성) — 커밋마다 바뀐다. 지금 재려면:
+ *     python3 scripts/mutate_changed.py --tests propai-platform/apps/web/components/sales-app/*.test.tsx
  *   ① `className` 문자열 변경 다수 — **표기**이지 계약이 아니다. 문구·스타일까지 단언하면
  *      다듬을 때마다 깨지는 취약한 락이 된다(이 저장소가 명시적으로 경계하는 형태).
  *   ② `typeof window === "undefined"` 의 문자열 변경 — **SSR 방어**라 jsdom 에서는 도달 불가.

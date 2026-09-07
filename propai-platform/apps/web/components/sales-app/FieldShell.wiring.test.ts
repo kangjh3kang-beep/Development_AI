@@ -27,24 +27,36 @@ import { __stripCommentsForScan } from "@/lib/source-invariant";
 const SHELL = "components/sales-app/SiteWorkspaceClient.tsx";
 const code = __stripCommentsForScan(readFileSync(resolve(process.cwd(), SHELL), "utf-8"), SHELL);
 
-/** 셸이 렌더하는 내비 표면들의 **JSX 요소 원문**(여는 태그부터 닫힘까지). */
-const navElements = code.match(/<Field(?:BottomNav|DesktopNav|MenuSheet)\b[\s\S]*?\/>/g) ?? [];
+/**
+ * 셸이 렌더하는 **자기닫힘 컴포넌트 요소** 전수(여는 태그부터 `/>` 까지).
+ *
+ * ★이름을 손으로 열거하지 않는다. 초판은 `<Field(BottomNav|DesktopNav|MenuSheet)` 라는
+ *   **3-지 택일**을 써 놓고 주석에 *"표면을 새로 추가해도 자동으로 감시망에 들어온다"* 고
+ *   적었다 — **거짓이었다.** 적대 리뷰가 SSOT 를 안 먹는 **네 번째 표면**을 셸에 넣어
+ *   `::VERDICT=SURVIVED` 로 실증했다(이 PR 이 고치던 결함과 **같은 형태**가 그대로 통과).
+ */
+const selfClosing = code.match(/<[A-Z][A-Za-z0-9_]*\b[\s\S]*?\/>/g) ?? [];
+/** 다른 컴포넌트를 품은 매치는 버린다(비-자기닫힘 요소를 가로질러 잡힌 것). */
+const elements = selfClosing.filter((el) => !/<[A-Z][A-Za-z0-9_]*\b/.test(el.slice(1)));
+/** ★`tabs=` 를 받는 **모든** 요소 — 새 표면이 생기면 **여기 자동으로 들어온다.** */
+const tabsConsumers = elements.filter((el) => /\btabs=/.test(el));
 
-describe("현장앱 셸 배선(W1) — 각 내비 표면이 **무엇을 받는지** 본다", () => {
-  it("★대조군 먼저: 파일을 실제로 읽었고 내비 요소가 실재한다", () => {
+describe("현장앱 셸 배선(W1) — `tabs` 를 받는 **모든** 요소가 같은 SSOT 를 먹는다", () => {
+  it("★대조군 먼저: 파일을 실제로 읽었고 대상 요소가 실재한다", () => {
     expect(code.length).toBeGreaterThan(1000);
-    // 파생으로 센다 — 표면을 새로 추가해도 자동으로 감시망에 들어온다.
-    expect(navElements.length).toBeGreaterThanOrEqual(3);
+    expect(tabsConsumers.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("모든 내비 표면이 같은 SSOT 와 같은 활성 탭·이동 핸들러를 받는다", () => {
-    // ★개수 대조가 아니라 **요소별 속성**을 본다. 초판은 파일 전체의 `tabs={tabs}` 개수를
-    //   태그 개수와 비교해서, 내비가 아닌 컴포넌트가 `tabs={tabs}` 를 쓰면 **정상 코드를
-    //   빨갛게** 만들고(위양성), 한쪽 prop 을 빼고 다른 곳에 하나 더 쓰면 **통과**했다.
-    for (const el of navElements) {
+  it("모든 소비자가 tabs={tabs} · activeTab={tab} 를 받고, 이동은 setTab 을 거친다", () => {
+    // ★개수 대조가 아니라 **요소별 속성**을 본다(초판은 파일 전체의 `tabs={tabs}` 개수를
+    //   태그 개수와 비교해 위양성·위음성을 함께 만들었다).
+    for (const el of tabsConsumers) {
       expect(el).toMatch(/tabs=\{tabs\}/);
       expect(el).toMatch(/activeTab=\{tab\}/);
-      // 이동은 반드시 셸의 상태 전이(`setTab`)로 간다 — no-op 로 갈아 끼우면 화면이 죽는다.
+      // ★이 단언의 한계를 정직하게 적는다: `setTab` 이라는 **이름이 그 안에 있는지**만 본다.
+      //   `onNavigate={() => setTab("home")}` 같은 **틀린 인자**는 통과한다(적대 리뷰 실증).
+      //   그 축은 셸을 렌더해야 잡히고, 이 PR 은 **셸 렌더 커버리지가 0**임을 계획서 §3 에
+      //   공시했다. 여기서 잠그는 것은 「핸들러가 통째로 no-op 이 되는 것」까지다.
       expect(el).toMatch(/onNavigate=\{[^}]*setTab/);
     }
   });

@@ -15,11 +15,15 @@ import { FIELD_APP_WINDOW_NAME } from "../lib/field-app-shell";
  * ★jsdom 단위 테스트로는 이 축을 **원리적으로 잴 수 없다** — 그 테스트는 `window.name` 을
  *   **직접 대입**하므로 «브라우저가 유지해 주는가» 를 묻지 않는다. 그래서 실제 크로미움을 태운다.
  *
- * ## ★이 레인은 CI 가 돌지 않는다 (2026-09-07 실측)
+ * ## ★이 레인은 **PR 게이트가 아니다** — nightly 로 돈다 (2026-09-07 정정)
  *
- * `.github/workflows/ci.yml` 에 playwright 실행 스텝이 **없다**. 그러므로 이 파일은
- * **강제되는 게이트가 아니라 재현 가능한 측정**이다. 「잠갔다」고 읽지 마라 —
- * 값을 다시 확인하려면 사람이 돌려야 한다:
+ * ★한때 여기에 *"CI 가 playwright 를 돌지 않는다"* 고 적었다 — **거짓이었다.**
+ *   `ci.yml` **한 파일만** 조회하고 결론을 「CI」로 일반화했다(§G-26: 「라우트 0건」은
+ *   「진입점 0건」이 아니다). 실제로는 `.github/workflows/e2e-nightly.yml` 이 **경로 필터 없이**
+ *   `playwright test` 를 돌린다 — cron `0 18 * * *`(03:00 KST) + 수동 트리거이고,
+ *   `playwright.config.ts` 의 `testDir: "./e2e"` 라 **이 파일도 수집된다.**
+ *
+ * ⇒ 정확히는 **PR 을 막는 게이트는 아니지만 깨지면 야간 레인이 빨개진다.** 지금 확인하려면:
  *
  *     cd propai-platform/apps/web && ./node_modules/.bin/playwright test e2e/field-app-window-name.spec.ts
  *
