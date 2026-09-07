@@ -73,6 +73,27 @@ ACTION_SELL_CLAIM = "매도청구"
 ACTION_EXPROPRIATION = "수용"
 ACTION_EXCLUSION_REVIEW = "제척검토"
 ACTION_UNDECIDED = "판정보류"
+
+#: ★**판정보류의 사유 코드** — 「왜 보류인가」를 성장루프가 배울 수 있게 가른다.
+#:
+#: 종전엔 `undecided_rows` **정수 하나**였다. 그러면 다섯 원인이 뭉개져
+#: ***"사용자가 입력을 안 했다"*** 와 ***"우리가 입력 필드를 안 만들었다"*** 를 **구별할 수 없다**.
+#: 특히 `TRACK_INPUT_MISSING` 은 **제품에 그 입력 UI 가 없다**는 뜻이라 «데이터 부족»이 아니다.
+#:
+#: ★문자열 리터럴을 흩뿌리지 않는다 — 여기 한 곳에서 만든다(계약 결속).
+#: ★`_row_action` 이 이미 `(action, reason)` 을 돌려주므로 **사유는 이미 계산돼 있었다** —
+#:   붙이는 것은 **안정 코드**뿐이고 문구는 건드리지 않는다.
+UNDECIDED_NO_ACT = "undecided_no_act"                 # 근거법령 미확정(정책표 미등재 등)
+UNDECIDED_TRACK_INPUT = "track_input_missing"         # 트랙(시행자유형·관리지역) 입력 UI 부재
+UNDECIDED_HOLDING_PERIOD = "holding_period"           # 주택법 보유기간 판정 보류(기준일·취득일 부재)
+UNDECIDED_TOPOLOGY = "topology_unknown"               # 제척 위상판정 불가(인접 그래프 실패)
+UNDECIDED_NO_ANALYSIS = "no_analysis"                 # 권리분석 카드 자체가 없음
+
+#: 닫힌 집합 — 소비처가 이 밖의 코드를 만나면 그것이 결함이다.
+UNDECIDED_REASON_CODES = (
+    UNDECIDED_NO_ACT, UNDECIDED_TRACK_INPUT, UNDECIDED_HOLDING_PERIOD,
+    UNDECIDED_TOPOLOGY, UNDECIDED_NO_ANALYSIS,
+)
 ACTIONS: tuple[str, ...] = (
     ACTION_NEGOTIATE,
     ACTION_SELL_CLAIM,
@@ -666,6 +687,37 @@ def min_count_combination(
 
 # ── 조립 표면 — (필지 × 소유자) 행 ─────────────────────────────────────────
 
+def _undecided_reason_code(
+    *,
+    owner_judgment: str | None,
+    governing_act: str | None,
+    requires_track_input: bool,
+    in_exclusion_set: bool,
+    exclusion_ok: bool | None,
+) -> str | None:
+    """`_row_action` 이 `판정보류` 를 낼 때 **왜 그런지**를 안정 코드로 돌려준다.
+
+    ★**`_row_action` 의 시그니처를 바꾸지 않는다.** 반환을 3튜플로 넓히면 위치인자 호출부가
+      조용히 밀린다(이 저장소 실측 사고 — 시그니처 앞 인자 추가로 dict→request 가 밀렸다).
+      그래서 **형제 함수**로 두고, 아래 락이 **두 함수가 같은 순서를 공유하는지** 태운다.
+
+    ★순서는 `_row_action` 과 **같아야 한다** — 앞 조건이 먼저 반환하므로 순서가 곧 의미다.
+      다르면 같은 행이 다른 사유를 받는다(락 `test_undecided_reason_parity` 가 잡는다).
+
+    ★`판정보류` 가 아닌 행에는 `None` 을 준다 — 「모름」을 유효 코드로 표현하지 않는다.
+    """
+    if governing_act is None:
+        return UNDECIDED_NO_ACT
+    if requires_track_input:
+        return UNDECIDED_TRACK_INPUT
+    housing_act = governing_act == HOLDING_PERIOD_ACT
+    if housing_act and owner_judgment not in ("가능(원칙)", "불가(장기보유 추정)"):
+        return UNDECIDED_HOLDING_PERIOD
+    if in_exclusion_set and exclusion_ok is None:
+        return UNDECIDED_TOPOLOGY
+    return None
+
+
 def _row_action(
     *,
     owner_judgment: str | None,
@@ -823,6 +875,8 @@ def build_strategy(
                 "card_status": card.get("status"),
                 "action": ACTION_UNDECIDED,
                 "action_reason": card.get("message") or "권리분석 결과가 없어 판정할 수 없습니다.",
+                # ★다섯 번째 사유 — 카드 자체가 없어 판정 로직에 들어가지도 못했다.
+                "undecided_reason_code": UNDECIDED_NO_ANALYSIS,
                 "priority_label": PRIORITY_UNDECIDED_LABEL,
                 "sell_claim_judgment": None,
                 # 권리분석 카드 자체가 없는 갈래 — 값도 사유도 상류에 없다.
@@ -847,6 +901,19 @@ def build_strategy(
                 meets_threshold=meets,
                 in_exclusion_set=in_excl,
                 exclusion_ok=exclusion_ok,
+            )
+            # ★사유를 **코드로** 함께 낸다 — 문구는 그대로 두고 축만 더한다.
+            #   판정보류가 아닌 행은 None(「모름」을 유효 코드로 표현하지 않는다).
+            undecided_code = (
+                _undecided_reason_code(
+                    owner_judgment=judgment,
+                    governing_act=governing_act,
+                    requires_track_input=requires_track_input,
+                    in_exclusion_set=in_excl,
+                    exclusion_ok=exclusion_ok,
+                )
+                if action == ACTION_UNDECIDED
+                else None
             )
             # ★A 라벨(§2-A)은 **주택법 계열 + 확보율 산정 가능**일 때만 붙는다.
             #   확보율을 모르면 "지금 1순위인가"를 물을 수 없다 → 라벨도 판정보류다.
@@ -880,6 +947,7 @@ def build_strategy(
                 "instrument": instrument,
                 "action": action,
                 "action_reason": reason,
+                "undecided_reason_code": undecided_code,
                 "priority_label": priority,
                 "in_exclusion_set": in_excl,
                 "price_basis": PRICE_BASIS,   # ★시가 숫자를 내지 않는다
@@ -917,6 +985,14 @@ def build_strategy(
             "priority_undecided_count": sum(
                 1 for r in rows if r.get("priority_label") == PRIORITY_UNDECIDED_LABEL
             ),
+            # ★★판정보류를 **사유별로** 가른다. 종전엔 `undecided_rows` 정수 하나여서
+            #   「사용자가 입력을 안 했다」와 「우리가 입력 필드를 안 만들었다」가 뭉개졌다.
+            #   ★`undecided_rows`(라우터 집계)는 **그대로 둔다** — 제거가 아니라 **분리**다.
+            "undecided_by_reason": {
+                c: sum(1 for r in rows if r.get("undecided_reason_code") == c)
+                for c in UNDECIDED_REASON_CODES
+                if any(r.get("undecided_reason_code") == c for r in rows)
+            },
             "secured_ratio_available": ratio_known,
             "geometry_unknown_count": len((graph or {}).get("geometry_unknown_pnus") or []),
         },
