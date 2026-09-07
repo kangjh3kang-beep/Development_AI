@@ -36,7 +36,7 @@ function renderLink() {
 
 describe("FieldAppLaunchLink — 두 모집단이 반대 결과를 낸다", () => {
   it("① 창이 열리면 기본 이동을 **막는다**(플랫폼 창 보존)", () => {
-    window.open = vi.fn(() => ({ focus: vi.fn() }) as unknown as Window) as typeof window.open;
+    window.open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window) as typeof window.open;
     const { el, seen } = renderLink();
 
     // fireEvent.click 의 반환값 = "기본 동작이 살아 있는가". false 면 preventDefault 된 것.
@@ -57,13 +57,13 @@ describe("FieldAppLaunchLink — 두 모집단이 반대 결과를 낸다", () =
   });
 
   it("★href 를 유지한다 — 가운데클릭·「새 탭에서 열기」·링크 복사가 살아 있어야 한다", () => {
-    window.open = vi.fn(() => ({ focus: vi.fn() }) as unknown as Window) as typeof window.open;
+    window.open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window) as typeof window.open;
     const { el } = renderLink();
     expect(el.getAttribute("href")).toBe("/ko/sales/sites");
   });
 
   it("★수식키 클릭은 가로채지 않는다 — 사용자가 스스로 새 컨텍스트를 요구한 것이다", () => {
-    const open = vi.fn(() => ({ focus: vi.fn() }) as unknown as Window);
+    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);
     window.open = open as unknown as typeof window.open;
     const { el, seen } = renderLink();
 
@@ -75,7 +75,7 @@ describe("FieldAppLaunchLink — 두 모집단이 반대 결과를 낸다", () =
   });
 
   it("★열 때 쓰는 창 이름이 현장앱 정본 상수다(정체성 판별자와 결속)", () => {
-    const open = vi.fn(() => ({ focus: vi.fn() }) as unknown as Window);
+    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);
     window.open = open as unknown as typeof window.open;
     const { el } = renderLink();
 

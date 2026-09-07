@@ -69,7 +69,7 @@ describe("사이드바 — 앱형 라우트는 창을 빼앗지 않는다(3층 �
   });
 
   it("③ 앱형 항목을 누르면 **현장앱 창을 열고 기본 이동을 막는다**", () => {
-    const open = vi.fn(() => ({ focus: vi.fn() }) as unknown as Window);
+    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);
     window.open = open as unknown as typeof window.open;
 
     // ★그룹이 접혀 있으면 링크가 DOM 에 없다 — "검사는 있는데 대상이 없어" 통과하는
@@ -86,7 +86,7 @@ describe("사이드바 — 앱형 라우트는 창을 빼앗지 않는다(3층 �
   });
 
   it("★④ 두 모집단 — 앱형이 **아닌** 항목은 창을 열지 않는다", () => {
-    const open = vi.fn(() => ({ focus: vi.fn() }) as unknown as Window);
+    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);
     window.open = open as unknown as typeof window.open;
 
     pathname = "/ko/sales/sites";

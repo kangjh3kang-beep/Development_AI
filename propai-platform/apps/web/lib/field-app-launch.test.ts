@@ -29,7 +29,7 @@ afterEach(() => {
 describe("launchFieldApp — 3분기가 서로 갈린다", () => {
   it("① 전용 창이 열리면 'window' 를 내고, **현장앱 이름**으로 연다", () => {
     const focus = vi.fn();
-    const open = vi.fn(() => ({ focus }) as unknown as Window);
+    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus }) as unknown as Window);
     window.open = open as unknown as typeof window.open;
 
     expect(launchFieldApp("/ko/sales/sites")).toBe("window");
@@ -43,7 +43,7 @@ describe("launchFieldApp — 3분기가 서로 갈린다", () => {
 
   it("② 팝업이 차단되면 새 탭으로 폴백하고 'tab' 을 낸다", () => {
     const open = vi
-      .fn()
+      .fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>()
       .mockReturnValueOnce(null) // 팝업 차단
       .mockReturnValueOnce({} as Window); // 새 탭은 허용
     window.open = open as unknown as typeof window.open;
@@ -64,7 +64,7 @@ describe("launchFieldApp — 3분기가 서로 갈린다", () => {
   });
 
   it("★url 을 생략하면 현재 주소를 연다(어포던스의 「별도 창으로 열기」 경로)", () => {
-    const open = vi.fn(() => ({ focus: vi.fn() }) as unknown as Window);
+    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);
     window.open = open as unknown as typeof window.open;
 
     launchFieldApp();
@@ -75,7 +75,7 @@ describe("launchFieldApp — 3분기가 서로 갈린다", () => {
   it("★팝업 features 는 지키지 못할 약속(location=no)을 담지 않는다", () => {
     // 현대 브라우저가 무시해 주소창이 남는다 — 2026-09-07 라이브 실측으로 확정된 사실이다.
     // 이 단언이 없으면 «주소창을 숨긴다» 는 거짓 약속이 다시 기어든다.
-    const open = vi.fn(() => ({ focus: vi.fn() }) as unknown as Window);
+    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);
     window.open = open as unknown as typeof window.open;
 
     launchFieldApp("/ko/sales/sites");
