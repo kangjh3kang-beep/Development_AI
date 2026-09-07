@@ -434,17 +434,25 @@ describe("★★v1 → v2 마이그레이션 — **기본값만 바꿔서는 기
     expect(useSatongMapPrefs.getState().enabledLayersCustomized).toBe(true);
   });
 
-  it("★v2 저장분은 **건드리지 않는다** — 새 UI 에서 직접 켠 지적은 살아남는다", async () => {
+  it("★반대 경계 — **v2 이상 저장분은 정리하지 않는다**(직접 켠 지적을 끄지 않는다)", async () => {
+    // ★★초판은 이 픽스처를 `version: 2` 로 썼는데 **공허했다** — 변이(`version >= 99`)가
+    //   **SURVIVED** 로 그것을 드러냈다. 원인은 zustand 원문에 있다
+    //   (`zustand/esm/middleware.js:376` · v5 판 `:498` 동일):
+    //     `if (… .version !== options.version) { if (options.migrate) …`
+    //   → **저장 버전이 현재 버전과 같으면 `migrate` 를 아예 부르지 않는다.** 그래서
+    //     v2 픽스처는 이 가드를 **한 번도 태우지 않았고**, 어떤 구현이든 초록이었다.
+    // ★그러므로 이 가드가 실제로 도달하는 「2 이상」은 **v3 이상**이다 — 새 릴리스를 쓰다
+    //   구판으로 되돌아온 사용자의 저장분. 그 경우를 태운다.
     window.localStorage.setItem(
       KEY,
       JSON.stringify({
         state: { enabledLayerIds: ["cadastre"], enabledLayersCustomized: true },
-        version: 2,
+        version: 3,
       }),
     );
     await useSatongMapPrefs.persist.rehydrate();
     // ★이 PR 이 토글을 노출했으므로 v2 이후의 `"cadastre"` 는 **진짜 선택**이다.
-    //   경계를 한쪽만 걸면(전부 제거) 사용자가 켠 것을 매 새로고침마다 끄게 된다.
+    //   경계를 한쪽만 걸면(전부 제거) 사용자가 켠 것을 매 새로고침마다 끄게 된다(§D-19).
     expect(useSatongMapPrefs.getState().enabledLayerIds).toContain("cadastre");
   });
 });
