@@ -1115,7 +1115,38 @@ const PRESALE_STATUS_COLORS: Record<string, string> = {
   미정: "#64748b",
 };
 
-function marketPopupHtml(group: SatongMarketGroup, kind: "trade" | "rent"): string {
+/**
+ * 실거래 마커 팝업 HTML.
+ *
+ * ★★2026-09-08 사용자 신고③: *"여기는 오피스 건축물인데 토지로 필지로 표시되고 인식되는건가?
+ *   건축물에 대한 실거래가 아닌가?"* — **화면이 무엇의 거래인지 말하지 않고 있었다.**
+ *
+ *   실측: 이 함수의 인자는 `(group, kind)` 둘뿐이었고 `kind` 는 **매매/전월세** 축이다.
+ *   **유형**(아파트·연립다세대·단독다가구·오피스텔·토지·상업업무용)은 상위 카테고리에만 있고
+ *   (`nearby_map_service.py:1644` 가 `"type": type_key` 로 보낸다), 렌더 루프가 `const { type … }`
+ *   으로 **이미 꺼내 놓고도** 팝업에 넘기지 않았다. 마커 **라벨**에도 없었다.
+ *   ⇒ 유형을 아는 유일한 통로가 **마커 색**이었다 — 범례를 대조해야 아는 **대리 변수**.
+ *
+ * ★왜 「토지」로 읽혔나: 한 팝업에 **토지 형태와 건물 형태가 섞여** 있다.
+ *   `지번`·`용도지역`·`지목`(토지 속성) ↔ `준공년도`·`층`(건물 속성). 그리고 `평균 N평` 은
+ *   건물이면 전용면적, 토지면 거래면적이라 **같은 라벨이 다른 것을 뜻한다.**
+ *   ★그 혼재는 **오염이 아니다** — 상업업무용(`getRTMSDataSvcNrgTrade`)은 실제로 `용도지역`을
+ *   준다. 결함은 필드가 아니라 **「무엇의 거래인지 안 적은 것」**이다. 그래서 필드를 걷어내지
+ *   않고 **유형을 표면까지 싣는다**(신규 API 호출 0 — 값은 이미 호출부에 있다).
+ *
+ * ★★**export 하는 이유**: 이 저장소엔 `SatongMultiMap` 용 Leaflet 목이 없어 effect 본체가
+ *   테스트에서 **한 번도 돌지 않는다**(2026-09-07 실측: 그 안의 `false` 변이가 64파일 468건을
+ *   전부 통과했다). 그래서 기존 팝업 락은 **소스 문자열 검사**이고 주석·문자열에 뚫린다.
+ *   순수 함수를 밖으로 내면 **HTML 산출물을 직접 태울 수 있다**(형제 선례: `buildOverlayNotes`).
+ *
+ * @param marketType `MARKET_TRADE_TYPES` 의 key. **모르면 아무것도 찍지 않는다**(무날조 —
+ *   «유형 undefined» 같은 문자열을 만들지 않는다).
+ */
+export function marketPopupHtml(
+  group: SatongMarketGroup,
+  kind: "trade" | "rent",
+  marketType?: string,
+): string {
   const avgArea = group.avg_area_m2 ?? 0;
   const pyeong = pyeongFromM2(avgArea);
   const priceLine =
@@ -1161,9 +1192,19 @@ function marketPopupHtml(group: SatongMarketGroup, kind: "trade" | "rent"): stri
       return `<div style="font-size:11px;color:#475569;">· ${escapeHtml(deal.deal_date || "")} ${escapeHtml(amount)} · ${escapeHtml(pyeongFromM2(deal.area_m2))}${deal.floor ? ` · ${escapeHtml(deal.floor)}층` : ""}</div>`;
     })
     .join("");
+  // ★라벨은 `MARKET_TYPE_LABELS`(= `MARKET_TRADE_TYPES` 에서 **파생**)에서만 얻는다.
+  //   새 어휘를 여기서 만들지 않는다 — 만들면 그 순간 두 벌이 되고, 이 저장소는 그 형태로
+  //   이미 데인 적이 있다(`boundary` ↔ `parcel-boundary` · `hybrid` ↔ `aerial`).
+  const typeLabel = marketType ? MARKET_TYPE_LABELS[marketType] : undefined;
   return [
     `<div style="min-width:210px;max-width:280px;padding:8px 10px;font-size:12px;line-height:1.5;">`,
     `<b>${escapeHtml(group.name)}</b>`,
+    // ★유형 배지 — 「무엇의 거래인가」를 **첫 줄에서** 말한다(신고③). 지번보다 먼저 오는 이유:
+    //   종전엔 `지번 · N건` 으로 시작해 **토지 주소처럼 읽혔다.**
+    //   ★모르는 키면 빈 문자열 — 「유형 미상」 같은 말을 지어내지 않는다.
+    typeLabel
+      ? `<div style="margin-top:2px;font-size:11px;font-weight:700;color:#0f172a;">${escapeHtml(typeLabel)}</div>`
+      : "",
     `<div style="color:#64748b;font-size:11px;">${escapeHtml([group.dong, group.jibun].filter(Boolean).join(" "))} · ${escapeHtml(group.count)}건</div>`,
     attrLine ? `<div style="color:#64748b;font-size:11px;">${attrLine}</div>` : "",
     `<div style="margin:6px 0;color:#0f172a;">${escapeHtml(priceLine)}</div>`,
@@ -2862,7 +2903,7 @@ export function SatongMultiMap({
           //   지도 click으로 번져 필지선택(현 팝오버)이 함께 발동했다. 점 클릭 = 정보 팝업만.
           bubblingMouseEvents: false,
         })
-          .bindPopup(marketPopupHtml(item, kind), { maxWidth: 300 })
+          .bindPopup(marketPopupHtml(item, kind, type), { maxWidth: 300 })
           .addTo(group);
         // 정보 상시화(2026-07-17): 라벨에 평균가를 병기 — hover 없이도 핵심값이 보이게(jootek 가격 pill).
         // ★R1 #2: 팝업과 동일 공용 포맷터 won() 재사용 — 억미만 "0.4억" 어색 표기·라벨/팝업 불일치 제거.
