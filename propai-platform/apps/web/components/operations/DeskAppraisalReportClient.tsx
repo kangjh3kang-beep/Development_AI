@@ -417,6 +417,26 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
 
             {/* II. 대상물건 표시 */}
             <Section no="Ⅱ" title="대상물건 표시">
+              {/* ★★2026-09-07 W7 — 라이브에서 **지목 답 · 일반상업지역 · 이용상황 업무용**
+                  이 나란히 떴는데 아무도 확인하지 않았다. 감정평가는 「현황 기준」이 원칙이라
+                  이 셋의 관계가 **평가 전제**다.
+                  ★「틀렸다」가 아니라 **「확인이 필요하다」** 로 올린다 — 셋이 동시에 참인
+                    경우가 실무에서 흔하고, 이 규칙의 법적 근거는 미확인이다. */}
+              {res.subject_consistency && !res.subject_consistency.ok && (
+                <div className="mb-2 rounded-xl border border-amber-300 bg-amber-50 p-3">
+                  <p className="text-[11px] font-bold text-amber-900">
+                    확인이 필요한 표시 조합 {res.subject_consistency.conflicts.length}건
+                  </p>
+                  <ul className="mt-1 space-y-1">
+                    {res.subject_consistency.conflicts.map((c, i) => (
+                      <li key={i} className="text-[11px] leading-relaxed text-amber-900">
+                        · <b>{c.field_a}</b> ↔ <b>{c.field_b}</b> — {c.note}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-1 text-[10px] text-amber-800/80">{res.subject_consistency.basis}</p>
+                </div>
+              )}
               <div className="grid gap-0 overflow-hidden rounded-xl border border-[var(--line)] md:grid-cols-2">
                 <div className="border-r border-[var(--line)]/60">
                   <Row k="소재지" v={ranAddr} />
@@ -437,19 +457,47 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
             <Section no="Ⅲ" title="가격 산정방법별 추정">
               <div className="overflow-hidden rounded-xl border border-[var(--line)]">
                 <table className="w-full text-[11px]">
+                  {/* ★★2026-09-07 W9 — 종전 표는 `Math.round(m.unit_price)` 라
+                      미적용 방법의 `null` 이 **0** 이 되어 「0원/㎡」가 **실제 값처럼**
+                      그려졌다(이 저장소가 반복해 데인 «모름을 유효값으로» 그 형태).
+                      그리고 성립한 방법만 들어와 «4방법»이라 해 놓고 1행만 보였다. */}
                   <thead><tr className="bg-[var(--surface-strong)] text-[var(--text-tertiary)]">
                     <th className="px-3 py-2 text-left font-bold">산정방법</th>
+                    <th className="px-3 py-2 text-center font-bold">적용</th>
                     <th className="px-3 py-2 text-right font-bold">추정 단가(/㎡)</th>
-                    <th className="px-3 py-2 text-left font-bold">근거</th>
+                    <th className="px-3 py-2 text-left font-bold">근거 / 미적용 사유</th>
                   </tr></thead>
                   <tbody>
-                    {(res.methods ?? []).map((m) => (
-                      <tr key={m.method} className="border-t border-[var(--line)]/60 align-top">
-                        <td className="px-3 py-2 font-bold text-[var(--text-primary)] whitespace-nowrap">{m.method}</td>
-                        <td className="cc-num px-3 py-2 text-right font-bold text-[var(--accent-strong)] whitespace-nowrap">{Math.round(m.unit_price).toLocaleString()}</td>
-                        <td className="px-3 py-2 text-[var(--text-secondary)] leading-relaxed">{m.rationale}</td>
-                      </tr>
-                    ))}
+                    {(res.methods ?? []).map((m) => {
+                      const applied = m.applicable !== false;
+                      const hasPrice = m.unit_price != null && Number.isFinite(m.unit_price);
+                      return (
+                        <tr key={m.method} className={`border-t border-[var(--line)]/60 align-top${applied ? "" : " opacity-70"}`}>
+                          <td className="px-3 py-2 font-bold text-[var(--text-primary)] whitespace-nowrap">{m.method}</td>
+                          <td className="px-3 py-2 text-center whitespace-nowrap">
+                            {applied
+                              ? <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">적용</span>
+                              : <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-700">미적용</span>}
+                          </td>
+                          <td className="cc-num px-3 py-2 text-right font-bold text-[var(--accent-strong)] whitespace-nowrap">
+                            {/* ★값이 없으면 「—」 — 0 으로 그리지 않는다. */}
+                            {hasPrice ? Math.round(m.unit_price as number).toLocaleString() : "—"}
+                          </td>
+                          <td className="px-3 py-2 text-[var(--text-secondary)] leading-relaxed">
+                            {applied ? m.rationale : (
+                              <>
+                                <span>{m.why_not}</span>
+                                {m.reference_unit_price != null && (
+                                  <span className="mt-1 block rounded bg-amber-50 px-2 py-1 text-[10px] text-amber-900">
+                                    참고값 {Math.round(m.reference_unit_price).toLocaleString()}원/㎡ — {m.reference_note}
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

@@ -1063,7 +1063,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
                             <tr key={`${m.method}-${mi}`} className="border-t border-[var(--line)] align-top">
                               <td className="whitespace-nowrap px-3 py-2 font-bold text-[var(--text-primary)]">{m.method}</td>
                               <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-[var(--text-primary)]">
-                                {Number.isFinite(m.unit_price) ? formatCurrency(locale, m.unit_price) : "—"}
+                                {m.unit_price != null && Number.isFinite(m.unit_price) ? formatCurrency(locale, m.unit_price) : "—"}
                               </td>
                               <td className="px-3 py-2 leading-relaxed text-[var(--text-secondary)]">{m.rationale}</td>
                             </tr>

@@ -30,7 +30,27 @@ export const eok = (v: number | null | undefined) =>
 export const won = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(v).toLocaleString("ko-KR")}원`);
 
 /** 산정방법 1건 — 방법명·추정 단가(원/㎡)·근거. */
-export type DeskAppraisalMethod = { method: string; unit_price: number; rationale: string };
+export type DeskAppraisalMethod = {
+  method: string;
+  /** ★null 가능 — 미적용 방법은 단가가 **없다**. 0 으로 그리면 «0원/㎡»가 값처럼 보인다. */
+  unit_price: number | null;
+  rationale?: string;
+  /** ★적용 여부(2026-09-07 W5). false = «검토했으나 안 썼다». */
+  applicable?: boolean;
+  /** 미적용 사유. 비면 무음 폐기다. */
+  why_not?: string | null;
+  /** 참고값 — **채택 아님**. */
+  reference_unit_price?: number | null;
+  reference_note?: string | null;
+  total_won?: number | null;
+};
+
+/** 물건표시 정합 — **판정이 아니라 확인 요청**(2026-09-07 W7). */
+export type SubjectConsistency = {
+  ok: boolean;
+  conflicts: { field_a: string; field_b: string; note: string }[];
+  basis: string;
+};
 
 type Stat = { source?: string; pct?: number; basis?: string; rate?: number; factor?: number } | null;
 
@@ -54,6 +74,7 @@ export type DeskAppraisalResult = {
   range_per_sqm: { low: number; high: number };
   cross_check?: { firms: number[]; mean: number; cv_pct: number; min: number; max: number; note: string };
   irregularity?: number | null; methods: DeskAppraisalMethod[]; weight_note: string;
+  subject_consistency?: SubjectConsistency | null;
   /**
    * 거래사례비교법을 **왜 못 썼는지**. 값이 조용히 사라지면 사용자는 "이 지역엔 거래가
    * 없나 보다"로 오독한다 — 실제로는 근접성 판정 불가이거나, 원천(MOLIT)이 지번을 가려서
