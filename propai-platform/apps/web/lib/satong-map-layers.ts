@@ -18,7 +18,11 @@ export type SatongMapLayerId =
  *  백지도의 정본명은 "white"다. ★UI 컨트롤 id는 "gray"로 유지하고 전송값(이 타입)만 정본으로
  *  교정했다 — 둘은 별개 네임스페이스다. 컨트롤 id를 함께 바꾸지 않는 이유는 그것이 UI 식별자
  *  (상호배타 해제셋 키·aria 라벨·기본 컨트롤 정의)이기 때문이지 영속 저장 때문이 아니다
- *  (layerControls는 useState 뿐 — localStorage 영속 없음. 근거를 오독하지 말 것). */
+ *  (★2026-09-07 정정: 초판은 여기에 *"layerControls는 useState 뿐 — localStorage 영속 없음"*
+ *  이라고 단정했는데 **지금은 거짓**이다. 2026-09-04 부터 `useSatongMapPrefs` 로 **계정별 키에
+ *  영속된다**. 그래서 컨트롤 id 를 바꾸면 **기존 사용자의 저장분이 그 id 를 잃는다** — 위 결정
+ *  (전송값만 정본으로 교정하고 UI id 는 유지)이 결과적으로 그 사고를 막았지만, **근거는 달라졌다.**
+ *  컨트롤 id 를 바꾸려면 이제 persist 마이그레이션이 필요하다). */
 export type VWorldBaseLayer = "Base" | "Satellite" | "Hybrid" | "white";
 
 export type SatongMapLayerState = {
