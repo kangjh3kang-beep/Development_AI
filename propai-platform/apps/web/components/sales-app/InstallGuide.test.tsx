@@ -63,6 +63,16 @@ describe("★MAJOR-1 — 설치 안내는 **설치본일 때만** 숨는다(두 
     expect(screen.queryByText(/앱으로 실행 중입니다/)).toBeNull();
   });
 
+  it("★★별도 창 안 → **설치 컨트롤 자체**가 살아 있다(표면만 보면 한 층 아래가 샌다)", () => {
+    // 적대 리뷰 N6: 위 케이스는 **컨테이너**(제목)만 봐서, 설치 버튼에만
+    // `&& !inSeparateWindow` 를 다시 붙이는 변이가 **SURVIVED** 했다.
+    // DESIGN.md B3.3 진리표가 못 박은 칸은 「설치 **유도**」이지 「제목이 보인다」가 아니다.
+    window.name = FIELD_APP_WINDOW_NAME;
+    runtime.installState = "available";
+    render(<InstallGuide />);
+    expect(screen.getByRole("button", { name: /앱 설치하기/ })).toBeTruthy();
+  });
+
   it("일반 탭(둘 다 아님) → 안내가 보인다 — 대조군", () => {
     render(<InstallGuide />);
     expect(screen.getByText(/홈 화면에 앱 추가/)).toBeTruthy();
@@ -106,6 +116,36 @@ describe("남은 부채", () => {
       "틀린 인자를 통과시킨다(적대 리뷰 실증)",
   );
   it.todo(
-    "iOS Safari 분기(공유→홈 화면 추가 단계 안내)를 실기기로 태운다 — 현재 장치 부재로 미측정",
+    "iOS Safari 에서 **실제로 홈 화면에 추가되는가** — 이것만이 장치 부재로 미측정이다. " +
+      "렌더 절반은 아래에서 잠갔다(적대 리뷰 NIT: 두 명제를 한 todo 에 섞고 있었다)",
   );
+});
+
+describe("★NIT — iOS 분기의 **렌더**는 오늘 잴 수 있다(장치 부재가 아니었다)", () => {
+  // `isIos()` 는 navigator.userAgent 와 `"ontouchend" in document` 만 읽는다(원문 확인).
+  // 둘 다 jsdom 에서 스텁 가능하므로 「장치 부재」로 덮여 있던 절반을 여기서 잠근다.
+  // ★미측정의 사유를 갈라야 다음 사람의 행동이 갈린다(장치 부재 / 미착수 / 사건 미발생).
+  const UA = navigator.userAgent;
+  const setUa = (ua: string) =>
+    Object.defineProperty(navigator, "userAgent", { value: ua, configurable: true });
+  afterEach(() => setUa(UA));
+
+  it("iOS → 「아이폰(Safari) 설치 방법 보기」가 뜬다(수동 경로가 유일한 설치 수단이다)", () => {
+    setUa("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15");
+    render(<InstallGuide />);
+    expect(screen.getByRole("button", { name: /아이폰\(Safari\) 설치 방법 보기/ })).toBeTruthy();
+  });
+
+  it("두 모집단 — 비-iOS 에서는 그 안내가 **없다**", () => {
+    setUa("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120");
+    render(<InstallGuide />);
+    expect(screen.queryByRole("button", { name: /아이폰\(Safari\)/ })).toBeNull();
+  });
+
+  it("★iOS 에서는 네이티브 설치 프롬프트를 **내지 않는다** — beforeinstallprompt 가 없다", () => {
+    setUa("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15");
+    runtime.installState = "available"; // 런타임이 잘못 보고해도
+    render(<InstallGuide />);
+    expect(screen.queryByRole("button", { name: /앱 설치하기/ })).toBeNull();
+  });
 });
