@@ -21,7 +21,6 @@ import {
   Loader2,
   MapIcon,
   MapPin,
-  Mountain,
   Route,
   Search,
   Sparkles,
