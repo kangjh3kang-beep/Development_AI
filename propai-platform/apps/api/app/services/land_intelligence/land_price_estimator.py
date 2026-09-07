@@ -21,6 +21,9 @@ from typing import Any
 #   사유를 **함께** SSOT 로 옮기고 여기서는 위임만 한다.
 from app.services.land_intelligence import market_multiplier as _mm
 
+# 신뢰 고지 문구 템플릿 — 표시 문구를 상수로 꺼내 테스트가 **리터럴로 못 박게** 한다.
+TRUST_BASIS_TEMPLATE = "개별공시지가 × 사전 설정 지역 보정계수({caveat})"
+
 
 def _market_multiplier(address: str) -> tuple[float, str]:
     """주소 → (보정계수, **짧은** 사유). SSOT 위임 — 계수로부터 통계를 역산하지 않는다.
@@ -146,7 +149,10 @@ async def estimate_land_price(
         # (가짜 cross_validation 신호를 만들지 않고, 단일출처 한계를 정직하게 고지)
         "trust": {
             "method": "single_source",
-            "basis": "개별공시지가 × 사전 설정 지역 보정계수(실거래 미검증)",
+            # ★자유 리터럴을 쓰지 않고 SSOT 한정어에서 **조립**한다(독립 리뷰 R3 HIGH-A).
+            #   종전에는 리터럴이라 「한정어를 담고 있는가」 검사를 **덧붙이기로 우회**할 수 있었다
+            #   (`"국토교통부 실거래가로 검증된 … (실거래 미검증)"` 이 통과했다).
+            "basis": TRUST_BASIS_TEMPLATE.format(caveat=_mm.SHORT_CAVEAT),
             # ★출처 판정용 안정 코드 — 표시 문구(basis)와 분리한다. 문구를 쉬운 말로
             #   바꿔도 «이 값의 출처가 미검증 사전설정» 이라는 계약은 안 죽는다
             #   (형제 선례: field_audit market_methodology 의 source_kind).

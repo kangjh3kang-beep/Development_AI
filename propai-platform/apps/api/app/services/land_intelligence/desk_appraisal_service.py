@@ -504,10 +504,14 @@ async def desk_appraisal(
     # ── 1) 공시지가기준법 ──
     other_factor, other_rationale = _market_multiplier(address)   # 그 밖의 요인(기타요인) 보정
     # ★그밖의요인의 **출처를 기계 판독 가능하게** 함께 싣는다(2026-09-07 · 독립 리뷰 R2 MEDIUM).
-    #   왜 여기인가: 이 표면이 **제출용 감정평가 PDF** 로 나가는 자리다. 그런데 출처 코드를
-    #   `land_price_estimator` 의 `trust` 블록에만 실어 두어, **가장 값비싼 표면에만 없었다.**
     #   그밖의요인은 가액을 직접 곱하는 계수이므로, 그 값이 «실거래로 검증된 것이 아니다» 라는
     #   사실은 표시 문구가 아니라 **코드**로 남아야 한다(문구를 다듬어도 안 죽게).
+    # ★★범위를 정확히 적는다(독립 리뷰 R3 LOW-1 — 종전 주석은 과장이었다):
+    #   이 코드는 **API payload 까지만** 간다. PDF 어댑터(`report/render/appraisal_adapter.py`)는
+    #   `methods[].rationale` **문자열만** 읽으므로 `factor_provenance` 는 **PDF 에 실리지 않는다**
+    #   (실측: 렌더 모델 문자열 87건에 `UNVERIFIED_PRESET` 0건 · 한정어 문구는 rationale 경유로 실림).
+    #   ⇒ PDF 표면의 정직성은 **짧은형 한정어**가 지키고, 이 코드는 **기계 소비처용**이다.
+    #     (그 소비처는 아직 0건 — `test_provenance_has_a_consumer` 에 부채로 노출돼 있다.)
     other_factor_provenance = _mm.PROVENANCE_UNVERIFIED_PRESET
     road_f, road_label = _road_factor(road_side)
     area_fac, area_label = _area_factor(area_f)

@@ -106,6 +106,33 @@ UNVERIFIED_CAVEAT = "실거래로 검증된 현실화율이 아닌 사전 설정
 #   그 자리는 문장이 아니라 **항**을 기대한다. ⇒ 표현을 자리에 맞게 나눈다.
 SHORT_CAVEAT = "실거래 미검증"
 
+# ★★표시 문구를 **템플릿 상수**로 꺼낸다(2026-09-07 · 독립 리뷰 R3 HIGH-A).
+#   왜: 종전 락은 «한정어를 담고 있는가»(`SHORT_CAVEAT in text`)라는 **포함** 검사였다. 그래서
+#   한정어를 **지우지 않고 덧붙이면** 통과했다 — 리뷰어가 `f"{district} 국토부 실거래 검증 계수 ·
+#   {SHORT_CAVEAT}"` 로 바꿔 36건 전부 생존시켰고, **그 문자열은 감정평가 PDF 에 도달한다**.
+#   ★내가 테스트 독스트링에 «거짓으로 바꾸려면 한정어를 지워야 한다» 고 적은 것은 **거짓 면역
+#   주장**이었다(§C-11). 포함은 «거짓을 말하지 않는가» 를 함의하지 않는다.
+#   ⇒ 문구를 f-string 자유 리터럴에서 **템플릿 상수**로 꺼내고, 테스트가 그 템플릿을
+#     **리터럴로 못 박는다**(계수표를 얼린 것과 같은 방식). 감정평가 표면에 나가는 문구를 바꾸려면
+#     테스트도 함께 고쳐야 하고, 그것이 **의도된 마찰**이다.
+SHORT_TEMPLATE_DISTRICT = "{key} 사전설정 계수 · {caveat}"
+SHORT_TEMPLATE_REGION = "{key} 광역 사전설정 계수 · 시군구 미등록 · {caveat}"
+SHORT_TEMPLATE_DEFAULT = "전국 기본 계수 · 지역 미등록 · {caveat}"
+SHORT_TEMPLATE_UNKNOWN = "주소 미상 · 전국 기본 계수 · {caveat}"
+
+SENTENCE_TEMPLATE_DISTRICT = "{key}에 대해 사전 설정된 지역 시세보정계수 {mult}배를 적용했습니다({caveat})."
+SENTENCE_TEMPLATE_REGION = (
+    "{key} 광역 단위의 사전 설정 시세보정계수 {mult}배를 적용했습니다"
+    "(시·군·구 세부 계수 미등록 · {caveat})."
+)
+SENTENCE_TEMPLATE_DEFAULT = (
+    "지역별 보정계수가 미등록되어 전국 기본 보정계수 {mult}배를 적용했습니다({caveat})."
+)
+SENTENCE_TEMPLATE_UNKNOWN = (
+    "주소가 확인되지 않아 전국 기본 보정계수 {mult}배를 적용했습니다"
+    "(지역별 계수의 미등록 여부는 확인되지 않았습니다 · {caveat})."
+)
+
 # 매칭 층위 — 사유 문자열과 별개의 **안정 식별자**(표시 문구를 다듬어도 판정이 안 죽게).
 SCOPE_DISTRICT = "DISTRICT"
 SCOPE_REGION = "REGION"
@@ -146,11 +173,8 @@ def resolve_market_multiplier(address: str) -> MultiplierVerdict:
     if not (address or "").strip():
         return MultiplierVerdict(
             DEFAULT_MULTIPLIER,
-            f"주소 미상 · 전국 기본 계수 · {SHORT_CAVEAT}",
-            (
-                f"주소가 확인되지 않아 전국 기본 보정계수 {DEFAULT_MULTIPLIER}배를 적용했습니다"
-                f"(지역별 계수의 미등록 여부는 **확인되지 않았습니다** · {UNVERIFIED_CAVEAT})."
-            ),
+            SHORT_TEMPLATE_UNKNOWN.format(caveat=SHORT_CAVEAT),
+            SENTENCE_TEMPLATE_UNKNOWN.format(mult=DEFAULT_MULTIPLIER, caveat=UNVERIFIED_CAVEAT),
             SCOPE_UNKNOWN,
             PROVENANCE_UNVERIFIED_PRESET,
         )
@@ -161,11 +185,8 @@ def resolve_market_multiplier(address: str) -> MultiplierVerdict:
         if district in addr:
             return MultiplierVerdict(
                 mult,
-                f"{district} 사전설정 계수 · {SHORT_CAVEAT}",
-                (
-                    f"{district}에 대해 사전 설정된 지역 시세보정계수 {mult}배를 적용했습니다"
-                    f"({UNVERIFIED_CAVEAT})."
-                ),
+                SHORT_TEMPLATE_DISTRICT.format(key=district, caveat=SHORT_CAVEAT),
+                SENTENCE_TEMPLATE_DISTRICT.format(key=district, mult=mult, caveat=UNVERIFIED_CAVEAT),
                 SCOPE_DISTRICT,
                 PROVENANCE_UNVERIFIED_PRESET,
             )
@@ -174,22 +195,16 @@ def resolve_market_multiplier(address: str) -> MultiplierVerdict:
         if region in addr:
             return MultiplierVerdict(
                 mult,
-                f"{region} 광역 사전설정 계수 · 시군구 미등록 · {SHORT_CAVEAT}",
-                (
-                    f"{region} 광역 단위의 사전 설정 시세보정계수 {mult}배를 적용했습니다"
-                    f"(시·군·구 세부 계수 미등록 · {UNVERIFIED_CAVEAT})."
-                ),
+                SHORT_TEMPLATE_REGION.format(key=region, caveat=SHORT_CAVEAT),
+                SENTENCE_TEMPLATE_REGION.format(key=region, mult=mult, caveat=UNVERIFIED_CAVEAT),
                 SCOPE_REGION,
                 PROVENANCE_UNVERIFIED_PRESET,
             )
 
     return MultiplierVerdict(
         DEFAULT_MULTIPLIER,
-        f"전국 기본 계수 · 지역 미등록 · {SHORT_CAVEAT}",
-        (
-            f"지역별 보정계수가 미등록되어 전국 기본 보정계수 {DEFAULT_MULTIPLIER}배를 적용했습니다"
-            f"({UNVERIFIED_CAVEAT})."
-        ),
+        SHORT_TEMPLATE_DEFAULT.format(caveat=SHORT_CAVEAT),
+        SENTENCE_TEMPLATE_DEFAULT.format(mult=DEFAULT_MULTIPLIER, caveat=UNVERIFIED_CAVEAT),
         SCOPE_DEFAULT,
         PROVENANCE_UNVERIFIED_PRESET,
     )

@@ -29,6 +29,7 @@ _market_multiplier` 가 **둘 다** 사용자 노출 문자열에 이렇게 썼�
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -334,8 +335,15 @@ def test_provenance_code_reaches_the_real_payload() -> None:
 #
 #   ⇒ **금지어를 세지 말고, 허용된 모양을 요구한다.** 아래 셋이 계약이다:
 #     ① **수 불변식** — 우리가 만든 사유에는 **계수 자신 말고 어떤 수도 없다**.
-#        이것이 이 PR 의 금지 대상(«계수로부터 통계를 역산하지 않는다»)의 **직접 표현**이고
-#        **어휘와 완전히 무관**하다. `실현율 83퍼센트` 든 `realization 83pct` 든 전부 걸린다.
+#        이것이 이 PR 의 금지 대상(«계수로부터 통계를 역산하지 않는다»)의 **직접 표현**이다.
+#        ★★면역 범위를 정확히 적는다(R3 MED-1 정정 — 종전 서술은 **거짓 면역 주장**이었다):
+#          이 불변식은 **유니코드 Nd 범주 숫자**만 잡는다. 아래는 실측이다.
+#            잡힘  : `83%` · 전각 `８３` · 아라비아-인도 `٨٣` · 지수 `8.3e1` · 비율 `0.83`
+#            못잡음: 한글수사 **`팔십삼`** · 한자 `八十三` · 원문자 `⑧③` · 로마 `LXXXIII`
+#          리뷰어가 `공시지가 현실화율 팔십삼 퍼센트` 변이를 넣어 **생존**시켰다.
+#          ⇒ «어휘와 완전히 무관» 은 **거짓**이다. 악용 확률은 낮지만 **면역을 거짓 주장하지 않는다**
+#            (§C-11 — 코드가 그 면역을 갖고 있는지 확인하고 쓴다). 한글 수사까지 잠그려면
+#            `_numbers_in` 에 수사 토큰을 추가하라(현재 미구현 — 아래 `it.todo` 격 xfail 로 노출).
 #     ② **한정어 토큰** — 고지 문자열은 승인된 한정어 상수를 **담아야** 한다(없애면 실패).
 #     ③ **출처 코드** — 리터럴로 못 박은 `PROVENANCE_UNVERIFIED_PRESET`.
 #   ★①은 실측으로 위양성 0을 확인했다: 현재 `short` 의 수 토큰은 **0개**, `sentence` 는 **{계수}** 뿐.
@@ -359,6 +367,28 @@ def test_short_form_contains_no_numbers_at_all() -> None:
         assert _numbers_in(v.short) == set(), f"{addr} → 짧은형에 수가 있다: {v.short}"
 
 
+# ★허용된 수의 집합 — **확장 경로를 명시**한다(R3 LOW-2).
+#   이 불변식은 계수 외 모든 수를 금지하므로, 나중에 기준연도(`2025년`)·표본수(`3,291건`)·
+#   형제 실측(`1.448배`) 같은 **정직한 수**를 사유에 싣고 싶을 때 이 락이 막는다.
+#   정상 코드를 막는 가드는 곧 꺼지므로(§A-6), **지우지 말고 이 함수를 넓혀라**.
+#   ★★단 하나의 금기: **역산 계열(100/계수)은 절대 넣지 마라** — 그것이 이 PR 이 고친 결함이다.
+#   아래 `test_allowed_numbers_never_include_the_inverse_family` 가 그 금기를 기계로 지킨다.
+def _allowed_numbers(v: mm.MultiplierVerdict) -> set[float]:
+    return {float(v.multiplier)}
+
+
+def test_allowed_numbers_never_include_the_inverse_family() -> None:
+    """★확장 경로에 **가드레일**을 건다 — 누가 `_allowed_numbers` 를 넓히더라도 역산 계열은 못 넣는다."""
+    for addr in _all_addresses() + [_ADDR_UNKNOWN]:
+        v = mm.resolve_market_multiplier(addr)
+        inverse = {round(100 / v.multiplier), round(100 / v.multiplier, 1), round(100 / v.multiplier, 2)}
+        leaked = _allowed_numbers(v) & inverse
+        assert not leaked, f"허용 집합에 역산 계열이 들어왔다: {leaked} (계수 {v.multiplier})"
+    # 공허 방지 — 역산 계열이 실제로 계수와 다른 값인지(계수 1.0 이면 100/1=100 과 겹치지 않는다).
+    v = mm.resolve_market_multiplier(_ADDR_DISTRICT)
+    assert round(100 / v.multiplier) != v.multiplier
+
+
 def test_sentence_contains_exactly_the_multiplier_and_no_other_number() -> None:
     """★수 불변식 ② — 문장형의 수는 **계수 자신 하나뿐**이다.
 
@@ -368,7 +398,7 @@ def test_sentence_contains_exactly_the_multiplier_and_no_other_number() -> None:
     """
     for addr in _all_addresses() + [_ADDR_UNKNOWN]:
         v = mm.resolve_market_multiplier(addr)
-        assert _numbers_in(v.sentence) == {float(v.multiplier)}, (
+        assert _numbers_in(v.sentence) == _allowed_numbers(v), (
             f"{addr} → 문장형의 수 집합이 {{계수}} 가 아니다: "
             f"{sorted(_numbers_in(v.sentence))} (계수 {v.multiplier}) · {v.sentence}"
         )
@@ -571,39 +601,112 @@ def test_golden_fixture_annotation_matches_the_real_producer() -> None:
 #   ⇒ 상수가 아니라 **산출물**을 태운다. 여전히 최선노력이지만, 이제 결함이 사는 자리에 있다.
 # ─────────────────────────────────────────────────────────────
 
-@pytest.mark.asyncio
-async def test_disclosure_strings_carry_the_approved_caveat_token() -> None:
-    """★화이트리스트 — 고지 문자열은 **승인된 한정어를 담아야** 한다(금지어를 세지 않는다).
+# ─────────────────────────────────────────────────────────────
+# ★★포함(containment)을 동일성(equality)으로 바꾼다 (R3 HIGH-A)
+#
+#   종전 락은 `SHORT_CAVEAT in text` 였다. 그래서 거짓 주장으로 바꾸려면 한정어를 **지울 필요가
+#   없었다 — 덧붙이면 됐다**. 리뷰어가 실증했다:
+#       f"{district} 국토부 실거래 검증 계수 · {SHORT_CAVEAT}"        → 36건 전부 SURVIVED
+#       "국토교통부 실거래가 통계로 검증된 … · 오차 없음(실거래 미검증)"  → SURVIVED
+#   ★그리고 그 문자열은 **감정평가 PDF 에 도달한다**(리뷰어가 렌더해 확인: 9,437 bytes).
+#   ★★내가 테스트 독스트링에 «거짓으로 바꾸려면 한정어를 지워야 한다» 고 적은 것은
+#     **거짓 면역 주장**이었다(§C-11). 포함은 «거짓을 말하지 않는가» 를 함의하지 않는다.
+#
+#   ★기계 변이가 이 자리를 CAUGHT 로 찍었던 이유도 리뷰어가 짚었다 — 그 도구는 문자열을
+#     `__MUTATED__` 로 **치환**(=한정어 삭제)한다. 위험한 편집은 **삭제가 아니라 첨가**이고
+#     기계 변이는 그 축을 만들지 않는다. **도구가 만들지 않는 축은 사람이 만들어야 한다.**
+#
+#   ⇒ 표시 문구를 템플릿 상수로 꺼내고(생산자), 여기서 **리터럴로 못 박는다**(계수표와 같은 방식).
+#     감정평가 표면에 나가는 문구를 바꾸려면 이 줄도 함께 고쳐야 하고 그것이 의도된 마찰이다.
+# ─────────────────────────────────────────────────────────────
 
-    R2 가 `trust.basis` 를 `"개별공시지가 × 실거래로 검증된 지역 보정계수"` 나
-    `"국토교통부 실거래가로 검증된 … · 오차 없음"` 으로 바꾸는 변이를 통과시켰다. 블랙리스트로는
-    한국어 표현을 다 못 센다. **한정어가 있어야 한다**고 요구하면 그 변이들은 전부 실패한다 —
-    거짓 주장으로 바꾸려면 한정어를 **지워야** 하기 때문이다.
+_EXPECTED_SHORT_TEMPLATES = {
+    mm.SCOPE_DISTRICT: "{key} 사전설정 계수 · {caveat}",
+    mm.SCOPE_REGION: "{key} 광역 사전설정 계수 · 시군구 미등록 · {caveat}",
+    mm.SCOPE_DEFAULT: "전국 기본 계수 · 지역 미등록 · {caveat}",
+    mm.SCOPE_UNKNOWN: "주소 미상 · 전국 기본 계수 · {caveat}",
+}
+
+
+def test_display_templates_are_pinned_as_literals() -> None:
+    """★사용자·PDF 표면에 나가는 문구를 **리터럴로 동결**한다(자유 첨가 차단)."""
+    assert _EXPECTED_SHORT_TEMPLATES[mm.SCOPE_DISTRICT] == mm.SHORT_TEMPLATE_DISTRICT
+    assert _EXPECTED_SHORT_TEMPLATES[mm.SCOPE_REGION] == mm.SHORT_TEMPLATE_REGION
+    assert _EXPECTED_SHORT_TEMPLATES[mm.SCOPE_DEFAULT] == mm.SHORT_TEMPLATE_DEFAULT
+    assert _EXPECTED_SHORT_TEMPLATES[mm.SCOPE_UNKNOWN] == mm.SHORT_TEMPLATE_UNKNOWN
+    assert mm.SENTENCE_TEMPLATE_DISTRICT == (
+        "{key}에 대해 사전 설정된 지역 시세보정계수 {mult}배를 적용했습니다({caveat})."
+    )
+    assert mm.SENTENCE_TEMPLATE_REGION == (
+        "{key} 광역 단위의 사전 설정 시세보정계수 {mult}배를 적용했습니다"
+        "(시·군·구 세부 계수 미등록 · {caveat})."
+    )
+    assert mm.SENTENCE_TEMPLATE_DEFAULT == (
+        "지역별 보정계수가 미등록되어 전국 기본 보정계수 {mult}배를 적용했습니다({caveat})."
+    )
+    assert mm.SENTENCE_TEMPLATE_UNKNOWN == (
+        "주소가 확인되지 않아 전국 기본 보정계수 {mult}배를 적용했습니다"
+        "(지역별 계수의 미등록 여부는 확인되지 않았습니다 · {caveat})."
+    )
+
+
+def test_every_short_form_equals_its_template_exactly() -> None:
+    """★전수 — 짧은형이 템플릿 **그대로**여야 한다(첨가 0). 포함이 아니라 동일성이다."""
+    for addr in _all_addresses() + [_ADDR_UNKNOWN]:
+        v = mm.resolve_market_multiplier(addr)
+        key = next(
+            (k for k in list(mm.MARKET_MULTIPLIER_MAP) + list(mm.MARKET_MULTIPLIER_REGION) if k in (addr or "")),
+            "",
+        )
+        expected = _EXPECTED_SHORT_TEMPLATES[v.scope].format(key=key, caveat=mm.SHORT_CAVEAT)
+        assert v.short == expected, f"{addr}\n  got     : {v.short}\n  expected: {expected}"
+
+
+def test_no_markdown_emphasis_in_runtime_strings() -> None:
+    """★런타임 문자열에 마크다운 강조를 넣지 않는다 (R3 MED-2).
+
+    ★이 PR 이 신설한 SCOPE_UNKNOWN 문장에 `**확인되지 않았습니다**` 를 넣었는데, 소비 렌더러
+      (`ComprehensiveAnalysisPanel` 의 `<p>{text}</p>`)는 **마크다운을 파싱하지 않아** 별표가
+      그대로 화면에 찍힌다. 세션 메모리의 09-06 항목과 **같은 결함이 하루 만에 재발**했다.
+      ⇒ 강조는 주석에만. 사용자 문자열에는 절대.
     """
+    texts = []
+    for addr in _all_addresses() + [_ADDR_UNKNOWN]:
+        v = mm.resolve_market_multiplier(addr)
+        texts += [v.short, v.sentence]
+    texts += [mm.SHORT_CAVEAT, mm.UNVERIFIED_CAVEAT]
+    assert texts, "수집기가 죽었다"
+    offenders = [t for t in texts if "**" in t or "__" in t]
+    assert not offenders, "런타임 문자열에 마크다운 강조가 있다(화면에 별표가 찍힌다): " + " | ".join(offenders)
+    # 양성 대조 — 검사기가 실제로 잡는가.
+    assert "**" in "지역별 계수의 **미등록 여부**는", "검사기 사망"
+
+
+@pytest.mark.asyncio
+async def test_trust_basis_equals_the_assembled_template() -> None:
+    """★고지 문자열은 **조립식과 정확히 같아야** 한다 — 덧붙이기 우회를 막는다(R3 HIGH-A)."""
+    from app.services.land_intelligence.land_price_estimator import TRUST_BASIS_TEMPLATE
+
+    assert TRUST_BASIS_TEMPLATE == "개별공시지가 × 사전 설정 지역 보정계수({caveat})"
     payload = await estimate_land_price(
         address=_ADDR_DISTRICT, area_sqm=500.0, official_price_per_sqm=1_000_000.0
     )
     trust = payload.get("trust") or {}
-    # 전제 — 기계 판독 출처가 «미검증» 이라고 말하고 있는가(아니면 아래 대조가 무의미).
     assert trust.get("basis_kind") == mm.PROVENANCE_UNVERIFIED_PRESET, trust
+    assert trust.get("basis") == TRUST_BASIS_TEMPLATE.format(caveat=mm.SHORT_CAVEAT), trust
 
-    basis = str(trust.get("basis") or "")
-    assert mm.SHORT_CAVEAT in basis, (
-        "기계 판독 출처는 «미검증» 인데 사람이 읽는 줄에 한정어가 없다 — 두 표면이 갈린다: "
-        f"{basis!r}"
-    )
-    # ★양성 대조 — 이 검사가 R2 의 변이 문자열을 실제로 거부하는가.
+    # ★양성 대조 — 리뷰어가 통과시킨 «덧붙이기» 문자열들을 이 검사가 실제로 거부하는가.
     for bad in (
-        "개별공시지가 × 실거래로 검증된 지역 보정계수",
-        "국토교통부 실거래가로 검증된 지역 보정계수 · 오차 없음",
+        "국토교통부 실거래가 통계로 검증된 지역 보정계수 · 오차 없음(실거래 미검증)",
+        "개별공시지가 × 국토부 실거래 검증 계수(실거래 미검증)",
     ):
-        assert mm.SHORT_CAVEAT not in bad, f"검사기 사망 — 이 문자열을 통과시킨다: {bad}"
+        assert bad != TRUST_BASIS_TEMPLATE.format(caveat=mm.SHORT_CAVEAT), f"검사기 사망: {bad}"
+        assert mm.SHORT_CAVEAT in bad, "★이 문자열들은 한정어를 담고도 거짓이다 — 포함 검사가 뚫린 이유"
 
-    # 보조 그물(계약 아님) — 역산 통계 형태는 payload 어디에도 없어야 한다.
+    # 보조 그물 — 역산 통계 형태는 payload 어디에도 없어야 한다.
     strings = _collect_user_facing_strings(payload)
     assert len(strings) >= 5, f"수집기가 죽었다 — 문자열 {len(strings)}건"
-    offenders = [t for t in strings if _FABRICATED_RATE.search(t)]
-    assert not offenders, "실제 출력면에 조작된 현실화율이 실렸다: " + " | ".join(offenders)
+    assert not [t for t in strings if _FABRICATED_RATE.search(t)]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -658,19 +761,51 @@ _PRODUCERS_AND_TESTS = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason="★부채: provenance/scope 를 읽는 소비처가 아직 0건(배지·감사 미배선)")
-def test_provenance_has_a_consumer() -> None:
-    """출처 코드를 **읽는** 코드가 저장소에 있는가(현재 없음 — 부채로 노출)."""
+def _repo_root() -> Path:
+    """★cwd 가 아니라 **파일 위치에서 파생**한다(R3 HIGH-B).
+
+    종전에는 `cwd="../../.."` 라 **어디서 돌리느냐**에 따라 다른 저장소를 봤다. CI 는 우연히
+    맞았지만(`working-directory: propai-platform/apps/api`), repo root 에서 돌리면 조회기가
+    **빈 결과**를 냈다 — 그리고 그 빈 결과가 xfail 안에 있어 **의도된 부채와 구별되지 않았다**.
+    """
+    return Path(__file__).resolve().parents[3]
+
+
+def _marker_files() -> list[str]:
     import subprocess
 
     out = subprocess.run(
         ["git", "grep", "-l", "-E", "|".join(_UNAMBIGUOUS_MARKERS)],
-        capture_output=True, text=True, cwd="../../..",
+        capture_output=True, text=True, cwd=str(_repo_root()),
     )
-    files = [f for f in out.stdout.splitlines() if f.strip()]
-    # ★공허 방지 — 생산자는 반드시 잡혀야 한다(조회기 생존 대조군).
+    return [f for f in out.stdout.splitlines() if f.strip()]
+
+
+def test_marker_scanner_is_alive() -> None:
+    """★대조군은 **xfail 밖**에 둔다 (R3 HIGH-B).
+
+    ★종전에는 이 단언이 부채 테스트 **안**에 있었다. 그래서 조회기가 죽어도 «xfailed» 로 초록이라
+      «의도된 부채»와 **바이트 하나 다르지 않았다**. 더 나쁜 것은 `strict=True` 의 목적
+      («소비처가 생기면 XPASS 로 터진다»)이 조회기 사망 시 **영원히 발화하지 않는다**는 것이다.
+      ⇒ 조회기 생존은 **별도 테스트로 초록/빨강**을 가른다.
+    """
+    files = _marker_files()
     assert any("market_multiplier.py" in f for f in files), (
-        f"조회기가 죽었다 — 생산자조차 못 찾았다: {files}"
+        f"조회기가 죽었다 — 생산자조차 못 찾았다(저장소 루트={_repo_root()}): {files}"
     )
-    consumers = [f for f in files if not any(k in f for k in _PRODUCERS_AND_TESTS)]
+
+
+@pytest.mark.xfail(strict=True, reason="★부채: provenance 를 읽는 소비처가 아직 0건(배지·감사 미배선)")
+def test_provenance_has_a_consumer() -> None:
+    """출처 코드를 **읽는** 코드가 저장소에 있는가(현재 없음 — 부채로 노출).
+
+    조회기 생존은 위 `test_marker_scanner_is_alive` 가 따로 보증한다.
+    """
+    consumers = [f for f in _marker_files() if not any(k in f for k in _PRODUCERS_AND_TESTS)]
     assert consumers, "소비처 0 — 선언만 하고 아무도 안 읽는다"
+
+
+@pytest.mark.xfail(strict=True, reason="★부채(R3 MED-1): 한글·한자 수사(「팔십삼」)는 수 불변식이 못 잡는다")
+def test_number_invariant_catches_korean_numerals() -> None:
+    """한글 수사로 쓴 역산 통계도 잡아야 이상적이다 — 현재 **미구현**이라 초록 안에 드러낸다."""
+    assert _numbers_in("공시지가 현실화율 팔십삼 퍼센트") != set()
