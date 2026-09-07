@@ -151,6 +151,44 @@ def test_unresolved_region_does_not_get_all_regions_mixed() -> None:
     assert 0.20 not in values and 0.30 not in values, "하위지역이 섞였다(fail-open 재발)"
 
 
+def _rows_without_nationwide() -> list[dict]:
+    """★「전국」 행이 **없는** 모집단 — fail-open 분기를 실제로 도달시킨다.
+
+    ★왜 이 픽스처가 따로 필요한가(2026-09-08 · 내 변이가 생존해서 알았다):
+      `_rows()` 에는 전국 행이 **항상** 있어서 `_collect("전국") or _collect(None)` 의 `or` 가
+      **단락**된다 — 즉 fail-open 을 되돌리는 변이가 **도달조차 못 해** 생존했다.
+      «A 가 산다» 만으로는 «올바른 구현» 과 «아무것도 안 하는 구현» 을 가를 수 없다.
+      ⇒ 두 모집단을 **같은 실행에서** 태운다: 전국 있음(폴백 성립) ↔ 전국 없음(거부해야 함).
+    """
+    return [r for r in _rows() if r["CLS_NM"] != "전국"]
+
+
+def test_fixture_without_nationwide_actually_reaches_the_fallback_branch() -> None:
+    """★공허 방지 — 이 픽스처가 정말 전국 행 0개이고 하위지역은 남아 있는가."""
+    rows = _rows_without_nationwide()
+    assert not any(r["CLS_NM"] == "전국" for r in rows), "전국 행이 남아 있으면 분기가 단락된다"
+    assert any("경기>" in r["CLS_FULLNM"] for r in rows), "혼합될 재료가 없으면 이 락이 공허해진다"
+    assert len(rows) >= 3, rows
+
+
+def test_no_nationwide_rows_means_refusal_not_all_regions_mixed() -> None:
+    """★★fail-open 금지의 **핵심 락** — 전국 행조차 없으면 **빈 시계열**(거부)이어야 한다.
+
+    종전 코드(`_collect("전국") or _collect(None)`)는 여기서 **전 지역 혼합**을 돌려줬고,
+    소비처가 그것을 「그 지역 시계열」로 읽었다. 지금은 아무것도 주지 않는다 —
+    소비처의 판정 거부가 발화하게(모름을 유효값으로 표현하지 않는다).
+    """
+    rows = _rows_without_nationwide()
+    for region in ("", "zzz없는지역", "경기"):
+        series = rc.rate_series_from_rows(rows, region)
+        assert series == [], (
+            f"{region!r} → 전국 행이 없는데 값을 돌려줬다(fail-open 재발): "
+            f"{sorted(r for _t, r in series)}"
+        )
+    # ★특이도 — 같은 픽스처에서 **진짜 시도 행은 여전히 찾는다**(항상 거부도 결함이다).
+    assert sorted(r for _t, r in rc.rate_series_from_rows(rows, "전남")) == [0.02, 0.03]
+
+
 def test_unknown_region_falls_back_to_nationwide_only() -> None:
     """존재하지 않는 지역도 **전 지역 혼합**이 아니라 전국 행만 받는다."""
     series = rc.rate_series_from_rows(_rows(), "zzz없는지역")
