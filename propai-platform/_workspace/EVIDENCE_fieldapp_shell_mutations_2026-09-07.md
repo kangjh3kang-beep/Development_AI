@@ -30,6 +30,8 @@ r9     CAUGHT    기준선 41건
 r10    CAUGHT    기준선 42건
 f1     CAUGHT    기준선 50건
 f2     CAUGHT    기준선 50건
+f3     CAUGHT    기준선 54건
+f4     CAUGHT    기준선 54건
 ```
 
 ★기준선 수열(15 → 27 → 33 → 41)이 커밋 타임라인과 일치한다:
@@ -65,11 +67,13 @@ f2     CAUGHT    기준선 50건
 | `r9` | `SiteWorkspaceClient.tsx` | `<FieldAppAffordance />` 뒤에 `<FieldExtraRail tabs={[]} …/>` 삽입 | ★**적대 리뷰 2차가 SURVIVED 로 실증한 「네 번째 표면」** |
 | `f1` | `InstallGuide.tsx` | `if (standalone) {` → `if (standalone \|\| inSeparateWindow) {` | ★**적대 리뷰 재검증이 SURVIVED 로 실증** — B2 의 잠기지 않은 절반 |
 | `f2` | `InstallGuide.tsx` | `{inSeparateWindow && (` → `{false && (` | 별도 창 고지 분기 |
+| `f3` | `InstallGuide.tsx` | `{installState === "available" && !ios && (` → `… && !inSeparateWindow && (` | ★**적대 리뷰 N6 이 SURVIVED 로 실증** — 표면만 잠그면 **한 층 아래**가 샌다 |
+| `f4` | `InstallGuide.tsx` | `{ios && (` → `{false && (` | iOS 렌더 분기(「장치 부재」로 덮여 있던 절반) |
 | `r10` | `FieldNav.tsx` | `className="sa-tabbar"` → `"sa-tab-bar"` | ★**적대 리뷰 3차가 SURVIVED 로 실증** — 셸 W2 표지의 닻 |
 
 ## ③ 판독
 
-- **23회 · 최종 전부 CAUGHT.**
+- **25회 · 최종 전부 CAUGHT.**
 - ★★**정정(적대 리뷰 재검증 MAJOR-1)**: `r4` 는 *"B2 를 잠갔다"* 로 읽혔지만
   **`FieldAppAffordance.tsx` 한 파일에서만** CAUGHT 였다. **같은 형태의 변이를
   `InstallGuide.tsx` 에 넣으면 SURVIVED** 였다 — 그 파일에 테스트가 **0건**이었기 때문이다.
