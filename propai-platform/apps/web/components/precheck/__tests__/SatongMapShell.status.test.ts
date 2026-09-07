@@ -64,8 +64,10 @@ describe("MAP-001 SatongMapShell 레이어 status 정직 라벨", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("실데이터가 렌더링되는 zoning·official-price·age·terrain은 '연동 필요'(미연동)로 위장하지 않는다", () => {
-    for (const id of ["zoning", "official-price", "age", "terrain"]) {
+  // ★2026-09-07(사용자 신고②) — 모집단에서 `terrain` 을 뺐다. 그 레이어는 **베이스맵 스위처의
+  //   복제본**이라 레일에서 사라졌다(`SatongMapShell.tsx` 참조). 남은 셋의 명제는 그대로다.
+  it("실데이터가 렌더링되는 zoning·official-price·age는 '연동 필요'(미연동)로 위장하지 않는다", () => {
+    for (const id of ["zoning", "official-price", "age"]) {
       const layer = SATONG_MAP_SHELL_LAYERS.find((candidate) => candidate.id === id);
       expect(layer, id).toBeDefined();
       // 실제 지도 반영 컨트롤(mapEffect)이 존재한다 = 렌더 경로가 배선돼 있다.
@@ -73,5 +75,15 @@ describe("MAP-001 SatongMapShell 레이어 status 정직 라벨", () => {
       // 렌더링되는 레이어를 미연동('연동 필요')으로 표기하면 반대 방향 위장이다.
       expect(layer?.source, id).not.toContain("연동 필요");
     }
+  });
+
+  // ★★위 케이스는 **손 목록**이라 곧 상한이 된다(§«목록은 곧 상한»). 같은 명제를 **파생형**으로
+  //   한 번 더 건다 — 새 레이어가 추가돼도 자동으로 감시망에 들어온다.
+  it("★파생형 — `mapEffect` 컨트롤을 가진 레일 레이어는 하나도 '연동 필요'로 위장하지 않는다", () => {
+    const wired = SATONG_MAP_SHELL_LAYERS.filter((l) => l.controls.some((c) => c.mapEffect));
+    // ★공허 진리 가드 — 손 목록(3)보다 많아야 한다. 0건이면 아래 단언이 무의미하다.
+    expect(wired.length).toBeGreaterThan(3);
+    const liars = wired.filter((l) => (l.source ?? "").includes("연동 필요")).map((l) => l.id);
+    expect(liars).toEqual([]);
   });
 });

@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SATONG_MAP_SHELL_LAYERS } from "@/components/precheck/SatongMapShell";
 import { accountScopedKey } from "@/lib/account-scope";
-import { satongSelectionLabelsVisible } from "@/lib/satong-map-layers";
+import { isRenderableSatongMapLayer, satongSelectionLabelsVisible } from "@/lib/satong-map-layers";
 import {
   SATONG_MAP_PREFS_STORE_KEY,
   defaultEnabledLayerIds,
@@ -97,10 +97,19 @@ describe("★★기본값 커버리지 — **내가 실제로 낸 결함**을 �
     });
   });
 
-  it("★역방향 — 기본값 키에 **레이어가 아닌 것**이 없다(오타·유령 키)", () => {
-    const layerIds = new Set(SATONG_MAP_SHELL_LAYERS.map((l) => l.id as string));
-    const ghosts = Object.keys(defaultSatongMapControls()).filter((k) => !layerIds.has(k));
+  it("★역방향 — 기본값 키에 **지도를 안 그리는 것**이 없다(오타·유령 키)", () => {
+    // ★★2026-09-07(신고②) — 축을 «레일 레이어» → **«실제로 지도를 그리는 id»** 로 바꿨다.
+    //   사유: `terrain` 이 **레일에서 빠졌지만 지도는 계속 그린다**(베이스맵 스위처가 그 키에
+    //   써서 `resolveVWorldBaseLayer()` 가 읽는다). 종전 축으로는 그것이 «유령»으로 잡힌다.
+    //   ★**예외를 파지 않았다** — 예외는 다음 결함의 서식지가 된다. 대신 파생의 축을 바꿨고,
+    //   그래서 오타(`terrian`)·진짜 유령은 **여전히 잡힌다**(renderable 이 아니므로).
+    const ghosts = Object.keys(defaultSatongMapControls()).filter((k) => !isRenderableSatongMapLayer(k));
     expect(ghosts).toEqual([]);
+
+    // ★공허 진리 가드 — 대상이 0개면 위 단언이 무의미하다.
+    expect(Object.keys(defaultSatongMapControls()).length).toBeGreaterThan(5);
+    // ★대조군 — 조회기가 살아 있다(진짜 오타는 잡힌다).
+    expect(isRenderableSatongMapLayer("terrian")).toBe(false);
   });
 
   it("★각 기본값이 **그 레이어가 실제로 선언한 컨트롤**만 담는다 — 죽은 기본값 금지", () => {
