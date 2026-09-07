@@ -604,10 +604,13 @@ describe("★신고② — 베이스맵의 단일 소유자", () => {
     expect(ids).not.toContain("satellite"); // ★이게 없으면 두 배경이 동시에 선택된다
   });
 
-  it("★배타는 **베이스맵 id 에만** 걸린다 — 비-베이스맵 컨트롤이 배경 선택을 지우지 않는다", () => {
-    // ★종전 손 목록은 `layerId === "terrain"` 이면 **컨트롤을 가리지 않고** 배타 분기를 탔다.
-    //   `elevation` 이 나중에 `mapEffect:true` 로 구현되면 그 클릭이 배경 선택을 지운다.
-    //   오늘은 도달 불가(`mapEffect:false`)이므로 **오늘의 결함이 아니라** 구조로 막는 것이다.
+  it("★배경 축과 표고 축은 **저장소에서 공존한다** — 서로를 지우지 않는다", () => {
+    // ★★정직 표기: 이것은 **저장소 계약 락이지 핸들러 행위 락이 아니다.**
+    //   `setControlsByLayer` 를 직접 불러 상태만 본다. `handleLayerControlClick` 의
+    //   `&& TERRAIN_BASEMAP_CONTROL_IDS.has(control.id)` 조건은 **변이에서 SURVIVED** 이고,
+    //   그 생존은 설명 가능하다 — terrain 이 레일에서 빠져 그 분기를 태울 **UI 경로가 없다**
+    //   (스위처는 베이스맵 id 만 보낸다). 사유는 `SatongMapShell.tsx` 해당 줄에 적었다.
+    //   ⇒ 여기서 잠그는 것은 «두 축이 공존 가능한 형태인가» 까지다. 과장하지 않는다.
     // ★`enabledLayerIds` 에 terrain 을 넣는다 — `resolveVWorldBaseLayer` 의 첫 줄이
     //   `if (!hasSatongLayer(state,"terrain")) return "Base"` 라, 안 넣으면 이 단언이
     //   **배타와 무관한 이유로** 통과/실패한다(내 초판이 그렇게 틀렸다).
@@ -642,5 +645,9 @@ describe("★신고② — 베이스맵의 단일 소유자", () => {
 
   // ★부채를 초록 안에 남긴다(§C-13) — 커밋 메시지에만 적으면 드러나지 않는다.
   it.todo("표고·경사(elevation) 구현 시 자기 레이어로 되살린다 — 지금은 원천 미연동이라 레일에서 뺐다");
+  it.todo(
+    "★그때 `handleLayerControlClick` 의 비-베이스맵 가드를 **행위로** 잠근다 — 지금은 terrain 이 " +
+      "레일에 없어 그 분기를 태울 UI 경로가 없고, 변이가 SURVIVED 로 그것을 드러냈다",
+  );
   it.todo("`aerial` 레거시 컨트롤 id 를 쓰는 저장분이 실재하는지 측정 — 없으면 배타 집합에서 뺀다");
 });

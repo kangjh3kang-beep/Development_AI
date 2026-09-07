@@ -2482,9 +2482,17 @@ export function SatongMapShell({
       if (layerId === "terrain" && TERRAIN_BASEMAP_CONTROL_IDS.has(control.id)) {
         // ★2026-09-07 — 종전엔 **손 목록**이었고 **terrain 의 아무 컨트롤에나** 발동했다.
         //   ①목록은 곧 상한이다 → `BASEMAP_SWITCHES` 에서 **파생**한다(스위처에 항목이 늘면 따라온다).
-        //   ②`&& TERRAIN_BASEMAP_CONTROL_IDS.has(...)` 가 없으면, `elevation` 이 나중에 구현돼
-        //     `mapEffect:true` 가 되는 순간 그 클릭이 **사용자의 베이스맵 선택을 지운다.**
-        //     오늘은 `mapEffect:false` 라 도달 불가 — **오늘의 결함이 아니라 구조로 막는 것**이다.
+        //     변이 실증: 파생을 손 목록 하나로 줄이면 **CAUGHT** · 삭제 루프를 지우면 **CAUGHT**.
+        //   ②`&& TERRAIN_BASEMAP_CONTROL_IDS.has(...)` 는 `elevation` 이 나중에 `mapEffect:true` 로
+        //     구현될 때 그 클릭이 **사용자의 배경 선택을 지우는 것**을 막는다.
+        //     ★★**이 조건은 변이에서 SURVIVED 다 — 그리고 그 생존은 설명 가능하다**(§변이 규율:
+        //     «설명할 수 없는 생존만 진짜 구멍»). 이 PR 이 `terrain` 을 레일에서 뺐으므로
+        //     `handleLayerControlClick("terrain", …)` 를 부르는 곳은 **베이스맵 스위처뿐**이고
+        //     그것은 베이스맵 id 만 보낸다 ⇒ 오늘 이 조건은 **항상 참**이고 가르는 입력이 없다.
+        //     ★도달 조건을 명시한다: **`elevation`(또는 다른 비-베이스맵 컨트롤)이 `mapEffect:true`
+        //     가 되고 terrain 이 레일로 돌아오는 순간** 이 조건이 유일한 방어가 된다.
+        //     그때 락을 함께 만들 수 있도록 `basemapSwitcher.test.tsx` 에 `it.todo` 로 남겼다.
+        //     ★점수용 단언을 지어내지 않는다 — 사유를 여기 적는 것이 규율이 지시하는 처리다.
         TERRAIN_BASEMAP_CONTROL_IDS.forEach((id) => current.delete(id));
         current.add(control.id);
       } else if (layerId === "transactions" && (control.id === "kind-trade" || control.id === "kind-rent")) {
