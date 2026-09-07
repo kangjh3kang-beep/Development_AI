@@ -131,6 +131,38 @@ TOTAL_OUTAGE_FALLBACK_PCT = 50.0
 HANDLED_INSIGHT_TYPES = ("fallback_rate", "stale_reanalysis")
 
 
+#: 분석기가 `recommended_action="heal"` 로 발행하지만 `_candidate_actions` 가 **일부러**
+#  분기를 두지 않은 타입 → **사유를 적는다.**
+#
+#  ★왜 이 표가 필요한가(2026-09-06 실측): 분석기는 `latency_regression` 에 `"heal"` 을
+#    실어 발행하는데(`analyzer.py` 의 `insight_type_for_latency` + `"heal" if sev else "none"`)
+#    후보 쿼리가 `insight_type = ANY(HANDLED_INSIGHT_TYPES)` 로 거르므로 **원리적으로
+#    치유기에 도달하지 못한다.** 라이브에 열린 `latency_regression` 이 **22건** 쌓여 있었고
+#    (최신 2026-09-05T22:05:05Z), 그것을 말해 주는 기계가 **하나도 없었다** —
+#    좁힌 사유는 위 주석에 **산문으로만** 있었다.
+#  ★그래서 「하지 않기로 한 것」을 **선언하고 잠근다**(§36 면제에는 사유를 적는다).
+#    죽은 면제(더 이상 heal 을 안 내는 타입)도 락이 **실패**시킨다.
+#  ★이 표는 **처방이 아니다** — 여기 적힌다고 치유가 생기지 않는다. 「도달 불가를
+#    판정 가능하게」만 한다. 실제 처방을 붙일지는 별도 판단이다.
+#
+#  ★변이 감사 기록(2026-09-06 · base origin/main → 05c17a0d6dca · 8변이):
+#    CAUGHT 4 · 생존 4. **생존 4건은 전부 아래 사유 문자열의 「문구」 변이**다.
+#    구멍이 **아니다** — 락은 사유의 **실질**(길이 하한)과 **키**(어느 타입이 면제인가)를
+#    잠그고, **문구 자체는 일부러 단언하지 않는다.** 문구는 계약이 아니라 표현이라
+#    단언하면 다듬을 때마다 깨지는 취약한 락이 된다(§G-30).
+#    ★`__all__` 의 이 이름을 바꾸는 변이는 **형제 락**이 잡는다
+#      (`tests/test_heal_escalation_reachable.py` 의 `__all__` 실재 검사) —
+#      처음에 내 테스트 파일만 태워서 「생존 5」로 잘못 셌다. **감사 범위를 형제까지** 잡아라.
+HEAL_UNHANDLED_REASONS: dict[str, str] = {
+    "latency_regression": (
+        "★부채 — 자동 처방이 없다. 유력 후보인 임계 자동완화는 이 저장소에서 "
+        "**기각된 길**이다: 무트래픽 스택에서 `threshold_relax` 가 발화하면 "
+        "`integrations/base_client.py` 의 `_request` 가 실제 프로덕션 HTTP 타임아웃을 "
+        "곱한다(전역 지침 §완결 가능한 구현계획 의 실측). 사람이 보는 축으로 남긴다."
+    ),
+}
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # 순수 가드 함수군 (DB 무의존 — inline 단위검증 대상)
 # ════════════════════════════════════════════════════════════════════════════
@@ -319,7 +351,14 @@ async def _candidate_actions(db, now: datetime) -> list[dict[str, Any]]:
     #   **분기가 없는 타입까지 `LIMIT 200` 슬롯을 먹었다.**
     #   실측(2026-08-27): open 인사이트의 **97.2%** 가 `latency_baseline`(76.2%) +
     #   `latency_regression`(21.0%) 이고, `latency_regression` 은 `recommended_action='heal'`
-    #   을 내는데(`analyzer.py:846`) 이 함수에 분기가 **없다**.
+    #   을 내는데(`insight_type_for_latency` + `"heal" if sev else "none"` 자리) 이 함수에
+    #   분기가 **없다**.
+    #   ★★2026-09-07 정정 — 종전 이 줄은 `analyzer.py:846` 이라는 **줄번호**를 인용했다.
+    #     그 좌표는 지금 **주석 줄**이고 실제 발행부는 862·1153 이다. ***좌표는 썩고
+    #     심볼은 안 썩는다*** — 줄번호를 인용하지 마라.
+    #     ★이 정정은 독립 검증이 잡았다: 나(#1007)는 «낡은 좌표를 걷어냈다» 고 선언하고
+    #       내가 **수정한 바로 이 파일**에 그 좌표를 남겨 뒀다(§16 — PR 이 선언한 원칙을
+    #       그 PR 의 코드에 스스로 적용했는지 확인하라 / §6 형제 스윕).
     #   ★`'none'` 도 종전 WHERE 를 통과하므로 **사유로는 못 막고 타입으로만 막힌다.**
     #   잡음이 슬롯을 채우면 진짜 후보가 200 밖으로 밀리는데, 한 배치의 `created_at` 이
     #   **하나**라 어느 200 이 남는지가 **임의**가 된다 — 조용한 기아다.
@@ -569,6 +608,7 @@ __all__ = [
     "_within_cooldown", "_cap_exceeded", "should_escalate",
     "GLOBAL_HOURLY_CAP", "PER_TRIGGER_HOURLY_CAP", "COOLDOWN_MIN",
     "ESCALATION_THRESHOLD", "TOTAL_OUTAGE_FALLBACK_PCT", "HANDLED_INSIGHT_TYPES",
+    "HEAL_UNHANDLED_REASONS",
     "HEAL_BLOCKED_EVENT", "CAP_BLOCK_REASONS",
     "ESCALATION_COUNT_REASONS", "ESCALATION_WINDOW_HOURS",
     "_SUPPRESSING_STATUSES", "_DISMISSED_SUPPRESS_WITHIN_WINDOW",
