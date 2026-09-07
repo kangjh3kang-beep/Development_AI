@@ -87,3 +87,43 @@ def test_성립한_거래사례가_있으면_그것이_적용된다() -> None:
     applied = [m for m in ms if m["applicable"]]
     assert len(applied) == 2, _names(ms)
     assert any(m["unit_price"] == 4_000_000 for m in applied)
+
+
+# ── W7 물건표시 정합 ──────────────────────────────────────────────────────────
+
+def test_라이브_조합이_확인대상으로_잡힌다() -> None:
+    """★라이브 실측 조합 — 지목 답 · 용도지역 일반상업 · 이용상황 업무용."""
+    from app.services.land_intelligence.desk_appraisal_service import _subject_consistency
+    r = _subject_consistency({"land_category": "답", "zone_type": "일반상업지역",
+                              "usage": "업무용"})
+    assert r["ok"] is False
+    assert len(r["conflicts"]) == 2, r["conflicts"]
+    fields = " ".join(c["field_a"] + c["field_b"] for c in r["conflicts"])
+    assert "지목 답" in fields and "일반상업지역" in fields and "업무용" in fields
+
+
+def test_정합한_조합은_통과한다() -> None:
+    """★위양성 축 — 이게 없으면 «항상 conflict» 인 구현이 만점을 받는다."""
+    from app.services.land_intelligence.desk_appraisal_service import _subject_consistency
+    r = _subject_consistency({"land_category": "대", "zone_type": "일반상업지역",
+                              "usage": "업무용"})
+    assert r["ok"] is True and r["conflicts"] == []
+    # 농지에 농지 이용도 정합.
+    r2 = _subject_consistency({"land_category": "답", "zone_type": "농림지역", "usage": "답"})
+    assert r2["ok"] is True, r2["conflicts"]
+
+
+def test_값이_없으면_판정하지_않는다() -> None:
+    """★빈 값끼리 매칭하지 않는다 — 「모름」을 「정합」으로 표현하지 않게."""
+    from app.services.land_intelligence.desk_appraisal_service import _subject_consistency
+    for sub in ({}, {"land_category": "답"}, {"zone_type": "일반상업지역"}, None):
+        r = _subject_consistency(sub)
+        assert r["conflicts"] == [], f"정보가 없는데 충돌을 신고했다: {sub} → {r}"
+
+
+def test_판정이_아니라_확인요청임을_근거가_말한다() -> None:
+    """★이 판정의 **법적 근거는 미확인**이다 — 결론처럼 읽히면 안 된다."""
+    from app.services.land_intelligence.desk_appraisal_service import _subject_consistency
+    r = _subject_consistency({"land_category": "답", "zone_type": "일반상업지역"})
+    assert "법적 근거 미확인" in r["basis"], r["basis"]
+    assert "확인 요청" in r["basis"], r["basis"]

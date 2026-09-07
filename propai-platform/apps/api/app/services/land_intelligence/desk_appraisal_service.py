@@ -125,6 +125,50 @@ def _shape_factor(irregularity: float | None) -> tuple[float, str]:
     return 1.0, "정형(효율 우세)"
 
 
+# 지목이 「대」가 아닌데 도시지역 용도(상업·주거·공업)인 조합 — **틀림이 아니라 확인 대상**.
+# ★지목은 등기·대장의 표시이고 용도지역은 도시계획이라 **원래 어긋날 수 있다**(농지에
+#   상업지역이 지정되는 일은 흔하다). 다만 그때 감정평가는 **현황과 공부 중 무엇을
+#   기준으로 삼았는지**를 밝혀야 하므로, 조용히 넘기면 안 된다.
+_NON_DAE_JIMOK = {"답", "전", "임야", "과수원", "목장용지", "구거", "유지", "하천", "제방", "도로"}
+_URBAN_ZONES = ("상업지역", "주거지역", "공업지역", "준주거", "준공업")
+
+
+def _subject_consistency(subject: dict[str, Any] | None) -> dict[str, Any]:
+    """지목 ↔ 용도지역 ↔ 이용상황의 **확인이 필요한 조합**을 표면에 올린다.
+
+    ★**틀렸다고 단정하지 않는다.** 셋이 동시에 참인 경우가 실제로 많다
+      (지목 미변경 상태에서 용도지역만 상향되고 현황은 이미 업무용).
+      그래서 `ok=False` 가 아니라 `conflicts` 목록과 «확인하라»를 준다.
+    ★조합 규칙의 **법적 근거는 미확인**이다(실무 관행으로 안다) — 그래서 판정이 아니라
+      **고지**다. 근거 없이 값을 바꾸지 않는다.
+    """
+    s = subject or {}
+    jimok = str(s.get("land_category") or s.get("jimok") or "").strip()
+    zone = str(s.get("zone_type") or s.get("land_use") or "").strip()
+    usage = str(s.get("usage") or s.get("use_status") or "").strip()
+    conflicts: list[dict[str, str]] = []
+    if jimok and zone and jimok in _NON_DAE_JIMOK and any(z in zone for z in _URBAN_ZONES):
+        conflicts.append({
+            "field_a": f"지목 {jimok}", "field_b": f"용도지역 {zone}",
+            "note": ("지목이 「대」가 아닌데 도시지역 용도가 지정돼 있습니다. "
+                     "지목 미변경 상태일 수 있으며(정상), 그때 평가는 **현황과 공부 중 "
+                     "무엇을 기준으로 했는지**를 밝혀야 합니다."),
+        })
+    if jimok and usage and jimok in _NON_DAE_JIMOK and usage not in ("전", "답", "임야", "자연림", "농경지"):
+        conflicts.append({
+            "field_a": f"지목 {jimok}", "field_b": f"이용상황 {usage}",
+            "note": ("공부상 지목과 현황 이용이 다릅니다. 감정평가는 **현황 기준**이 "
+                     "원칙이므로 이 차이가 가액에 반영됐는지 확인이 필요합니다."),
+        })
+    return {
+        "ok": not conflicts,
+        "conflicts": conflicts,
+        # ★검증하지 못한 것을 값 안에 적는다 — 이 판정을 결론으로 쓰지 않게.
+        "basis": ("지목·용도지역·이용상황 조합 점검(실무 관례 기준 · **법적 근거 미확인** — "
+                  "틀렸다는 판정이 아니라 확인 요청입니다)."),
+    }
+
+
 def _assemble_methods(
     method_pub: dict | None,
     method_cmp: dict | None,
@@ -647,6 +691,12 @@ async def desk_appraisal(
         "appraised_price_per_sqm": appraised_unit,
         "appraised_total_won": appraised_total,
         "subject": subject,                              # 대상물건 표시(지목·용도지역·이용상황 등)
+        # ★★2026-09-07 W7 — 물건표시 **정합 검증**. 라이브에서 지목 **답** · 이용상황
+        #   **업무용** · 용도지역 **일반상업지역** 이 나란히 떴는데 **아무도 확인하지
+        #   않았다.** 감정평가는 「현황 기준」이 원칙이라 이 셋의 관계가 **평가 전제**다.
+        #   ★셋이 동시에 참일 수 있다(지목 미변경 + 현황 업무용). 그래서 **틀렸다고
+        #     단정하지 않고** «확인이 필요한 조합»으로 표면에 올린다.
+        "subject_consistency": _subject_consistency(subject),
         "official_price_per_sqm": int(op),               # 적용 개별공시지가(원/㎡)
         "pnu": pnu,
         "building": building,
