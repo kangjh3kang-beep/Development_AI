@@ -160,11 +160,14 @@ describe("SatongMapShell 레일 hover 전환 의도 지연(A안)", () => {
     act(() => { vi.advanceTimersByTime(100); });
 
     // 그 상태에서 또 다른 아이콘을 클릭(의도 확정).
-    fireEvent.click(railIcon("지형도·항공뷰"));
+    // ★2026-09-07 — 종전엔 「지형도·항공뷰」였다. 그 항목은 **베이스맵 스위처의 복제본**이라
+    //   신고②로 레일에서 없어졌다. 이 테스트가 재는 것은 «제3의 아이콘을 클릭하면 그것이
+    //   남는가» 이므로 **명제는 그대로**이고 아이콘만 다른 것으로 바꾼다.
+    fireEvent.click(railIcon("지적도"));
     act(() => { vi.advanceTimersByTime(500); });
 
     // ★클릭한 것이 남아야 한다(예약된 POI 전환이 덮어쓰면 안 된다).
-    expect(shownPanelName()).toBe("지형도·항공뷰");
+    expect(shownPanelName()).toBe("지적도");
   });
 
   it("★⑥ 예약 중에 원래 열린 아이콘으로 되돌아오면 예약 전환이 취소된다", () => {
