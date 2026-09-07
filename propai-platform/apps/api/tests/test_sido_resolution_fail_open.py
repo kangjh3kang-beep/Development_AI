@@ -232,13 +232,253 @@ def test_scope_tells_the_truth_about_the_fallback() -> None:
 # ★부채 — 미이관 재구현 2곳(반환 계약이 다르다 · 이 PR 범위 밖)
 # ─────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="★부채: onbid_client/hyphen_client 의 자체 시도 해석기 2곳이 미이관(반환 계약이 축약 vs 완전명으로 갈린다)")
-def test_all_sido_resolvers_delegate_to_the_canonical_one() -> None:
-    """언젠가 주소→시도 해석기가 **한 자리**여야 한다(정본 독스트링이 이미 선언한 것)."""
-    from app.services.auction.onbid_client import _sido_from_address
+@pytest.mark.xfail(strict=True, reason="★부채: hyphen_client.extract_sido 가 **완전명**을 반환해 정본과 계약이 갈린다(정식 시도명 20개 전수 불일치 20/20)")
+def test_hyphen_resolver_delegates_to_the_canonical_one() -> None:
+    """★사유를 **실측으로** 정정했다(독립 리뷰 MEDIUM-3).
+
+    종전 `reason` 은 *"onbid/hyphen **2곳**이 미이관(축약 vs 완전명)"* 이라고 썼는데 **틀렸다** —
+    정식 시도명 20개 전수 3자 비교 실측: `onbid._sido_from_address` **불일치 0건**(이미 축약형을
+    돌려준다) · `hyphen.extract_sido` **불일치 20건**. 즉 이 xfail 은 **hyphen 하나가 떠받치고**
+    있었고, 첫 단언(onbid)은 통과하고 있었다.
+    ★그리고 onbid 의 **진짜 결함은 이 테스트가 태우지 않았다**(아래 별도 부채로 분리).
+    """
     from app.services.registry.hyphen_client import extract_sido
 
     addr = "전라남도 순천시 조례동 1"
-    canonical = sido_short_or_empty(addr)
-    assert _sido_from_address(addr) == canonical
-    assert extract_sido(addr) == canonical
+    assert extract_sido(addr) == sido_short_or_empty(addr)
+
+
+@pytest.mark.xfail(strict=True, reason="★부채: onbid_client._sido_from_address 의 `first[:2]` 폴백이 **존재하지 않는 시도를 지어낸다**")
+def test_onbid_resolver_does_not_fabricate_a_sido() -> None:
+    """★onbid 의 결함은 «계약이 다름» 이 아니라 **날조**다(독립 리뷰 MEDIUM-3 실측).
+
+        '성남시 분당구 1'    정본='' → onbid='성남'
+        'zzz없는지역 1-1'    정본='' → onbid='zz'
+        '해운대구 우동 1394'  정본='' → onbid='해운'
+
+    이 PR 이 고치겠다고 선언한 «모름을 유효값으로 표현하지 않는다» **그 자체**다.
+    ★hyphen 만 이관하면 위 xfail 이 XPASS 로 뒤집혀 마커가 제거되고, **onbid 의 날조가
+      부채 목록에서 사라진 채 남는다**(§C-12) — 그래서 **두 부채를 분리**한다.
+    """
+    from app.services.auction.onbid_client import _sido_from_address
+
+    for addr in ("성남시 분당구 1", "zzz없는지역 1-1", "해운대구 우동 1394"):
+        assert _sido_from_address(addr) == sido_short_or_empty(addr), addr
+
+
+# ─────────────────────────────────────────────────────────────
+# ★독립 리뷰 R1 반영 — 축을 넓히고 배선을 잠근다
+# ─────────────────────────────────────────────────────────────
+
+def _rows_with_region_nm_only() -> list[dict]:
+    """★`CLS_NM` 이 **없고** `REGION_NM` 만 있는 행 — 폴백 분기를 실제로 태운다(MEDIUM-5).
+
+    ★기계 변이가 `row_region_name` 의 `REGION_NM`/`REGION` 분기에서 **3건 나란히 생존**했다.
+      원인: 모든 픽스처 행에 `CLS_NM` 이 있어 그 분기가 **도달 불가**였다.
+      ★fail-open 픽스처에서 방금 고친 것과 **같은 형태**를 옆 함수에서 다시 만들었다.
+      ⇒ 분기를 만들었으면 **그 분기를 태우는 행**을 픽스처에 같이 넣는다.
+    """
+    return [
+        {"REGION_NM": "전남", "ITM_NM": "변동률", "DTA_VAL": 0.05, "WRTTIME_IDTFR_ID": "202605"},
+        {"REGION": "전국", "ITM_NM": "변동률", "DTA_VAL": 0.06, "WRTTIME_IDTFR_ID": "202605"},
+    ]
+
+
+def test_region_nm_fallback_branch_is_actually_exercised() -> None:
+    """★공허 방지 — 이 픽스처가 정말 `CLS_NM` 없는 행인가."""
+    rows = _rows_with_region_nm_only()
+    assert all("CLS_NM" not in r for r in rows), "CLS_NM 이 있으면 폴백 분기가 안 돈다"
+    assert rc.row_region_name(rows[0]) == "전남"
+    assert rc.row_region_name(rows[1]) == "전국"
+
+
+def test_region_nm_fallback_is_used_by_both_consumers() -> None:
+    """폴백 분기가 `_collect` 와 `_has_region` **양쪽**에서 동작한다."""
+    rows = _rows_with_region_nm_only()
+    assert sorted(r for _t, r in rc.rate_series_from_rows(rows, "전남")) == [0.05]
+    assert rc._has_region(rows, "전남") is True
+    assert rc._has_region(rows, "경기") is False
+
+
+def test_cls_nm_wins_over_the_fallback_keys() -> None:
+    """★두 축 대조 — `CLS_NM` 이 있으면 **그쪽이 우선**한다(폴백이 덮어쓰지 않는다)."""
+    row = {"CLS_NM": "전남", "REGION_NM": "경기", "ITM_NM": "변동률", "DTA_VAL": 1.0}
+    assert rc.row_region_name(row) == "전남"
+
+
+# ── HIGH-1: latest_value_from_rows 도 같은 축으로 (형제 미스윕이었다) ──
+
+def test_latest_value_does_not_match_via_hierarchy_path() -> None:
+    """★`"경기"` 가 `CLS_FULLNM="경기>성남시"` 를 통해 **성남시 값을 채택**하면 안 된다.
+
+    독립 리뷰 실측: 같은 `rows` 로 `rate_series_from_rows` 는 전국으로 떨어지는데
+    `latest_value_from_rows` 는 **0.30(성남시)을 「경기」로** 돌려줬다 — 두 축이 갈렸다.
+    """
+    got = rc.latest_value_from_rows(_rows(), "경기")
+    assert got is None or got[0] not in (0.20, 0.30), f"계층경로 과매칭: {got}"
+
+
+def test_latest_value_does_not_judge_region_by_item_name() -> None:
+    """★`ITM_NM`(항목명)은 지역이 아니다 — 그것으로 지역을 판정하면 안 된다."""
+    rows = [{"CLS_NM": "서울", "ITM_NM": "경기지수", "DTA_VAL": 7.7, "WRTTIME_IDTFR_ID": "202607"}]
+    assert rc.latest_value_from_rows(rows, "경기") is None, "ITM_NM 으로 지역을 판정했다"
+    # 특이도 — 진짜 서울 행은 찾는다.
+    assert rc.latest_value_from_rows(rows, "서울") == (7.7, "202607")
+
+
+def test_latest_value_has_no_per_row_fail_open() -> None:
+    """★지역 필드가 **빈 행**이 필터를 통과하면 안 된다(per-row fail-open)."""
+    rows = [
+        {"DTA_VAL": 9.99, "WRTTIME_IDTFR_ID": "209912"},          # 지역 없음 — 통과하면 안 된다
+        {"CLS_NM": "전남", "DTA_VAL": 0.02, "WRTTIME_IDTFR_ID": "202607"},
+    ]
+    got = rc.latest_value_from_rows(rows, "전남")
+    assert got == (0.02, "202607"), f"지역 없는 행이 채택됐다: {got}"
+
+
+# ── HIGH-3: 배선 락 — 함수가 아니라 «주소가 실제로 전달되는가» ──
+
+def test_time_adjust_actually_uses_the_address() -> None:
+    """★배선 — 주소를 상수로 바꾸면 빨개져야 한다.
+
+    ★독립 리뷰 실측: `_lookup_rate(address)` → `_lookup_rate("")` 변이가 **전 저장소
+      12,280건을 통과**했다. 즉 모든 필지가 주소와 무관하게 1.8% 를 받게 만들어도 무잠금이었다.
+      락이 함수를 태우면서 **그 함수가 불리는지**는 아무것도 안 봤다.
+    """
+    from app.services.land_intelligence.land_price_index import time_adjust_factor
+
+    seoul = time_adjust_factor("서울특별시 강남구 역삼동 1", base_year=2025)
+    gyeongbuk = time_adjust_factor("경상북도 안동시 1", base_year=2025)
+    unknown = time_adjust_factor("zzz없는곳 1", base_year=2025)
+    # 세 모집단이 **서로 다른** 연변동률을 받아야 한다(주소가 실제로 쓰인다는 증거).
+    rates = {seoul["annual_rate"], gyeongbuk["annual_rate"], unknown["annual_rate"]}
+    assert len(rates) == 3, f"주소가 결과를 바꾸지 않는다(배선 끊김): {rates}"
+    assert seoul["annual_rate"] != unknown["annual_rate"]
+    assert gyeongbuk["annual_rate"] != unknown["annual_rate"]
+    # 사유에도 해석된 지역이 실려야 한다(어느 지역 요율인지 사용자가 알 권리).
+    assert "서울" in seoul["rationale"], seoul["rationale"]
+    assert "경북" in gyeongbuk["rationale"], gyeongbuk["rationale"]
+
+
+# ── MEDIUM-1: 접두 잡음 회귀 방지(내가 만든 회귀였다) ──
+
+@pytest.mark.parametrize(
+    ("addr", "expected"),
+    [
+        ("경기도 성남시 분당구 1", "경기"),
+        ("(우)13561 경기도 성남시 분당구", "경기"),
+        ("대한민국 경기도 성남시", "경기"),
+        ("[본점] 서울특별시 강남구", "서울"),
+        ("(신관) 충청남도 천안시", "충남"),
+        ("  경기도 성남시", "경기"),
+    ],
+)
+def test_address_prefix_noise_does_not_break_resolution(addr: str, expected: str) -> None:
+    """★정본은 `startswith` 라 접두 잡음에 약하다 — 그 계열이 회귀했었다(독립 리뷰 MEDIUM-1).
+
+    ★내 «전수 대조» 는 정식 시도명을 **0번 위치에만** 놓고 태워서 이 계열을 **원리적으로
+      볼 수 없었다**(모집단이 결함의 축과 달랐다).
+    """
+    assert _sido_of(addr) == expected
+
+
+@pytest.mark.parametrize("addr", ["zzz없는곳 1", "(우)00000 zzz없는곳", "광주시 오포읍", ""])
+def test_prefix_stripping_does_not_fabricate_a_sido(addr: str) -> None:
+    """★특이도 — 잡음을 벗겨도 **없는 시도를 지어내지 않는다**(모호한 `광주시` 포함)."""
+    assert _sido_of(addr) == ""
+
+
+# ─────────────────────────────────────────────────────────────
+# ★HIGH-2 + HIGH-3(async 경로) — 계획서가 선언한 「라벨 정직화」를 **실제로** 태운다
+#
+#   독립 리뷰 실측: 수정 후에도 경남이 «R-ONE 지가변동률 **실데이터**» 라벨로 1.0491 을 받아
+#   채택 단가에 곱해졌다 — 혼합이 전국으로 좁아졌을 뿐 «확신 있는 답» 은 그대로였다.
+#   그리고 그 async 경로는 **어떤 락도 태우지 않았다**(배선 변이가 생존).
+#   ⇒ `reb_ready`/`fetch_land_price_changes` 를 스텁해 **그 경로를 직접 실행**한다.
+#     ★스텁이 검증 대상 층을 우회하지 않는다 — 스텁하는 것은 «네트워크» 뿐이고,
+#       지역 해석·범위 판정·라벨 조립은 **진짜 코드가 돈다**.
+# ─────────────────────────────────────────────────────────────
+
+def _patch_rone(monkeypatch, rows: list[dict]) -> None:
+    """네트워크만 스텁한다 — 판정 로직은 진짜를 태운다."""
+    import app.services.external_api.reb_client as _rc
+
+    monkeypatch.setattr(_rc, "reb_ready", lambda: True)
+
+    async def _fetch(months: int = 24):
+        return rows
+
+    monkeypatch.setattr(_rc, "fetch_land_price_changes", _fetch)
+
+
+def _many_months(region: str, n: int = 24, rate: float = 0.05) -> list[dict]:
+    """한 지역의 **n개월** 시계열.
+
+    ★`cumulative_factor_from_rows` 는 **고유 기간이 요청 개월(기본 24) 미만이면 판정을 거부**한다
+      (#1014 이 넣은 가드). 12개월짜리 픽스처를 주면 그 거부가 발화해 근사표로 떨어지고,
+      **async 경로를 태우려던 락이 조용히 다른 길을 잰다** — 처음 이 픽스처를 12개월로 만들었다가
+      그 함정을 밟았다. 기본을 24로 둔다.
+    ★변동률은 누적이 sane-range(0.7~1.3)에 들도록 작게 유지한다.
+    """
+    return [
+        {"CLS_NM": region, "ITM_NM": "변동률", "DTA_VAL": rate,
+         "WRTTIME_IDTFR_ID": f"2024{m:02d}" if m <= 12 else f"2025{m - 12:02d}"}
+        for m in range(1, n + 1)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_regional_series_is_labeled_as_that_region(monkeypatch) -> None:
+    """요청 지역의 시계열이 **실제로 있으면** 그 지역 실데이터라고 말해도 된다(특이도)."""
+    from app.services.land_intelligence.land_price_index import time_adjust_factor_async
+
+    _patch_rone(monkeypatch, _many_months("경남") + _many_months("전국"))
+    out = await time_adjust_factor_async("경상남도 창원시 의창구 1")
+    assert out["source"] == "R-ONE", out
+    assert out.get("scope") == "경남", out
+    assert "경남" in out["rationale"], out["rationale"]
+
+
+@pytest.mark.asyncio
+async def test_nationwide_fallback_must_not_claim_regional_real_data(monkeypatch) -> None:
+    """★★핵심 — 요청 지역 시계열이 **없어** 전국으로 떨어지면 **그렇다고 말해야** 한다.
+
+    종전에는 이 경우에도 `source="R-ONE"` · *"R-ONE 지가변동률 **실데이터** 최근 24개월 누적"*
+    이었다. 그 문자열은 `DeskAppraisalReportClient.tsx:570` 등에 **그대로 찍히고**,
+    그 계수는 `desk_appraisal_service` 에서 **채택 단가에 곱해진다**.
+    """
+    from app.services.land_intelligence.land_price_index import time_adjust_factor_async
+
+    # 경남 행은 **없고** 전국만 있는 모집단(정확일치가 거부하는 바로 그 상황).
+    _patch_rone(monkeypatch, _many_months("전국"))
+    out = await time_adjust_factor_async("경상남도 창원시 의창구 1")
+
+    assert out.get("scope") == "전국", out
+    assert out["source"] != "R-ONE", f"전국 대체인데 그냥 R-ONE 이라고 말한다: {out['source']}"
+    assert "전국" in out["source"], out["source"]
+    # ★사용자가 읽는 줄이 **거짓 단정**을 하지 않는가.
+    assert "해당 지역 실데이터가 아닙니다" in out["rationale"], out["rationale"]
+    # 두 모집단 대조 — 지역 시계열이 있는 경우(위 테스트)와 **다른** 라벨이어야 한다.
+    assert out["rationale"] != f"R-ONE 지가변동률 실데이터(경남) 최근 24개월 누적 시점수정 {out['factor']}"
+
+
+@pytest.mark.asyncio
+async def test_async_path_actually_uses_the_resolved_address(monkeypatch) -> None:
+    """★배선(async) — 주소를 상수로 바꾸면 빨개져야 한다.
+
+    독립 리뷰 실측: `cumulative_factor_from_rows(rows, sido)` → `(rows, "")` 변이가
+    **전 저장소를 통과**했다(이 경로를 태우는 락이 0건이었다).
+    """
+    from app.services.land_intelligence.land_price_index import time_adjust_factor_async
+
+    # 지역별로 **다른** 변동률 → 주소가 쓰이면 결과가 갈린다.
+    rows = _many_months("경남", rate=0.05) + _many_months("서울", rate=0.90)
+    # ★공허 방지 — 픽스처가 **판정 거부를 넘는가**(안 넘으면 근사표로 떨어져 다른 길을 잰다).
+    assert rc.distinct_period_count(rc.rate_series_from_rows(rows, "경남")) >= 24
+    _patch_rone(monkeypatch, rows)
+    gyeongnam = await time_adjust_factor_async("경상남도 창원시 1")
+    seoul = await time_adjust_factor_async("서울특별시 강남구 1")
+    assert gyeongnam.get("scope") == "경남" and seoul.get("scope") == "서울", (gyeongnam, seoul)
+    assert gyeongnam["factor"] != seoul["factor"], (
+        f"주소가 결과를 바꾸지 않는다(배선 끊김): {gyeongnam['factor']} == {seoul['factor']}"
+    )

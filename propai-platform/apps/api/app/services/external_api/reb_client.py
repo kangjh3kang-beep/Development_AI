@@ -168,15 +168,22 @@ def latest_value_from_rows(
     """월/분기 행에서 지역 매칭 최신 시점의 값(%)·작성시점을 반환. 값 필드 방어적 탐색."""
     if not rows:
         return None
-    region_keys = ("CLS_NM", "CLS_FULLNM", "REGION_NM", "REGION", "ITM_NM")
+    # ★★독립 리뷰 적발(HIGH-1 · 2026-09-08): 이 함수는 **같은 rows** 를 받는 형제인데
+    #   정확일치 처방을 안 받고 있었다(`land_price.py` 가 `rate_series_from_rows` 와
+    #   **나란히** 호출한다). 종전에 셋이 동시에 틀렸다:
+    #     ① `CLS_FULLNM`(계층 경로) 부분문자열 — «경기» 가 `"경기>성남시"` 에 매칭돼
+    #        **성남시 값 0.30 을 「경기」로 채택**했다(리뷰어 실측).
+    #     ② `region_keys` 에 **`ITM_NM`** 이 있었다 — 지역이 **아닌** 필드로 지역을 판정.
+    #        `ITM_NM="경기지수"` 행이 «경기» 로 잡혔다.
+    #     ③ `and region_txt.strip()` — 지역 필드가 **빈 행은 필터를 통과**했다(per-row fail-open).
+    #   ⇒ `row_region_name` 정확일치로 통일한다. 판정 규칙은 **한 자리**에 둔다.
     val_keys = ("DTA_VAL", "VALUE", "DATA_VALUE", "dtaVal")
     time_keys = ("WRTTIME_IDTFR_ID", "WRTTIME_DESC", "WRTTIME", "PRD_DE")
     best: tuple[str, float] | None = None
     for row in rows:
         if not isinstance(row, dict):
             continue
-        region_txt = " ".join(str(row.get(k, "")) for k in region_keys)
-        if region_sido and region_sido not in region_txt and region_txt.strip():
+        if region_sido and row_region_name(row) != region_sido:
             continue
         raw = next((row.get(k) for k in val_keys if row.get(k) not in (None, "")), None)
         try:
@@ -246,6 +253,13 @@ def rate_series_from_rows(rows: list[dict[str, Any]], region_sido: str) -> list[
         #     **실제 「전국」 행**뿐이고, 그것은 `rate_series_scope` 가 «전국» 이라고 **말한다**.
         #     둘 다 없으면 **빈 시계열**을 돌려준다 — 소비처의 판정 거부가 발화하게(모름을
         #     유효값으로 표현하지 않는다).
+        #
+        #   ★★종전 주석은 «남은 소비처: trend_from_rows · rate_series_scope ·
+        #     land_price_index.monthly_rate_series_async» 라고 적었다. **재측정했다**
+        #     (독립 리뷰 MEDIUM-4 — 자기 라벨을 승계하지 않는다):
+        #     `monthly_rate_series_async` 는 **호출부 0건**이다(저장소 전수 — 정의와 계획서
+        #     언급뿐). base 시점부터 이미 죽어 있었다 — 그 주석은 **틀린 사실**을 실어 날랐다.
+        #     실사용 소비처는 `trend_from_rows`(차트) · `rate_series_scope`(라벨) 둘이다.
         series = _collect("전국")
     series.sort(key=lambda x: x[0])
     return series

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Any
 
@@ -19,6 +20,25 @@ _ANNUAL_RATE: dict[str, float] = {
     "경남": 0.010, "제주": 0.012,
 }
 _DEFAULT_RATE = 0.018  # 전국 평균 근사
+
+
+#: 주소 앞에 붙는 **비주소 잡음** — 이 목록은 **닫혀 있다**(임의 문자열을 벗기지 않는다).
+#: 우편번호 `(우)12345` · 국가명 · 대괄호/괄호 라벨. 그 이상은 벗기지 않는다 —
+#: 벗길수록 «시도가 아닌 것을 시도로 읽을» 위험이 커진다(정본이 `startswith` 인 이유다).
+_ADDR_PREFIX_NOISE = re.compile(
+    r"^\s*(?:\(\s*우\s*\)\s*\d{3,6}|\[[^\]]{1,20}\]|\([^)]{1,20}\)|대한민국|한국)\s*"
+)
+
+
+def _strip_address_prefix_noise(address: str) -> str:
+    """주소 앞의 **닫힌 목록** 잡음만 반복 제거한다(최대 3회 — 무한루프·과잉제거 방지)."""
+    a = (address or "").strip()
+    for _ in range(3):
+        stripped = _ADDR_PREFIX_NOISE.sub("", a, count=1).strip()
+        if stripped == a:
+            break
+        a = stripped
+    return a
 
 
 def _sido_of(address: str) -> str:
@@ -48,8 +68,24 @@ def _sido_of(address: str) -> str:
     from app.services.tax.regional_tax_data import sido_short_or_empty
 
     short = sido_short_or_empty(address)
+    if not short:
+        # ★독립 리뷰 적발(MEDIUM-1 · 2026-09-08): 정본은 `addr.startswith(시도명)` 이라
+        #   **주소 맨 앞**에서만 인정한다. 종전 구현은 부분문자열이라 **접두 잡음을 견뎠는데**
+        #   위임으로 바꾸며 그 계열이 회귀했다(실측):
+        #       "(우)13561 경기도 성남시"  경기 → ''    "대한민국 경기도 성남시"  경기 → ''
+        #       "[본점] 서울특별시 강남구"  서울 → ''
+        #   ★내 «전수 대조» 는 **정식 시도명을 0번 위치에만** 놓고 태워서 이 계열을
+        #     **원리적으로 볼 수 없었다**(모집단이 결함의 축과 달랐다).
+        #   ⇒ 부분문자열로 되돌리지 않는다(정본이 피한 모호성 함정으로 돌아간다).
+        #     대신 **경계 있는 접두 잡음만** 벗기고 다시 정본에 묻는다.
+        short = sido_short_or_empty(_strip_address_prefix_noise(address))
     # 정본은 17개 시도 전부를 축약키로 돌려준다. 이 모듈의 근사표에 없는 키는 «미해석» 으로 본다
     # (모름을 유효값으로 표현하지 않는다 — 그 표현이 fail-open 을 먹였다).
+    # ★현재는 **도달 불가 방어**다(독립 리뷰 LOW-1): `_ANNUAL_RATE`(17) 와 정본의
+    #   `KNOWN_SIDO_SHORT`(17) 가 **완전 동일**해 이 `else` 가지가 실행되지 않는다(차집합 양방향 0).
+    #   그래서 이 줄을 지우는 변이는 **생존한다 — 구멍이 아니라 도달 불가다.**
+    #   두 표가 갈리는 순간 살아나고, 그 괴리는 `test_every_official_sido_name_resolves` 의
+    #   `assert got in _ANNUAL_RATE` 가 잡는다(정본에 시도가 추가되면 빨개진다).
     return short if short in _ANNUAL_RATE else ""
 
 
@@ -76,16 +112,35 @@ async def time_adjust_factor_async(address: str = "", base_year: int = 2025) -> 
         from app.services.external_api.reb_client import (
             cumulative_factor_from_rows,
             fetch_land_price_changes,
+            rate_series_scope,
             reb_ready,
         )
         if reb_ready():
             rows = await fetch_land_price_changes(months=24)
             if rows:
-                f = cumulative_factor_from_rows(rows, _sido_of(address))
+                sido = _sido_of(address)
+                f = cumulative_factor_from_rows(rows, sido)
                 # sane-range(24개월 누적 ±30% 이내)만 채택, 벗어나면 근사 폴백
                 if f and 0.7 < f < 1.3:
+                    # ★★독립 리뷰 적발(HIGH-2 · 2026-09-08): 계획서가 «전국 폴백이면 「실데이터」로
+                    #   단정하지 않는다» 고 선언해 놓고 **코드가 따라가지 않았다**. 수정 전후 모두
+                    #   경남이 «R-ONE 지가변동률 실데이터» 라벨로 1.04x 를 받아 채택 단가에 곱해졌다
+                    #   — 혼합이 전국으로 좁아졌을 뿐 «확신 있는 답» 은 그대로였다(§F-24).
+                    #   ⇒ `rate_series_scope` 를 **실제로 읽어** 어느 범위에서 나왔는지 말한다.
+                    scope = rate_series_scope(rows, sido)
+                    if sido and scope == sido:
+                        label = f"R-ONE 지가변동률 실데이터({sido}) 최근 24개월 누적 시점수정 {f}"
+                        source = "R-ONE"
+                    else:
+                        # 요청 지역이 아니라 더 넓은 범위에서 나왔다 — 그 사실을 말한다.
+                        label = (
+                            f"R-ONE 지가변동률 {scope} 범위 누적 시점수정 {f}"
+                            f"(요청 지역{f' {sido}' if sido else ''}의 시계열이 없어 {scope} 값을 적용 — "
+                            f"해당 지역 실데이터가 아닙니다)"
+                        )
+                        source = f"R-ONE({scope} 대체)"
                     return {"factor": f, "annual_rate": None, "elapsed_years": None,
-                            "rationale": f"R-ONE 지가변동률 실데이터 최근 24개월 누적 시점수정 {f}", "source": "R-ONE"}
+                            "rationale": label, "source": source, "scope": scope}
     except Exception:  # noqa: BLE001
         pass
     out = time_adjust_factor(address, base_year)
