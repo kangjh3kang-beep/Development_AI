@@ -270,7 +270,12 @@ export type SatongMarketGroup = {
    *  신고내역(#930)의 정본과 갈릴 수 있었고 반올림 규약이 없어 허위 정밀도를 찍었다.
    *  면적 결측·가격 결측이면 **`null`**(0 이 아니다 — 0 은 "평당 0원"으로 읽힌다). */
   price_per_pyeong_10k?: number | null;
-  /** ★P2 — 토지 매매(getRTMSDataSvcLandTrade) 전용 지목·용도지역. 종전엔 파싱만 되고
+  /** ★P2 — 지목·용도지역. ★★2026-09-08 정정(신고③): 종전엔 *"토지 매매
+   *  (getRTMSDataSvcLandTrade) **전용**"* 이라 적혀 있었는데 **거짓**이다 —
+   *  `molit_client._parse_trade_items` 는 `prop_type` **게이팅 없이** 전 유형에서 파싱한다.
+   *  ★그리고 그게 옳다: 건물 유형 API 도 `용도지역`을 준다(신고 스크린샷의 건물 거래에
+   *  `용도지역 근린상업`이 찍혔다 — 어느 유형 API 인지는 **미측정**).
+   *  ⇒ 이 필드가 붙었다고 **토지 거래로 읽지 마라.** 종전엔 파싱만 되고
    *  그룹핑 단계에서 폐기됐다(nearby_map_service._group_trade). 없으면 undefined(무날조). */
   build_year?: number;
   jimok?: string;
@@ -727,6 +732,27 @@ export function buildMaskedSampleReason(payload: SatongMarketPayload): string {
 }
 
 /** 채움 색상으로 같은 필지를 칠하는 레이어들 — **그리는 순서**대로 나열한다(뒤가 앞을 덮는다). */
+/**
+ * 카테고리 키(`"land_trade"` · `"officetel_rent"`)에서 **유형 라벨**을 얻는다.
+ *
+ * ★★2026-09-08(적대 리뷰 MAJOR-4) — 팝업과 **완전히 같은** «값은 손에 있는데 안 찍는다» 가
+ *   형제 표면에도 있었다. 「위치 미확인」 목록은 `동 지번 · N건 · 가격` 만 그려서
+ *   **토지 주소로만 읽힌다** — 신고③ 문장이 그대로 성립하는 자리다. 그런데
+ *   `UnlocatedMarketRow` 는 `type` 을 **이미 담고 있었다**(`collectUnlocatedMarketGroups`).
+ *   ★그리고 이 목록이 특히 중요하다: 같은 파일 실측 주석이 *"56그룹 476건 — 그중
+ *     토지매매만 362건"* 이라 적어 뒀다. 지도에 못 찍는 거래가 나타나는 **유일한 표면**이다.
+ *
+ * ★키 형태는 백엔드가 정한다 — `nearby_map_service.py:581·585` 가
+ *   `categories[f"{tkey}_trade"]` · `categories[f"{tkey}_rent"]` 로 만든다.
+ * ★모르면 `undefined`(무날조) — 팝업 배지와 **같은 정책**이다.
+ */
+export function marketTypeLabelFromCategoryKey(categoryKey: string): string | undefined {
+  const bare = categoryKey.replace(/_(trade|rent)$/, "");
+  return Object.prototype.hasOwnProperty.call(MARKET_TYPE_LABELS, bare)
+    ? MARKET_TYPE_LABELS[bare]
+    : undefined;
+}
+
 export type UnlocatedMarketRow = {
   key: string; label: string; count: number; avg: number | null; type: string;
 };
@@ -1147,8 +1173,15 @@ const PRESALE_STATUS_COLORS: Record<string, string> = {
  *   **배선 층이 무잠금**이라는 이 저장소의 반복 결함 그대로다. 그런데 그 배선은 Leaflet
  *   effect 안이라 목이 없는 이 파일에서는 **행위로 태울 수 없다.**
  *   → **타입 계약으로 기계가 잡게** 만든다: 필수 인자면 누락이 **tsc 에러**(TS2554)이고
- *     그것은 CI 의 실제 게이트다. 그리고 «다시 `?` 로 바꾸는 것» 은 arity 락이 잡는다
- *     (`SatongMultiMap.marketPopupType.test.ts` — `marketPopupHtml.length === 3`).
+ *     ★★**단 그 게이트는 한 토큰으로 무력화된다** — 이 인자에 `= undefined` 기본값을 붙이면
+ *     `TS2554` 가 **사라진다**(실측: 붙이고 호출부 인자를 빼니 TS2554 **0건**). 그래서 아래
+ *     소스 락이 «`?` 로 되돌리기» 와 함께 «기본값 붙이기» 도 함께 본다.
+ *     ★★그리고 **내가 여기 「arity 락(`marketPopupHtml.length === 3`)이 잡는다」고 적었었다.
+ *     거짓이었다** — 그 락은 판별력 0이라 같은 PR 에서 **폐기했는데 이 주석만 남았다.**
+ *     (TypeScript 의 `?` 는 JS 로 기본값 없는 평범한 인자가 되어 `length` 가 그대로 3이다.)
+ *     ⇒ 지금 되돌림을 잡는 것은 **소스 선언 락**이다(`SatongMultiMap.marketPopupType.test.ts`)
+ *       — 소스 락이라 **약하다**. 적대 리뷰가 이 거짓 주석을 잡았고, 그것은 이 PR 이
+ *       백엔드에서 고친 것과 **같은 결함**이다(§C-11 «면역을 거짓 주장하지 마라»).
  *   ★유형을 정말 모르는 호출부는 **`undefined` 를 명시**한다 — 모름을 **말하게** 한다.
  */
 export function marketPopupHtml(
@@ -1204,11 +1237,20 @@ export function marketPopupHtml(
   // ★라벨은 `MARKET_TYPE_LABELS`(= `MARKET_TRADE_TYPES` 에서 **파생**)에서만 얻는다.
   //   새 어휘를 여기서 만들지 않는다 — 만들면 그 순간 두 벌이 되고, 이 저장소는 그 형태로
   //   이미 데인 적이 있다(`boundary` ↔ `parcel-boundary` · `hybrid` ↔ `aerial`).
-  const typeLabel = marketType ? MARKET_TYPE_LABELS[marketType] : undefined;
+  // ★★2026-09-08(적대 리뷰 MAJOR-3) — **자기 키만** 본다. 종전 `MARKET_TYPE_LABELS[marketType]`
+  //   는 `Object.fromEntries` 산물이라 **프로토타입 체인이 살아 있다**: `marketType="constructor"`
+  //   면 `Function` 이 truthy 로 돌아와 배지에 `function Object() { [native code] }` 가 찍힌다
+  //   (`node -e` 로 실증). 오늘 호출부는 상수 파생이라 **도달 불가**지만, 이 함수가 선언한
+  //   «모르면 아무것도 안 찍는다» 는 그 입력에서 **문자 그대로 거짓**이었다.
+  const typeLabel = marketType && Object.prototype.hasOwnProperty.call(MARKET_TYPE_LABELS, marketType)
+    ? MARKET_TYPE_LABELS[marketType]
+    : undefined;
   return [
     `<div style="min-width:210px;max-width:280px;padding:8px 10px;font-size:12px;line-height:1.5;">`,
     `<b>${escapeHtml(group.name)}</b>`,
-    // ★유형 배지 — 「무엇의 거래인가」를 **첫 줄에서** 말한다(신고③). 지번보다 먼저 오는 이유:
+    // ★유형 배지 — 「무엇의 거래인가」를 **이름 바로 밑에서** 말한다(신고③).
+    //   (★정정: 초판 주석은 «첫 줄»이라 했는데 첫 줄은 `<b>{name}</b>` 이고 배지는 **둘째**다.)
+    //   지번보다 먼저 오는 이유:
     //   종전엔 `지번 · N건` 으로 시작해 **토지 주소처럼 읽혔다.**
     //   ★모르는 키면 빈 문자열 — 「유형 미상」 같은 말을 지어내지 않는다.
     typeLabel
@@ -3753,6 +3795,12 @@ export function SatongMultiMap({
                     {shouldShowMarketDetails(marketPayload) && marketTypes.map((type) => (
                       <div key={type} className="flex items-center gap-1.5 font-semibold text-[var(--text-primary)]">
                         <span className="h-3 w-3 rounded-full border border-black/10 shadow-xs" style={{ backgroundColor: MARKET_TYPE_COLORS[type] || "#2563eb" }} />
+                        {/* ★2026-09-08(적대 리뷰 MINOR-4) — 여기는 **원시 키를 폴백 표시**하고,
+                            팝업/목록 배지는 **아무것도 안 찍는다**. 같은 파일에 정책이 둘인데
+                            **의도된 것**이다: 범례는 «켜진 유형마다 한 줄」이 계약이라 행을 비울 수
+                            없고(색 스와치·건수가 그 줄에 붙는다), 배지는 **선택적 부가정보**라
+                            모르면 안 적는 것이 정직하다.
+                            ★오늘 `marketTypes` 는 프론트 상수 파생이라 이 폴백은 **도달 불가**다. */}
                         <span>{MARKET_TYPE_LABELS[type] || type}</span>
                         {/* ★정직 표기: 켜졌지만 0건인 유형도 숨기지 않고 0건으로 명시(무음 금지) */}
                         <span className="ml-auto text-[var(--text-secondary)]">{marketTypeCounts[type] ?? 0}건</span>
@@ -3771,6 +3819,14 @@ export function SatongMultiMap({
                       <ul className="mt-1 flex max-h-40 flex-col gap-0.5 overflow-y-auto text-[10px]">
                         {unlocatedMarketGroups.slice(0, UNLOCATED_LIST_LIMIT).map((g) => (
                           <li key={g.key} className="flex items-center gap-1.5 text-[var(--text-secondary)]">
+                            {/* ★유형 배지(신고③ · 적대 리뷰 MAJOR-4) — 종전엔 `동 지번 · N건 · 가격`
+                                뿐이라 **토지 주소로만 읽혔다**. 값(`g.type`)은 이미 손에 있었다.
+                                모르면 아무것도 안 찍는다(팝업 배지와 **같은 무날조 정책**). */}
+                            {marketTypeLabelFromCategoryKey(g.type) && (
+                              <span className="shrink-0 font-bold text-[var(--text-primary)]">
+                                {marketTypeLabelFromCategoryKey(g.type)}
+                              </span>
+                            )}
                             <span className="truncate font-semibold text-[var(--text-primary)]">{g.label}</span>
                             <span className="ml-auto shrink-0">{g.count}건</span>
                             {g.avg != null && (

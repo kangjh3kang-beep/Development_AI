@@ -17,8 +17,12 @@ import { describe, expect, it } from "vitest";
 
 import { __stripCommentsForScan } from "@/lib/source-invariant";
 
-import { marketPopupHtml, type SatongMarketGroup } from "@/components/map/SatongMultiMap";
-import { MARKET_TRADE_TYPES, MARKET_TYPE_LABELS } from "@/lib/satong-map-layers";
+import {
+  marketPopupHtml,
+  marketTypeLabelFromCategoryKey,
+  type SatongMarketGroup,
+} from "@/components/map/SatongMultiMap";
+import { MARKET_TRADE_TYPES } from "@/lib/satong-map-layers";
 
 /** 신고 스크린샷을 그대로 옮긴 픽스처 — 건물 속성(준공·층)과 토지 속성(용도지역)이 **섞여** 있다. */
 const 신고그룹: SatongMarketGroup = {
@@ -54,17 +58,21 @@ describe("★신고③ — 팝업이 「무엇의 거래인지」 말한다", ()
     expect(토지).not.toContain("상업업무용");
   });
 
-  it("★★무날조 — 유형을 모르면 **아무것도 찍지 않는다**", () => {
-    const 미상 = marketPopupHtml(신고그룹, "trade", "zzz-없는유형");
-    // ★인자는 **필수**다(아래 arity 락 참조) — 모르면 `undefined` 를 **명시**한다.
-    const 무인자 = marketPopupHtml(신고그룹, "trade", undefined);
-    for (const html of [미상, 무인자]) {
-      // 「유형 미상」·「undefined」 같은 말을 지어내면 안 된다 — 모름을 유효값으로 표현하지 않는다.
-      expect(html).not.toContain("undefined");
-      expect(html).not.toContain("미상");
-      // ★대조군 — 그래도 팝업 자체는 살아 있다(«전부 빈 문자열» 구현을 배제한다).
-      expect(html).toContain("화도읍 창현리 736-1");
+  it("★★무날조 — 유형을 모르면 **아무것도 찍지 않는다**(명제를 그대로 단언한다)", () => {
+    // ★★적대 리뷰 MAJOR-3: 초판은 `not.toContain("undefined")` · `not.toContain("미상")` 로
+    //   **낱말 두 개만** 금지했다. 그래서 «모르는 키를 **그대로** 찍는» 변이
+    //   (`MARKET_TYPE_LABELS[k] ?? k`)가 **SURVIVED** 했다 — 미상 키가 굵은 배지로 렌더되는데도.
+    //   ⇒ 선언한 명제는 «아무것도 안 찍는다» 이므로 **바이트 동일성**으로 단언한다.
+    const 없음 = marketPopupHtml(신고그룹, "trade", undefined);
+    for (const 모르는키 of ["zzz-없는유형", "constructor", "__proto__", "toString", ""]) {
+      // ★`constructor`·`__proto__`·`toString` — `Object.fromEntries` 산물은 **프로토타입 체인이
+      //   살아 있어** 이 키들이 truthy 를 돌려준다(실증: `Function`). 자기 키만 보게 좁혔다.
+      expect(marketPopupHtml(신고그룹, "trade", 모르는키), 모르는키).toBe(없음);
     }
+    // ★공허 진리 가드 — «전부 빈 문자열» 구현을 배제한다(팝업 자체는 살아 있다).
+    expect(없음).toContain("화도읍 창현리 736-1");
+    // ★그리고 아는 키는 **달라야** 한다 — 위 동일성이 «항상 같다» 로 만족되면 안 된다.
+    expect(marketPopupHtml(신고그룹, "trade", "commercial")).not.toBe(없음);
   });
 
   it("★파생형 — **6종 전수**가 각자의 라벨을 낸다(어휘가 늘면 자동으로 감시망에)", () => {
@@ -72,8 +80,9 @@ describe("★신고③ — 팝업이 「무엇의 거래인지」 말한다", ()
     expect(MARKET_TRADE_TYPES.length).toBeGreaterThanOrEqual(6);
     for (const t of MARKET_TRADE_TYPES) {
       expect(marketPopupHtml(신고그룹, "trade", t.key), t.key).toContain(t.label);
-      // 라벨 출처가 파생 맵과 같아야 한다(두 벌 어휘 방지).
-      expect(MARKET_TYPE_LABELS[t.key], t.key).toBe(t.label);
+      // ★★초판은 여기서 `expect(MARKET_TYPE_LABELS[t.key]).toBe(t.label)` 을 했는데,
+      //   그 맵이 `Object.fromEntries(MARKET_TRADE_TYPES.map(...))` 산물이라 **구조적으로 항상 참**
+      //   = 장식이었다(적대 리뷰 m3). 걷어냈다. 「두 벌 어휘 방지」는 **아래 소스 락**이 맡는다.
     }
   });
 
@@ -130,15 +139,74 @@ describe("★신고③ — 팝업이 「무엇의 거래인지」 말한다", ()
       expect(sig, `시그니처: ${sig}`).toContain("marketType: string | undefined");
       // ★음성 — 선택적 형태로 되돌아가지 않았다.
       expect(sig).not.toContain("marketType?");
+      // ★★그리고 **기본값 붙이기**도 막는다(적대 리뷰 M7): `= undefined` 를 붙이면
+      //   `TS2554` 가 **사라진다**(실증: 붙이고 호출부 인자를 빼니 TS2554 0건).
+      //   즉 «진짜 게이트는 tsc» 가 **한 토큰으로 무력화**된다.
+      expect(sig, "기본값이 붙으면 호출부 누락이 tsc 를 통과한다").not.toMatch(/marketType[^,)]*=\s*undefined/);
     });
 
     it("★대조군 — 호출부가 유형을 **실제로 넘긴다**", () => {
       const src = scan("components/map/SatongMultiMap.tsx");
       expect(src).toContain("marketPopupHtml(item, kind, type)");
     });
+
+    it("★두 벌 어휘 방지 — 라벨을 **파생 맵**에서 얻는다(인라인 리터럴 맵 금지)", () => {
+      // ★★적대 리뷰 M3: 라벨을 인라인 리터럴 맵에서 얻는 변이가 **SURVIVED** 했다.
+      //   값이 같으면 행위로는 못 가른다 — 그래서 **출처**를 본다(소스 락이라 약하다).
+      //   이 저장소는 두 벌 어휘로 이미 두 번 데였다(`boundary`↔`parcel-boundary` ·
+      //   `hybrid`↔`aerial`) — 그래서 「출처 하나」가 계약이다.
+      const src = scan("components/map/SatongMultiMap.tsx");
+      const i = src.indexOf("const typeLabel =");
+      expect(i, "배지 조립부를 못 찾았다 — 조회기 사망").toBeGreaterThan(-1);
+      expect(src.slice(i, i + 300)).toContain("MARKET_TYPE_LABELS");
+    });
+  });
+
+  describe("★★형제 표면 — 「위치 미확인」 목록도 유형을 말한다(적대 리뷰 MAJOR-4)", () => {
+    // ★팝업과 **완전히 같은** «값은 손에 있는데 안 찍는다» 가 형제에도 있었다. 그리고 그 목록이
+    //   특히 중요하다 — 같은 파일 실측 주석: *"56그룹 476건 중 토지매매만 362건"*.
+    //   지도에 못 찍는 거래가 나타나는 **유일한 표면**이다.
+    it("★★두 모집단 — 카테고리 키가 유형을 가른다", () => {
+      expect(marketTypeLabelFromCategoryKey("land_trade")).toBe("토지");
+      expect(marketTypeLabelFromCategoryKey("commercial_trade")).toBe("상업업무용");
+      // ★전월세 접미도 같은 규칙(백엔드가 `{tkey}_rent` 로도 만든다)
+      expect(marketTypeLabelFromCategoryKey("officetel_rent")).toBe("오피스텔");
+    });
+
+    it("★파생형 — **6종 전수**가 `_trade` 접미에서 자기 라벨을 낸다", () => {
+      expect(MARKET_TRADE_TYPES.length).toBeGreaterThanOrEqual(6); // 공허 진리 가드
+      for (const t of MARKET_TRADE_TYPES) {
+        expect(marketTypeLabelFromCategoryKey(`${t.key}_trade`), t.key).toBe(t.label);
+      }
+    });
+
+    it("★★무날조 — 모르는 키·프로토타입 키는 **undefined**(팝업 배지와 같은 정책)", () => {
+      for (const k of ["zzz_trade", "constructor_trade", "__proto__", "toString", ""]) {
+        expect(marketTypeLabelFromCategoryKey(k), k).toBeUndefined();
+      }
+      // ★대조군 — 조회기가 살아 있다(아는 키는 값을 낸다).
+      expect(marketTypeLabelFromCategoryKey("apt_trade")).toBe("아파트");
+    });
+
+    it("★접미가 없어도 동작한다 — 키 형태가 바뀌어도 조용히 죽지 않는다", () => {
+      expect(marketTypeLabelFromCategoryKey("land")).toBe("토지");
+    });
   });
 
   // ★부채를 초록 안에 남긴다(§C-13).
+  it.todo(
+    "★★신고의 나머지 절반 — **라벨 클릭이 필지 팝오버로 샌다**(적대 리뷰 MAJOR-5). " +
+      "`.satong-tooltip{pointer-events:none}`(globals.css) 이라 클릭이 **통과**해 지도로 떨어지고, " +
+      "`map.on(\"click\")` 이 `setClickMenu`(필지 선택)를 연다. 가드는 `readOnly` 뿐인데 " +
+      "SatongMapShell 은 그 prop 을 **안 넘긴다**(0건). ★코드 4단계는 실측 · **브라우저 미측정**. " +
+      "고치려면 `bindSatongLabel` 을 건드려야 하는데 그건 **5개 레이어 공용**이라 별건이다",
+  );
+  it.todo(
+    "★배선의 **동일성 축**이 무잠금(적대 리뷰 MAJOR-6) — 호출부에서 `const type = \"apt\"` 로 " +
+      "바꿔치기하면 **모든 마커가 「아파트」라고 말하는데** 2412건이 초록이다(SURVIVED 실측). " +
+      "tsc 가 잡는 것은 **누락(arity)** 뿐이다. 닫으려면 `SatongMultiMap` 용 **Leaflet 목**이 필요하다 " +
+      "— 세 PR 연속 같은 벽이다(#1012·#1017·#1018)",
+  );
   it.todo(
     "마커 **라벨**에도 유형을 넣는다 — 지금은 이름+가격뿐이라 팝업을 열어야만 유형을 안다. " +
       "라벨 버짓·겹침 규약(labelPlan)을 함께 봐야 해서 이 PR 범위 밖",

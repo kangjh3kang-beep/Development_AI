@@ -28,16 +28,16 @@
 
 | # | 전제 | 확인 방법 | **실측값** |
 |---|---|---|---|
-| P1 | 팝업이 유형을 렌더하나 | `marketPopupHtml` 원문 | ★**아니다.** 인자가 `(group, kind)` 둘뿐이고 `kind` 는 **매매/전월세**다(`SatongMultiMap.tsx:1074`) |
-| P2 | 유형이 호출부에 있나 | 렌더 루프 원문 | ★**있다.** `:2801` `const { type, color: typeColor, groups } = entry` — 그런데 `:2821` `bindPopup(marketPopupHtml(item, kind))` 로 **안 넘긴다** |
-| P3 | 마커 라벨에는 있나 | 라벨 조립부 | **아니다** — `${item.name || "실거래"}${priceTag}`(`:2840`) |
+| P1 | 팝업이 유형을 렌더하나 | `marketPopupHtml` 원문 | ★**아니다.** 인자가 `(group, kind)` 둘뿐이고 `kind` 는 **매매/전월세**다(`SatongMultiMap.tsx` · 심볼 `marketPopupHtml`) |
+| P2 | 유형이 호출부에 있나 | 렌더 루프 원문 | ★**있다.** `const { type, color: typeColor, groups } = entry` — 그런데 바로 아래 `bindPopup(marketPopupHtml(item, kind))` 로 **안 넘긴다** |
+| P3 | 마커 라벨에는 있나 | 라벨 조립부 | **아니다** — `bindSatongLabel(marker, `${item.name || "실거래"}${priceTag}`)` |
 | P4 | 그럼 유일한 통로는 | 파생 | **마커 색**(`MARKET_TYPE_COLORS`) — 범례를 대조해야 아는 **대리 변수** |
-| P5 | 유형 어휘 | `MARKET_TRADE_TYPES`(`satong-map-layers.ts:232`) | 6종 `apt·villa·house·officetel·land·commercial`. ★백엔드 `_TRADE_ENDPOINTS`(`molit_client.py:27`)와 **키가 일치** |
+| P5 | 유형 어휘 | `MARKET_TRADE_TYPES` ↔ 백엔드 `_TRADE_TYPES` | 6종 `apt·villa·house·officetel·land·commercial` **완전 일치**. ★**정정(리뷰 m2)**: 초판은 `_TRADE_ENDPOINTS`(`molit_client.py`)와 대조했는데 그건 **7키**다(`apt_presale` 추가) — 「키 일치」가 **거짓**이었다. 맞춰야 할 표는 `nearby_map_service._TRADE_TYPES`(6키)이고 그것은 일치한다. ★부채: `apt_presale` 이 지도 카테고리로 승격되면 배지가 **조용히 빈다** |
 | P6 | 백엔드가 유형을 싣나 | `nearby_map_service.py:1644` | **싣는다** — `{"label": label, "type": type_key, "kind": kind, …}` |
-| P7 | `SatongMarketGroup` 에 유형이 있나 | 타입 원문 `:252-295` | **없다.** 유형은 **상위 카테고리**에만 있다 |
+| P7 | `SatongMarketGroup` 에 유형이 있나 | 타입 원문(심볼 `SatongMarketGroup`) | **없다.** 유형은 **상위 카테고리**에만 있다 |
 | P8 | ★`지목·용도지역`이 토지 전용인가 | `molit_client.py:465-467` | ★**아니다.** `prop_type` **게이팅 없이 전 유형에서 파싱**한다. 주석의 *"토지 매매 전용"* 은 **거짓**이다 |
-| P9 | 그게 오염인가 정당한 데이터인가 | 원천 대조 | **정당하다** — 상업업무용(`getRTMSDataSvcNrgTrade`)은 실제로 `용도지역`을 준다. 스크린샷의 `용도지역 근린상업`이 그 증거다. ⇒ **필드가 아니라 「유형 미표기」가 결함이다** |
-| P10 | 필지로 취급되나 | 마커 생성부 | ★**아니다.** `L.circleMarker`(`:2810`) 점 마커이고, `bubblingMouseEvents:false`(`:2820`)로 **필지 선택 전이를 일부러 막아** 뒀다 |
+| P9 | 그게 오염인가 정당한 데이터인가 | 파싱 원문 + 스크린샷 | **관측**: `_parse_trade_items` 에 `prop_type` 게이팅이 **없다**(원문 확인) · **어떤 건물 유형 API 가 `용도지역`을 준다**(스크린샷의 건물 거래에 `용도지역 근린상업`). ★**추론**: 그 API 가 상업업무용(`NrgTrade`)일 것 — **미측정**이다(§3-3 이 그 그룹의 유형을 확정 못 했다고 적었는데 초판은 여기서 단정했다 · 리뷰 m6). ⇒ 어느 쪽이든 **필드가 아니라 「유형 미표기」가 결함**이라는 결론은 그대로다 |
+| P10 | 필지로 취급되나 | 마커 생성부 | ★**절반만 그렇다** — §1-b 참조 |
 
 ### ★P1·P2 가 이 PR 의 근거다
 
@@ -55,6 +55,27 @@
 | `평균 9.8평` | 건물이면 전용면적, 토지면 거래면적 — **같은 라벨이 다른 것을 뜻한다** |
 
 ⇒ 사용자가 알아챈 근거는 **층수뿐**이었다. 화면이 알려 준 것이 아니다.
+
+---
+
+### ★1-b. 「필지로 취급되지 않는다」는 단정이 **전수가 아니었다** (적대 리뷰 MAJOR-5)
+
+초판은 **마커 점** 하나를 근거로 신고의 나머지 절반을 닫았다. **라벨은 다른 표면이다.**
+
+| # | 관측(전부 원문) | 좌표 |
+|---|---|---|
+| 1 | 라벨은 `bindTooltip` 인데 `interactive` 를 **안 준다** | `lib/satong-map-labels.ts` · `bindSatongLabel` |
+| 2 | 그 클래스는 **`pointer-events: none`** | `app/globals.css` · `.leaflet-tooltip.satong-tooltip` |
+| 3 | 지도 클릭은 **필지 선택 팝오버**를 연다 | `SatongMultiMap.tsx` · `map.on("click") → setClickMenu` |
+| 4 | 그 가드는 `readOnly` 뿐인데 **신고 화면이 그 prop 을 안 넘긴다** | `SatongMapShell.tsx` · `grep -c readOnly` = **0** |
+
+⇒ **추론**(위 넷의 조합): 가격 라벨을 클릭하면 이벤트가 **통과해 지도로 떨어지고**, 지도는 그것을
+**필지 선택**으로 받는다. 사용자가 *"필지로 인식되는건가"* 라고 쓴 그 행동이 **실재할 수 있는 경로**다.
+
+★**미측정**: 브라우저 재현. 반증 조건 — 라벨을 클릭했는데 필지 팝오버가 **안 뜨면** 이 항목은 철회한다.
+★**이 PR 에서 고치지 않는다**: `bindSatongLabel` 은 **5개 레이어 공용**(실거래·분양·경매·POI·개발계획)이라
+  건드리면 그 전부의 클릭 계약이 바뀐다. 별건으로 재고 설계한다 — `it.todo` 로 초록 안에 남겼다.
+★따라서 P10 의 단정을 **정정한다**: *"마커 **점**은 막혀 있다. **라벨은 미측정**이고 샐 수 있다."*
 
 ---
 
