@@ -1380,7 +1380,11 @@ class NearbyMapService:
                 "dong": dong, "jibun": jibun,
                 "_query": self._query_for(sigungu, dong, jibun, name),
                 # ★실무 판단정보(그룹 대표값) — molit_client가 이미 파싱해 넘기는 build_year/
-                #   jimok/land_use(토지 매매 전용)를 종전엔 여기서 폐기했다. 관측된 고유값을
+                #   jimok/land_use 를 종전엔 여기서 폐기했다. ★★2026-09-08 정정(신고③):
+                #   종전엔 *"(토지 매매 **전용**)"* 이라 적혀 있었는데 **거짓**이다 —
+                #   `molit_client._parse_trade_items` 는 `prop_type` 게이팅 **없이** 전 유형에서
+                #   파싱하고, 그게 옳다(건물 유형 API 도 용도지역을 준다).
+                #   ⇒ 이 필드가 있다고 토지 거래로 읽지 마라. 관측된 고유값을
                 #   집합으로 모아두고(대표값 확정은 _finalize에서 — 혼재 검출을 위해), 원천에
                 #   없으면 빈 채로 남는다(무날조).
                 "_build_years": set(), "_jimoks": set(), "_land_uses": set(),
