@@ -202,6 +202,68 @@ async def top_payers(db: AsyncSession, *, days: int = 30, limit: int = 20) -> li
     ]
 
 
+async def awaiting_deposit(
+    db: AsyncSession, *, days: int = 30, limit: int = 100
+) -> dict[str, Any]:
+    """★**입금 확인 대기 전용 큐** — 관리자가 실제로 처리해야 하는 것만.
+
+    ## 왜 `recent_orders` 로는 안 되나 (2026-09-06 실측)
+
+    `recent_orders` 는 `LIMIT 30` 에 **상태를 섞어** 담는다. 결제가 활발한 날에는
+    유료 주문이 앞을 채워 **입금 대기가 목록 밖으로 밀린다** — 그리고 그 절단은
+    **조용하다**(화면은 "30건"이 상한인지 실제인지 구별할 수 없다).
+    무통장입금은 관리자가 안 누르면 **사용자 돈이 들어왔는데 코인이 안 나간다.**
+    그러므로 대기 큐는 **분리하고**, 잘렸으면 **잘렸다고 말한다**.
+
+    ★`total` 을 함께 준다 — `len(items) < total` 이면 화면이 절단을 표시할 수 있다.
+      개수만 주고 절단을 숨기면 "다 처리했다"는 거짓 안심을 만든다.
+    """
+    await _ensure(db)
+    lim = max(1, min(int(limit), 500))
+    total = int(
+        (
+            await db.execute(
+                text(
+                    "SELECT COUNT(*) FROM coin_orders"
+                    " WHERE status='pending' AND created_at >= now() - make_interval(days => :d)"
+                ),
+                {"d": int(days)},
+            )
+        ).scalar()
+        or 0
+    )
+    rows = (
+        await db.execute(
+            text(
+                "SELECT o.id, o.order_no, o.user_id, u.email, o.amount_krw,"
+                "       o.buyer_name, o.created_at"
+                "  FROM coin_orders o LEFT JOIN public.users u ON u.id::text = o.user_id"
+                " WHERE o.status='pending' AND o.created_at >= now() - make_interval(days => :d)"
+                # 오래된 것부터 — 가장 오래 기다린 사람이 먼저다(그리고 절단되어도 최신이 남는
+                # 것보다 낫다: 최신은 아직 입금 전일 가능성이 높다).
+                " ORDER BY o.created_at ASC LIMIT :lim"
+            ),
+            {"d": int(days), "lim": lim},
+        )
+    ).mappings().all()
+    return {
+        "total": total,
+        "truncated": total > len(rows),
+        "items": [
+            {
+                "id": str(r["id"]),
+                "order_no": r["order_no"],
+                "email_masked": _mask_email(r["email"]),
+                "amount_krw": round(float(r["amount_krw"] or 0)),
+                # ★통장 내역과 눈으로 맞추는 값 — 마스킹하면 대사가 불가능해진다.
+                "depositor_name": r["buyer_name"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in rows
+        ],
+    }
+
+
 async def recent_orders(db: AsyncSession, *, days: int = 30, limit: int = 30) -> list[dict[str, Any]]:
     """최근 결제 — ★관리자가 **여기서 환불을 집행**한다.
 
@@ -212,9 +274,11 @@ async def recent_orders(db: AsyncSession, *, days: int = 30, limit: int = 30) ->
     rows = (
         await db.execute(
             text(
+                # ★`buyer_name` 을 반드시 싣는다 — 이것이 **은행 입출금 내역과 맞추는 키**다.
+                #   없으면 관리자는 「승인」 버튼은 있는데 **무엇을 승인하는지 모른다**.
                 "SELECT o.id, o.order_no, o.user_id, u.email, o.amount_krw,"
                 "       COALESCE(o.refunded_krw,0) AS refunded_krw, o.status, o.provider,"
-                "       o.paid_at, o.created_at"
+                "       o.buyer_name, o.paid_at, o.created_at"
                 "  FROM coin_orders o LEFT JOIN public.users u ON u.id::text = o.user_id"
                 " WHERE o.created_at >= now() - make_interval(days => :d)"
                 " ORDER BY COALESCE(o.paid_at, o.created_at) DESC LIMIT :lim"
@@ -235,6 +299,9 @@ async def recent_orders(db: AsyncSession, *, days: int = 30, limit: int = 30) ->
             ),
             "status": r["status"],
             "provider": r["provider"],
+            # ★관리자가 통장 내역과 눈으로 맞추는 값. 마스킹하지 않는다 —
+            #   마스킹하면 대사가 불가능해지고, 이 화면은 이미 super_admin 전용이며 감사된다.
+            "depositor_name": r["buyer_name"],
             "paid_at": r["paid_at"].isoformat() if r["paid_at"] else None,
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
         }

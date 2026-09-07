@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AuthWorkspaceClient } from "@/components/auth/AuthWorkspaceClient";
+import { AuthWorkspaceClient, LABELS } from "@/components/auth/AuthWorkspaceClient";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 
 const { pushMock } = vi.hoisted(() => ({
@@ -56,7 +56,7 @@ describe("AuthWorkspaceClient", () => {
 
     await userEvent.type(screen.getByLabelText("Email"), "operator@propai.ai");
     await userEvent.type(screen.getByLabelText("Password"), "test1234");
-    await userEvent.click(screen.getByRole("button", { name: "Run login" }));
+    await userEvent.click(screen.getByRole("button", { name: LABELS.en.loginFields.submit }));
 
     await waitFor(() => {
       expect(apiClient.post).toHaveBeenCalledWith(
@@ -110,7 +110,7 @@ describe("AuthWorkspaceClient", () => {
     const checkboxes = screen.getAllByRole("checkbox");
     await userEvent.click(checkboxes[0]); // [필수] 이용약관
     await userEvent.click(checkboxes[1]); // [필수] 개인정보처리방침
-    await userEvent.click(screen.getByRole("button", { name: "Create tenant" }));
+    await userEvent.click(screen.getByRole("button", { name: LABELS.en.registerFields.submit }));
 
     await waitFor(() => {
       expect(apiClient.post).toHaveBeenCalledWith(

@@ -556,6 +556,87 @@ def _severity_rank(sev: str | None) -> int:
 # DB 스캔 + 인사이트 생성
 # ════════════════════════════════════════════════════════════════════════════
 
+#: 분석 실행 상태를 **프로세스 경계 밖으로** 내보내는 설정 키.
+#:
+#: ★**새 표면을 만들지 않는다** — 형제 `capture_service.CAPTURE_STATUS_SETTING_KEY` 와 같이
+#:   `growth_last_run.*` 워터마크가 이미 쓰는 통로(`schema_guard.set_setting` →
+#:   `platform_settings` → `/growth/heal-log` 의 `active_flags` → `GrowthDashboard`)를 탄다.
+#:   **읽기 경로는 한 줄도 안 바꾼다.**
+#:
+#: ★**왜 필요한가**: 커버리지(`왜 판정 못 했는지`)가 저장되는 **유일한 자리가 인사이트 행의
+#:   `metrics_json`** 이었다. 그래서 **인사이트가 0건이면 설명이 통째로 버려진다** —
+#:   설명이 가장 필요한 바로 그때. 실측(2026-09-05): 산출 0 이 **11.3시간** 이어졌는데
+#:   (관측 최대 8.7시간) 화면은 `open 175` 로 가득 차 **건강해 보였다.**
+#:   ★워터마크(`growth_last_run.analyze`)는 **「돌았다」를 말하지 「됐다」를 말하지 않는다.**
+ANALYSIS_STATUS_SETTING_KEY = "growth_analysis"
+
+#: 발행 행의 수명 — 주기(60분)의 **3배**. 형제와 같은 규칙.
+#: ★TTL 이 없으면 «분석기가 멈췄다»가 **낡은 값으로 남아 «정상»과 구별되지 않는다.**
+#:   TTL 이 지나면 `/heal-log` 필터(`ttl_expires_at IS NULL OR > now()`)에서 **스스로 빠진다.**
+_ANALYSIS_TTL_MIN = 180
+
+#: ★★**행 부재는 「TTL 경계」가 아니라 「고장」이다** — 그 산수를 여기 못 박는다.
+#:
+#:   analyze 주기 60분  ·  TTL 180분  →  매 실행이 만료 시각을 **앞으로 민다**
+#:     02:05 실행 → 만료 05:05 / 03:05 실행 → 만료 06:05 / 04:05 실행 → 만료 07:05 …
+#:   ⇒ **정상 동작 중에는 행이 만료되지 않는다.** 행이 사라졌다면 **3회 연속 미실행**이다.
+#:
+#: ★이 문장이 없으면 «TTL 이 180분이니 3시간마다 잠깐 사라지는 것 아니냐» 로 읽힌다
+#:   — 실제로 동료 세션이 그렇게 물었다(2026-09-06). **그 오독의 비용은 크다**:
+#:   운영자가 「고장」으로 읽고 파고들면, 이 PR 이 없애려던 **바로 그 헛수고**를 반복한다.
+
+#: 화면(`GrowthDashboard.summarizeParams`)의 표시 계약. **손 목록이 아니라 계약값**이다.
+#: ★키는 `jsonb` 가 **(길이, 바이트순)으로 재정렬**하므로 «판별 필드를 앞에» 는 성립하지 않는다.
+#:   그래서 **키 수 자체를 상한 이하**로 두어 전부 보이게 한다(형제가 값을 치른 자리).
+_RENDER_KEY_CAP = 4
+_RENDER_VALUE_CAP = 24
+
+
+def analysis_status_payload(coverage: dict[str, dict[str, Any]], n_insights: int) -> dict[str, Any]:
+    """발행할 스냅샷을 만든다(순수 함수 — 락이 이것만 태우면 된다).
+
+    ★세 모집단을 `state` 하나로 가른다. **둘로 만들면 표면이 죽은 것이 「정상 유휴」로 읽힌다.**
+        judged   — 하나라도 판정했다
+        starved  — 돌았으나 **모든 축이 하한 미달**(오늘의 상태 · 처방은 **대기**)
+        idle     — 커버리지 축 자체가 없다
+    ★`state` 는 **생산** 축만 말한다 — 「효과 0」은 다른 축이다(`/growth/effectors`).
+    """
+    judged_total = sum(int(v.get("judged") or 0) for v in coverage.values())
+    state = "idle" if not coverage else ("judged" if judged_total > 0 else "starved")
+    # 축 요약: 축 이름 앞 3글자 + judged/total. ★손 매핑표를 두지 않는다(목록은 곧 상한이다).
+    axes = " ".join(f"{k[:3]} {v.get('judged', 0)}/{v.get('total', 0)}" for k, v in sorted(coverage.items()))
+    return {
+        "at": datetime.now(UTC).isoformat(),
+        "axes": axes or "-",
+        "state": state,
+        "insights": n_insights,
+    }
+
+
+async def publish_analysis_status(db, coverage: dict[str, dict[str, Any]], n_insights: int) -> bool:
+    """스냅샷을 `platform_settings` 에 발행한다. **best-effort** — 실패해도 배치를 죽이지 않는다."""
+    try:
+        from datetime import timedelta
+
+        from app.services.growth import schema_guard
+
+        ok = await schema_guard.set_setting(
+            db, ANALYSIS_STATUS_SETTING_KEY,
+            analysis_status_payload(coverage, n_insights),
+            scope="global",
+            ttl_expires_at=datetime.now(UTC) + timedelta(minutes=_ANALYSIS_TTL_MIN),
+            updated_by="growth-analyzer",
+        )
+        if ok:
+            await db.commit()
+        return bool(ok)
+    except Exception as e:  # noqa: BLE001 — 관측이 배치의 임계경로에 있으면 안 된다.
+        logger.warning("growth analyze 상태 발행 실패: %s", str(e)[:120])
+        with contextlib.suppress(Exception):
+            await db.rollback()
+        return False
+
+
 async def analyze_window(
     db, window_start: datetime, window_end: datetime, *, use_llm: bool | None = None
 ) -> list[dict[str, Any]]:
@@ -578,6 +659,7 @@ async def analyze_window(
         insights.extend(await _analyze_fallback_rate(db, window_start, window_end, coverage))
         insights.extend(await _analyze_selection_contamination(db, window_start, window_end))
         insights.extend(await _analyze_quality_drop(db, window_start, window_end, coverage))
+        insights.extend(await _analyze_payment_funnel(db, window_start, window_end, coverage))
         insights.extend(await _analyze_latency_regression(db, window_start, window_end, coverage))
     except Exception as e:  # noqa: BLE001 — 스캔 실패는 배치를 죽이지 않는다.
         logger.warning("growth analyze 스캔 실패: %s", str(e)[:160])
@@ -641,6 +723,8 @@ async def analyze_window(
     # ★종전엔 `if insights:` 라 **0건인 실행이 아무 로그도 남기지 않았다** — 배치가
     #   돌지 않은 것과 구별이 안 됐다. 커버리지는 **0건일 때가 가장 중요하다**
     #   (라이브: fallback 은 서비스 5개 전부 하한 미달이라 인사이트가 0건이다).
+    # ★로그와 **같은 자리**에서 발행한다 — 로그만 남기면 그 앎이 컨테이너 밖으로 못 나간다.
+    await publish_analysis_status(db, coverage, len(insights))
     logger.info(
         "growth analyze: 인사이트 %d건 생성(INSERT %d) · 커버리지 %s",
         len(insights), inserted,
@@ -849,6 +933,98 @@ async def _analyze_selection_contamination(db, w0, w1) -> list[dict[str, Any]]:
                 "malformed_rows": int(r[3] or 0),
             },
         })
+    return out
+
+
+#: 결제 퍼널 판정 하한 — 분모가 작으면 **판정하지 않는다**(노이즈를 결함으로 읽지 않는다).
+#:  ★그 사실을 `note_coverage` 로 **남긴다** — 「문제가 없었다」와 「판정할 표본이 없었다」는
+#:    다른 사실이고, 보는 사람이 그것을 구별할 수 있어야 한다.
+PAYMENT_FUNNEL_MIN_VIEWS = 10
+
+#: 이탈률 경고 임계 — 주문까지 왔는데 결제 시도로 가지 못한 비율.
+PAYMENT_FUNNEL_DROP_WARN_PCT = 50.0
+
+#: 퍼널 집계 SQL — 모듈 상수로 둬서 테스트가 **런타임 문자열**을 검사할 수 있게 한다.
+#:  ★`funnel` 을 좁힌다 — 다른 퍼널이 생겨도 이 판정이 오염되지 않는다.
+_PAYMENT_FUNNEL_SQL = (
+    "SELECT payload->>'step' AS step, COUNT(*) AS n "
+    "FROM platform_events "
+    "WHERE event_type='funnel_step' "
+    "  AND payload->>'funnel' = 'coin_topup' "
+    "  AND created_at >= :w0 AND created_at < :w1 "
+    # 아는 단계만 — 임의 값이 카디널리티를 늘리지 못하게 한다(형제 `_CONTAM_SQL` 과 같은 규율).
+    "  AND payload->>'step' IN ('view','order_created','pay_window_opened','pay_window_failed') "
+    "GROUP BY 1"
+)
+
+
+async def _analyze_payment_funnel(
+    db, w0, w1, coverage: dict[str, dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
+    """충전 퍼널의 **이탈**을 인사이트로 만든다.
+
+    ## 왜 (2026-09-06 라이브 실측)
+
+    성장루프 인사이트 **200건 전체**에서 `billing`·`payment`·`결제`·`충전` 문자열이
+    **모두 0건**이었다. 결제는 매출의 입구인데 **어디서 새는지 아무도 몰랐다.**
+    프론트의 `funnel_step` 타입은 양쪽 화이트리스트에 **선언만 되고 호출 0건**이었다.
+
+    ★수집만 늘리면 이 저장소가 이미 데인 형태가 된다 — *"이벤트는 쌓이는데 analyzer 는
+      타입별 손수 스캐너만 돌려 새 타입은 **영원히 조회되지 않는다**"*(#797).
+      그래서 **수집(프론트)·판정(여기)·표시(라벨)를 한 커밋에** 넣는다.
+
+    ## 무엇을 판정하고 무엇을 판정하지 않나 (정직한 경계)
+
+    · **판정한다**: 우리 화면 안에서 관측 가능한 이탈 — 주문을 만들었는데 결제 시도로
+      가지 못한 비율, 그리고 결제창이 **뜨지 못한** 횟수.
+    · **판정하지 않는다**: 「사용자가 은행에서 실제로 입금했는가」. 그것은 우리 화면 밖이고,
+      추측으로 채우면 그 수치가 다음 사람의 근거가 된다. 무통장입금의 실제 입금 여부는
+      **관리자 승인**이 유일한 진실이다.
+    """
+    from sqlalchemy import text
+
+    rows = (await db.execute(text(_PAYMENT_FUNNEL_SQL), {"w0": w0, "w1": w1})).fetchall()
+    steps = {str(r[0]): int(r[1] or 0) for r in rows}
+    views = steps.get("view", 0)
+    ordered = steps.get("order_created", 0)
+    opened = steps.get("pay_window_opened", 0)
+    failed = steps.get("pay_window_failed", 0)
+
+    out: list[dict[str, Any]] = []
+    judged = 0
+    withheld_n = 0
+
+    if views < PAYMENT_FUNNEL_MIN_VIEWS:
+        # ★표본 부족은 **결함이 아니다.** 다만 「판정 안 함」을 남긴다.
+        withheld_n = 1
+    else:
+        judged = 1
+        drop_pct = round(100.0 * (ordered - opened) / ordered, 1) if ordered else 0.0
+        # 결제창이 아예 못 뜬 것은 **우리 결함일 가능성이 높다** — 별도로 센다.
+        if failed > 0 or drop_pct >= PAYMENT_FUNNEL_DROP_WARN_PCT:
+            sev = "warn" if failed == 0 else "critical"
+            out.append({
+                "insight_type": "payment_funnel_drop",
+                "severity": sev,
+                "tenant_id": None,
+                # ★자동조치 금지 — 사용자가 마음을 바꾼 것과 우리가 고장 난 것을
+                #   이 지표만으로 가를 수 없다. 사람이 본다.
+                "recommended_action": "none",
+                "metrics_json": {
+                    # ★안정적 판별자 — 승계(retention)의 정체 필드다. 다른 퍼널이 생기면
+                    #   서로 다른 대상이 되어 서로를 닫지 않는다.
+                    "funnel": "coin_topup",
+                    "view": views, "order_created": ordered,
+                    "pay_window_opened": opened, "pay_window_failed": failed,
+                    "order_to_pay_drop_pct": drop_pct,
+                    "drop_warn_pct": PAYMENT_FUNNEL_DROP_WARN_PCT,
+                    # ★관측 경계를 **지표에 적는다** — 다음 사람이 이 수치를
+                    #   「입금까지의 전환율」로 오독하지 않게.
+                    "observation_boundary": "우리 화면 안까지. 실제 입금 여부는 관리자 승인이 진실.",
+                },
+            })
+    note_coverage(coverage, "payment_funnel_drop", judged=judged,
+                  withheld_count=withheld_n, floor=PAYMENT_FUNNEL_MIN_VIEWS)
     return out
 
 

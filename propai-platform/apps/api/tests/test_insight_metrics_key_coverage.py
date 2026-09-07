@@ -47,6 +47,10 @@ _DASH = _WEB / "components" / "settings" / "GrowthDashboard.tsx"
 #: 그리지 않기로 **결정한** 키 → 사유. 사유 없는 면제는 문법적으로 불가능하다(dict 값 필수).
 #: ★죽은 면제는 아래 테스트가 실패시킨다.
 _EXEMPT: dict[str, str] = {
+    "funnel": (
+        "승계(retention) 판별자다 — 사람이 읽을 값이 아니라 「같은 대상인가」를 가르는 키다"
+        "(`IDENTITY_FIELDS[\"payment_funnel_drop\"]`). 화면은 단계별 수치를 그린다"
+    ),
     "fallback": "분자(폴백 건수)는 _rule_narrative 산문이 이미 말하고 그 문장이 카드 바로 아래 렌더된다",
     "signature": "군집 해시는 사람이 읽을 값이 아니다 — route+status_code 로 식별된다",
     "sample": "라이브에서 빈 문자열이었다(수집부가 아직 안 싣는다) — 값이 실리면 면제를 지워라",

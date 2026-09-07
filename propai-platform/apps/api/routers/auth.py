@@ -35,7 +35,7 @@ from apps.api.auth.jwt_handler import (
 )
 from apps.api.auth.kakao_handler import KakaoOAuthError, process_kakao_callback
 from apps.api.auth.naver_handler import NaverOAuthError, process_naver_callback
-from apps.api.auth.oauth_common import OAuthError
+from apps.api.auth.oauth_common import OAuthError, build_consent_rows
 from apps.api.config import Settings, get_settings
 from apps.api.database.models.member_auth import (
     EmailVerificationToken,
@@ -354,21 +354,18 @@ async def register(
     # 약관·개인정보 동의 이력 저장(개인정보보호법 §22 — 버전·IP·시각. 선택 동의는
     # 거부(False)도 명시 기록해 이후 분쟁 시 선택 사실을 증빙한다)
     client_ip = _client_ip(request)
-    for consent_type, agreed in (
-        ("terms_of_service", body.agree_terms),
-        ("privacy_policy", body.agree_privacy),
-        ("marketing", body.agree_marketing),
+    # ★공용 통로를 쓴다 — 소셜 가입도 같은 함수를 쓰므로 두 경로가 갈릴 수 없다.
+    #   2026-09-06 실측: 종전엔 이 블록이 여기에만 있어 **소셜 가입은 동의를 0건 남겼다**.
+    for row in build_consent_rows(
+        user_id=user.id,
+        agree_terms=body.agree_terms,
+        agree_privacy=body.agree_privacy,
+        agree_marketing=body.agree_marketing,
+        # 서버 상수 스탬프(클라이언트 임의값 미신뢰 — 법적 증빙 무결성)
+        policy_version=CURRENT_POLICY_VERSION,
+        ip=client_ip,
     ):
-        db.add(
-            UserConsent(
-                user_id=user.id,
-                consent_type=consent_type,
-                agreed=agreed,
-                # 서버 상수 스탬프(클라이언트 임의값 미신뢰 — 법적 증빙 무결성)
-                policy_version=CURRENT_POLICY_VERSION,
-                ip=client_ip,
-            )
-        )
+        db.add(row)
 
     # 이메일 인증 토큰 발급(24h) — 발송은 백그라운드(가입 응답 지연·실패 비전파)
     verify_link: str | None = None
@@ -559,6 +556,7 @@ async def get_me(
         email_verified=bool(user.email_verified),
         has_password=bool(user.hashed_password),
         phone=user.phone,
+        consent_pending=bool(getattr(user, "consent_pending", False)),
     )
 
 
@@ -621,7 +619,72 @@ async def update_me(
         email_verified=bool(user.email_verified),
         has_password=bool(user.hashed_password),
         phone=user.phone,
+        consent_pending=bool(getattr(user, "consent_pending", False)),
     )
+
+
+class ConsentSubmitRequest(BaseModel):
+    """동의 미완 사용자가 제출하는 동의. 이메일 가입의 RegisterRequest 와 **같은 필드 이름**을 쓴다."""
+
+    agree_terms: bool = Field(description="이용약관 동의(필수)")
+    agree_privacy: bool = Field(description="개인정보처리방침 동의(필수)")
+    agree_marketing: bool = Field(default=False, description="마케팅 수신 동의(선택)")
+
+
+@router.post("/me/consents", status_code=status.HTTP_204_NO_CONTENT)
+async def submit_consent(
+    body: ConsentSubmitRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    # ★반환 애노테이션을 쓰지 않는다 — 이 파일은 `from __future__ import annotations` 라
+    #   `-> None` 이 **문자열** "None" 이 되고, FastAPI 가 그것을 response_model 로 읽어
+    #   `Status code 204 must not have a response body` 로 **앱 기동 자체가 실패**한다.
+    #   2026-09-06 실측: CI Backend 가 9 failed · 295 errors(앱이 안 뜨니 전 스위트 오염).
+    #   ★같은 파일의 형제 `/account/withdraw` 가 이미 `Response(status_code=204)` 를
+    #     반환하고 있었다 — 다른 파일의 형제(`-> None`)를 보고 맞춘 것이 오판이었다(§29).
+    """동의 미완 사용자의 약관 동의를 기록하고 플래그를 내린다(소셜·이메일 공통).
+
+    ★필수 동의를 거부하면 기록하지 않고 거부한다 — 「동의했다」가 아니면 통과시킬 수 없다.
+    ★이미 동의를 마친 사용자가 다시 부르면 **아무것도 쌓지 않는다**(멱등) —
+      매번 행이 늘면 그것도 결함이다.
+    """
+    if not (body.agree_terms and body.agree_privacy):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="이용약관과 개인정보처리방침에 동의해야 서비스를 이용할 수 있습니다.",
+        )
+    # ★DB 사용자를 **직접 읽는다.** 이 파일의 get_current_user 는 jwt_handler 것이고
+    #   `CurrentUser`(user_id·tenant_id·role) 를 준다 — **DB User 가 아니다.**
+    #   2026-09-06 라이브 사고: `user: User = Depends(get_current_user)` 라고
+    #   **타입 애노테이션만** User 로 적고 `getattr(user, "consent_pending", False)` 를 썼더니,
+    #   그 필드가 없어 **항상 False** → 멱등 분기로 빠져 **아무것도 안 하고 204** 를 냈다.
+    #   그 관대한 기본값이 두 번째 결함(`user.id` — CurrentUser 엔 `user_id` 뿐)까지 가렸다.
+    #   ★형제 `/auth/me`(534행)는 처음부터 select(User).where(User.id == current_user.user_id) 였다.
+    row_user = (
+        await db.execute(select(User).where(User.id == current_user.user_id))
+    ).scalar_one_or_none()
+    if row_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="사용자를 찾을 수 없습니다."
+        )
+    # ★기본값 없는 접근 — 필드가 사라지면 **조용히 통과하지 말고 터져야** 한다.
+    if not row_user.consent_pending:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)  # 멱등 — 이미 처리됐다
+
+    for row in build_consent_rows(
+        user_id=row_user.id,
+        agree_terms=body.agree_terms,
+        agree_privacy=body.agree_privacy,
+        agree_marketing=body.agree_marketing,
+        policy_version=CURRENT_POLICY_VERSION,
+        ip=_client_ip(request),
+    ):
+        db.add(row)
+    row_user.consent_pending = False
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/me/consents")
