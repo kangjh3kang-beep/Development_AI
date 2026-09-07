@@ -169,16 +169,50 @@ export const useSatongMapPrefs = create<SatongMapPrefsState>()(
     {
       name: SATONG_MAP_PREFS_STORE_KEY,
       storage: createAccountScopedStorage<SatongMapPrefsState>(),
-      version: 1,
+      version: 2,
       /**
        * ★`version` 만 올리고 `migrate` 를 안 두면 **옛 저장분이 조용히 버려진다**
        *   (실측: v0 블롭을 심었더니 기본값이 이겼다 — 사용자가 껐던 것이 되돌아온다).
-       *   이 스토어의 스키마 변경은 **레이어 추가**뿐이고 그건 아래 `merge` 가 메운다.
-       *   그래서 마이그레이션은 **통과**시키고, 실제 복구는 `merge` 가 한다.
+       *   이 스토어의 스키마 변경은 대개 **레이어 추가**뿐이고 그건 아래 `merge` 가 메운다.
+       *   그래서 기본 방침은 **통과**시키고, 실제 복구는 `merge` 가 한다.
        * ★언제 이걸 바꿔야 하나: 컨트롤 **id 어휘**가 바뀔 때(`selected` ↔ `selected-parcel`
        *   통합이 그 경우다 — 계획서 §3 에 미정으로 적어 뒀다). 그때는 여기서 옛 id 를 옮긴다.
+       *
+       * ★★v1 → v2 (2026-09-07 · 사용자 신고 «지적 경계선이 항상 나타난다»)
+       *   **기본값만 바꾸면 이 신고는 안 고쳐진다.** 아래가 그 이유이고 전부 실측이다
+       *   (`git show origin/main:` 로 변경 전 원문 확인):
+       *
+       *   | 변경 전 사실 | 원문 |
+       *   |---|---|
+       *   | 기본값이 켜져 있었다 | `defaultEnabledLayerIds() → ["cadastre"]` |
+       *   | **끌 수 없었다** | `if (has && id === "cadastre") return s;` |
+       *   | **토글이 안 보였다** | `LAYERS_WITHOUT_POPOVER_TOGGLE = {"terrain","cadastre"}` |
+       *   | 다른 레이어를 켜면 **함께 저장됐다** | `[...s.enabledLayerIds, id]` + `enabledLayersCustomized: true` |
+       *
+       *   그리고 아래 `merge` 는 `enabledLayersCustomized === true` 이면 **저장분을 그대로
+       *   존중한다**(사용자가 끈 레이어를 되살리지 않으려고 일부러 그렇게 뒀다). 귀결:
+       *   ★**지형도를 한 번이라도 켠 적 있는 기존 사용자**는 `{customized:true,
+       *     ids:[…,"cadastre"]}` 를 영구 보관 중이고, 새 기본값 `[]` 는 **그들에게 닿지 않는다.**
+       *
+       *   ★핵심 전제: 저장분 안의 `"cadastre"` 는 **사용자의 선택이 아니다.** 끌 수도 없었고
+       *     토글도 안 보였으므로 «고를 수 있었던 적이 없다» — 그 상태에서 배열에 들어 있는
+       *     것은 오직 **옛 기본값이 얹혀 간 흔적**이다. 그래서 걷어내는 것이 «사용자 의사
+       *     무시»가 아니라 **의사가 아니었던 것의 제거**다.
+       *   ★그래서 **`"cadastre"` 만** 걷어낸다 — 나머지 원소는 진짜 선택이라 손대지 않는다
+       *     (그 대비를 아래 락이 **두 모집단**으로 고정한다).
+       *   ★`enabledLayersCustomized` 는 **끄지 않는다.** 그것을 false 로 돌리면 사용자가
+       *     **직접 켠 다른 레이어까지** 기본값으로 덮인다(위 `merge` 게이트가 그렇게 동작한다).
        */
-      migrate: (persisted) => persisted as SatongMapPrefsState,
+      migrate: (persisted, version) => {
+        const p = (persisted ?? {}) as Partial<SatongMapPrefsState>;
+        if (version >= 2 || !Array.isArray(p.enabledLayerIds)) {
+          return persisted as SatongMapPrefsState;
+        }
+        return {
+          ...p,
+          enabledLayerIds: (p.enabledLayerIds as unknown[]).filter((x) => x !== "cadastre"),
+        } as SatongMapPrefsState;
+      },
       /**
        * ★zustand 기본 `merge` 는 **얕다**(top-level spread) — 저장분의 `controlsByLayer` 가
        *   기본값 맵을 **통째로 대체**한다. 그래서 저장 당시 없던 레이어는 **영구히 빠진다.**
