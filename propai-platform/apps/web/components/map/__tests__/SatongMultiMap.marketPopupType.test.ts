@@ -10,7 +10,12 @@
  * 없어 effect 본체가 테스트에서 한 번도 안 돈다(2026-09-07 실측: 그 안의 `false` 변이가
  * 64파일 468건을 전부 통과). 그래서 팝업을 **순수 함수로 export 해** HTML 을 직접 검사한다.
  */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
+
+import { __stripCommentsForScan } from "@/lib/source-invariant";
 
 import { marketPopupHtml, type SatongMarketGroup } from "@/components/map/SatongMultiMap";
 import { MARKET_TRADE_TYPES, MARKET_TYPE_LABELS } from "@/lib/satong-map-layers";
@@ -99,13 +104,38 @@ describe("★신고③ — 팝업이 「무엇의 거래인지」 말한다", ()
     }
   });
 
-  it("★★배선 락 — 유형 인자가 **필수**다(호출부가 빼면 tsc 가 잡는다)", () => {
-    // ★★이 케이스가 있는 이유: 초판은 `marketType?` 였고, **호출부에서 인자를 빼는 변이가
+  describe("★★배선 락 — 유형 인자가 **필수**다(호출부가 빼면 tsc 가 잡는다)", () => {
+    // ★★이 describe 가 있는 이유: 초판은 `marketType?` 였고, **호출부에서 인자를 빼는 변이가
     //   SURVIVED** 했다. 함수는 잠갔는데 **배선 층이 무잠금**이라는 반복 결함이다.
     //   그 배선은 Leaflet effect 안이라 목이 없는 이 파일에서는 **행위로 못 태운다** →
-    //   **타입 계약**으로 옮겼다: 필수 인자면 누락이 tsc 에러(TS2554)이고 CI 가 잡는다.
-    //   여기서는 그 **계약 자체**가 되돌려지지 않는지를 지킨다(`?` 로 바꾸면 length 가 2가 된다).
-    expect(marketPopupHtml.length, "유형 인자가 선택적으로 되돌려졌다 — 호출부 누락이 조용해진다").toBe(3);
+    //   **타입 계약**으로 옮겼다: 필수 인자면 누락이 **TS2554** 이고 CI 타입체크가 잡는다
+    //   (실증: 호출부에서 인자를 빼니 `error TS2554: Expected 3 arguments, but got 2`).
+    //
+    // ★★그리고 **내 첫 락이 틀렸다**: `marketPopupHtml.length === 3` 으로 잠갔는데
+    //   TypeScript 의 `?` 는 JS 로 **기본값 없는 평범한 인자**가 되어 `length` 가 **그대로 3**
+    //   이다. 즉 판별력 0이었고 변이가 그것을 드러냈다(«대리 변수를 잠그면 속성은 안 잠긴다»).
+    //   → **선언 자체**를 본다. 소스 락이라 약하지만, 주석은 `__stripCommentsForScan` 으로
+    //     걷어내므로 **주석처리 변이에는 뚫리지 않는다**(그 헬퍼는 네 번 뚫린 이력을 안고 고쳐진 정본).
+    const scan = (file: string) =>
+      __stripCommentsForScan(readFileSync(resolve(process.cwd(), file), "utf-8"), file);
+
+    it("선언이 `marketType?` 로 되돌려지지 않았다 — 되돌리면 호출부 누락이 **조용해진다**", () => {
+      const src = scan("components/map/SatongMultiMap.tsx");
+      const i = src.indexOf("export function marketPopupHtml");
+      // ★공허 진리 가드 — 선언을 못 찾으면 아래 단언이 «없어서 통과» 가 된다.
+      expect(i, "선언을 못 찾았다 — 조회기 사망(리팩토링됐나?)").toBeGreaterThan(-1);
+      const sig = src.slice(i, i + 220);
+
+      // ★양성 — 필수 형태가 실재한다(대조군: 이게 없으면 아래 음성이 공허하다).
+      expect(sig, `시그니처: ${sig}`).toContain("marketType: string | undefined");
+      // ★음성 — 선택적 형태로 되돌아가지 않았다.
+      expect(sig).not.toContain("marketType?");
+    });
+
+    it("★대조군 — 호출부가 유형을 **실제로 넘긴다**", () => {
+      const src = scan("components/map/SatongMultiMap.tsx");
+      expect(src).toContain("marketPopupHtml(item, kind, type)");
+    });
   });
 
   // ★부채를 초록 안에 남긴다(§C-13).
