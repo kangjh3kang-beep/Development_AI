@@ -122,11 +122,22 @@ def build_report_model_from_appraisal(
 
     # 2. 산정방법별 추정 — 방법별 단가표 + 가중치 근거 서술
     methods = data.get("methods") or []
+    # ★★2026-09-07 독립 리뷰 적발(HIGH-4) — `applicable`/`why_not` 을 **안 읽어서**
+    #   미적용 3행이 **사유 없는 빈 칸**으로 나갔다. W5 의 명분이 *"«검토했고 이런 이유로
+    #   안 썼다»가 **산출물에 남아야** 검토한 것"* 인데, 정작 **은행 제출 산출물에서**
+    #   그 사유가 사라졌다 — 이 저장소가 반복해 데인 «사유를 버렸다» 형태.
     method_blocks: list[Any] = [DataTableBlock(
-        headers=["산정방법", "추정 단가(/㎡)", "근거"],
-        rows=[[fmt_value(m.get("method")), _won(m.get("unit_price")), fmt_value(m.get("rationale"))]
-              for m in methods],
-        numeric_cols=[1],
+        headers=["산정방법", "적용", "추정 단가(/㎡)", "근거 / 미적용 사유"],
+        rows=[
+            [
+                fmt_value(m.get("method")),
+                "적용" if m.get("applicable") is not False else "미적용",
+                _won(m.get("unit_price")),
+                _method_basis(m),
+            ]
+            for m in methods
+        ],
+        numeric_cols=[2],
     )]
     if data.get("weight_note"):
         method_blocks.append(NarrativeBlock(paragraphs=[str(data["weight_note"])]))
@@ -210,6 +221,17 @@ def build_report_model_from_appraisal(
     return ReportModel(meta=meta, sections=sections, disclaimer=data.get("disclaimer") or None)
 
 
+def _method_basis(m: dict[str, Any]) -> str:
+    """근거 칸 — 적용이면 산출근거, 미적용이면 **사유**(+참고값이 있으면 채택 아님 고지)."""
+    if m.get("applicable") is not False:
+        return fmt_value(m.get("rationale"))
+    parts = [str(m.get("why_not") or "사유 미기재")]
+    ref = m.get("reference_unit_price")
+    if ref:
+        parts.append(f"[참고 {int(ref):,}원/㎡ — {m.get('reference_note') or '채택 아님'}]")
+    return " ".join(parts)
+
+
 def _adopted_method(result: dict[str, Any]) -> str | None:
     """채택 산정방법 라벨. desk_appraisal 결과에는 단일 adopted_method 키가 없으므로
     (있으면 우선) methods[].method 를 이어 붙인다(값 추측 없이 실산출 방법명만 사용)."""
@@ -217,7 +239,13 @@ def _adopted_method(result: dict[str, Any]) -> str | None:
     if m:
         return str(m)
     methods = result.get("methods") or []
-    names = [str(x.get("method")) for x in methods if isinstance(x, dict) and x.get("method")]
+    # ★★2026-09-07 독립 리뷰 적발(HIGH-4) — 종전엔 **전부** 이어 붙여, 4방법 등재 뒤
+    #   다필지 총괄표의 「채택 산정방법」이 *"공시지가 · 거래사례 · 원가 · 수익환원"* 이라
+    #   **거짓 진술**했다(실제 채택은 하나다). **적용된 것만** 센다.
+    names = [
+        str(x.get("method")) for x in methods
+        if isinstance(x, dict) and x.get("method") and x.get("applicable") is not False
+    ]
     return " · ".join(names) if names else None
 
 
