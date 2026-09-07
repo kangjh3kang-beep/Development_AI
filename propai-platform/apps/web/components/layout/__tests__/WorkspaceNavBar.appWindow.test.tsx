@@ -110,3 +110,50 @@ describe("데스크톱 내비 — 앱형 라우트는 창을 빼앗지 않는다
     expect(fireEvent.click(openFieldAppLink())).toBe(true);
   });
 });
+
+describe("★singleLeaf 자리 — 오늘은 도달 불가지만 무잠금으로 두지 않는다", () => {
+  // 현재 레지스트리에서 `sales-sites` 는 부모(`sales-mgmt`)가 있어 **드롭다운**으로 그려지므로
+  // 이 분기는 도달하지 않는다(변이가 SURVIVED 했다 — 구멍이 아니라 도달 불가다).
+  // ★그러나 «설명할 수 없는 생존» 으로 남기지 않는다: 섹션에 리프가 하나뿐이 되는 순간
+  //   여기로 그려지고, 그때 정책이 빠져 있으면 **데스크톱이 조용히 옛 동작으로 돌아간다.**
+  //   그래서 그 상태를 **만들어서** 태운다(조건부 렌더는 그 상태를 만들어 검사하라).
+  // ★이 자리의 링크 텍스트는 `section.title` 이다(원문 확인) — `link.label` 이 아니다.
+  it("리프가 하나뿐인 섹션의 앱형 링크도 창을 열고 기본 이동을 막는다", () => {
+    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(
+      () => ({ focus: vi.fn() }) as unknown as Window,
+    );
+    window.open = open as unknown as typeof window.open;
+
+    const solo = [
+      {
+        id: "solo-section",
+        title: "단독섹션",
+        items: [
+          { id: "solo-app", label: "단독 현장앱", href: "/ko/sales/sites", launch: "app-window" as const },
+        ],
+      },
+    ];
+    render(<WorkspaceNavBar sections={solo} />);
+
+    const notPrevented = fireEvent.click(screen.getByRole("link", { name: /단독섹션/ }));
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open.mock.calls[0]![1]).toBe(FIELD_APP_WINDOW_NAME);
+    expect(notPrevented).toBe(false);
+  });
+
+  it("★두 모집단 — 같은 자리에 `launch` 가 없으면 창을 열지 않는다", () => {
+    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(
+      () => ({ focus: vi.fn() }) as unknown as Window,
+    );
+    window.open = open as unknown as typeof window.open;
+
+    const solo = [
+      { id: "solo-plain", title: "평범섹션", items: [{ id: "solo-x", label: "평범 링크", href: "/ko/projects" }] },
+    ];
+    render(<WorkspaceNavBar sections={solo} />);
+
+    expect(fireEvent.click(screen.getByRole("link", { name: /평범섹션/ }))).toBe(true);
+    expect(open).not.toHaveBeenCalled();
+  });
+});
