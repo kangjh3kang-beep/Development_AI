@@ -102,6 +102,107 @@ def _exclusive_ratio_for(dev_type: str, building_type: str | None) -> tuple[floa
     return ratio, note
 
 
+# ── 축 경계: 전용 평당가 → **공급 평당가** ─────────────────────────────────────
+#
+# ★★2026-09-07 사용자 확인 — ***"모든 분양가의 표기는 공급면적 기준이다."***
+#   정본 데이터로도 확증했다: 청약홈 모델 행은 `price_man` 을 **`supply_area_m2`** 와
+#   같은 행에 싣는다(`house_ty`(전용)와 짝지어지지 않는다).
+#
+# ★그런데 이 저장소의 평당가 필드는 **단위는 이름에 담고 기준면적은 안 담는다**
+#   (실측: `per_pyeong_10k`·`per_pyeong_won`·`sale_price_per_pyeong_man` … 15종,
+#   축을 이름에 담은 것 **0종**). 그래서 전용값과 공급값이 **같은 모양**이라 섞여도
+#   아무것도 막지 못한다. 전면 개명은 소비처가 너무 많아 회귀 위험이 크다.
+#   → **개명 대신 경계를 좁힌다.** 전용→공급 환산은 이 함수 **하나만** 한다.
+#
+# ★실해: 전용 기준 평당가를 공급 평형에 곱하면 착시가 정확히 이 크기로 난다 —
+#     전용평당 2,436만 × **공급** 34평 = 8.28억   (실거래는 6.13~7.28억)
+#   사용자가 신고한 «8억» 이 이 자리에서 나올 수 있다.
+
+# 비교사례 물건종별 → **사례의** 관례 전용률(전용/공급).
+#
+# ★★2026-09-07 근본 정정 — 종전에는 **대상의 `dev_type` 전용률**을 곱했다. 그런데
+#   비교사례는 **아파트 분양권**이고 대상은 주상복합(M07 0.60) 이라, *"아파트가 거래된
+#   전용 평당가를, 우리 주상복합 전용률로 나눈 공급면적에 매긴다"* 는 뜻이 된다.
+#   감정평가 논리는 반대다 — **사례의 기준으로 시장가를 뽑고**, 대상 차이는 **별도 보정**이다.
+#
+# ★값의 정본은 **이 저장소 자신**이다: `suggest._REF_SUPPLY_SQM = 112.4`("84타입 표준
+#   공급면적") → 84/112.4 = **0.747**, 공급 **34.0평**. 사용자 확인(*"전용 84㎡는 공급
+#   34평형"*)과 일치하고, 빌리브센트하이 실측 공급평당 1,803만원과 **+0.9%**로 맞는다.
+#
+# ★★**아파트 계열만 넣는다.** 오피스텔·단독·상업의 관례 전용률은 **재보지 않았다** —
+#   지어내면 그 숫자가 다음 사람에게 근거처럼 읽힌다. 미등록 종별은 **현행 동작을 그대로
+#   유지**(대상 `dev_type` 정본)하고, 그 사실을 근거에 적는다.
+# 국민평형 전용면적(㎡) — 관례 전용률의 분자. `_REF_SUPPLY_SQM`(112.4)이 분모다.
+_STANDARD_EXCLUSIVE_SQM = 84.0
+
+
+def _apt_comparable_ratio() -> float:
+    """아파트 계열 사례 관례 전용률 — **리터럴을 쓰지 않고 표준 공급면적에서 파생**한다.
+
+    ★`0.747` 을 여기 또 적으면 이 저장소의 **다섯 번째 사본**이 된다(실측: `_JEONYULRYUL`
+      0.747 · `area-notation` 0.75 · `PricingBandPanel` 0.747 …). 사본은 **값이 갈릴 때
+      조용하다** — 프론트 안에서만 0.75/0.747 두 값이 돌아 84㎡ 기준 공급면적이
+      112.0㎡(33.88평) ↔ 112.4㎡(34.02평) 로 갈렸다.
+    → 「84타입 표준 공급면적」 하나만 정본으로 두고 **나눠서 얻는다.**
+    """
+    from app.services.sales.pricing.suggest import _REF_SUPPLY_SQM
+    return round(_STANDARD_EXCLUSIVE_SQM / _REF_SUPPLY_SQM, 3)
+
+
+_COMPARABLE_SUPPLY_RATIO: dict[str, float] = {
+    "apt": _apt_comparable_ratio(),
+    "apt_presale": _apt_comparable_ratio(),
+}
+
+
+def _to_supply_per_pyeong_won(
+    exclusive_per_pyeong_man: float,
+    *,
+    dev_type: str,
+    building_type: str | None,
+    prop_type: str,
+    premium: float = 1.0,
+    user_ratio: float | None = None,
+) -> tuple[int, str]:
+    """전용 기준 평당가(만원) → **공급 기준 평당가(원)**.
+
+    Returns:
+        (원/평(공급), 근거 조각) — 근거 조각에는 **반드시 「공급면적 기준」이 들어간다.**
+        호출부가 그 문구를 각자 쓰면 한 곳이 빠지고, 빠진 그 곳이 오독을 만든다.
+
+    ★`premium` 은 신축 프리미엄. 분양권 전매는 **이미 신축가**라 1.0 이다.
+    """
+    subj_ratio, subj_note = _exclusive_ratio_for(dev_type, building_type)
+    # ★사용자 직접입력이 **최우선**이다 — 설계·인허가 자료를 가진 사람이 관례보다 낫다.
+    #   ★다만 «어디서 온 값인지» 를 근거에 반드시 적는다(원장에 영속되므로).
+    if user_ratio is not None and 0.3 <= user_ratio <= 1.0:
+        won = int(round(exclusive_per_pyeong_man * user_ratio * premium * 10000))
+        note = f"전용률 {user_ratio} — **사용자 직접입력**"
+        if premium != 1.0:
+            note += f" × 신축 프리미엄 {premium}"
+        return won, note + " → **공급면적 기준** 평당가"
+    comp_ratio = _COMPARABLE_SUPPLY_RATIO.get(prop_type)
+    if comp_ratio is not None:
+        ratio = comp_ratio
+        note = f"사례 전용률 {comp_ratio}(물건종별 {prop_type} 관례)"
+        # ★대상 유형이 다르면 **값을 바꾸지 않고 그 사실을 싣는다.** 얼마나 보정해야
+        #   하는지는 재보지 않았다 — 사용자가 판단할 재료만 준다(무날조).
+        if abs(subj_ratio - comp_ratio) > 0.02:
+            note += (
+                f" ※대상 유형 {dev_type} 의 정본 전용률은 {subj_ratio} 로 사례와 다르다"
+                " — 유형 차이 보정은 **하지 않았다**(보정계수 미측정)"
+            )
+    else:
+        ratio = subj_ratio
+        note = f"{subj_note} ※{prop_type} 의 사례 관례 전용률 미등록 — 대상 유형 축 사용"
+    won = int(round(exclusive_per_pyeong_man * ratio * premium * 10000))
+    if premium != 1.0:
+        note += f" × 신축 프리미엄 {premium}"
+    # ★이 문구는 계약이다 — 잠금이 이 문자열의 **존재**가 아니라 **모든 경로 통과**를 본다.
+    note += " → **공급면적 기준** 평당가"
+    return won, note
+
+
 def _safe_building_type(svc: Any, dev_type: str) -> str:
     try:
         return svc._get_building_type(dev_type)
@@ -185,6 +286,9 @@ async def _trade_sale_price_per_pyeong(
     *, dev_type: str, address: str, sigungu5: str | None = None,
     building_type: str | None = None,
     cases_out: list[dict[str, Any]] | None = None,
+    # ★사용자 직접입력 전용률(2026-09-07). 키워드 전용·기본 None → 기존 호출부 무회귀.
+    #   §33: 인자는 **뒤에** 넣는다(앞에 넣으면 위치인자 호출부가 조용히 밀린다).
+    user_exclusive_ratio: float | None = None,
 ) -> tuple[int, str, str, None, int] | None:
     """주변 실거래(MOLIT) 직접 조회 → 분양단가(원/평, 공급면적). site_id 불필요(★HIGH-1).
 
@@ -268,20 +372,51 @@ async def _trade_sale_price_per_pyeong(
         if pre:
             pd_med, pd_n = pre["dong"]["median"], pre["dong"]["n"]
             ps_med, ps_n = pre["sigungu"]["median"], pre["sigungu"]["n"]
+            # ★상위 대역은 **중앙값과 같은 범위(scope)** 에서 와야 한다 — 동 중앙값에
+            #   시군구 상위값을 붙이면 두 모집단이 섞여 근거가 거짓이 된다.
             if pd_med and pd_n >= _MIN_TRADE_SAMPLES:
                 p_scope, p_med, p_n = "동", int(pd_med), int(pd_n)
+                p_upper_key = "dong_upper"
             elif ps_med and ps_n >= _MIN_TRADE_SAMPLES:
                 p_scope, p_med, p_n = "시군구", int(ps_med), int(ps_n)
+                p_upper_key = "sigungu_upper"
             else:
                 p_scope = None
+                p_upper_key = None
             if p_scope:
-                ratio, ratio_note = _exclusive_ratio_for(dev_type, building_type)
-                price = int(round(p_med * ratio * 10000))
+                price, ratio_note = _to_supply_per_pyeong_won(
+                    p_med, dev_type=dev_type, building_type=building_type,
+                    prop_type="apt_presale", user_ratio=user_exclusive_ratio)
+                # ★★2026-09-07 사용자 신고 — *"분양가와 실거래가가 다르고 실거래가는
+                #   8억이 넘는다"*. 라이브 원문을 열어 **이 앵커가 무엇인지**를 재고 근거에
+                #   싣는다. 종전 문장은 값만 말해서, 읽는 사람이 **「현재 시세」로 오독**했다
+                #   (내가 먼저 오독했다 — 표본의 한 점을 시세로 승격시켰다).
+                #   실측(빌리브센트하이 7건·화도읍): 신고 6.13~7.28억 · 조회 최신월 **0건**.
+                _dg = (pre.get("diagnostics") or {}) if isinstance(pre, dict) else {}
+                _upper = (pre.get(p_upper_key) or {}) if p_upper_key else {}
+                _notes = []
+                if _dg.get("cancelled_excluded_n"):
+                    _notes.append(f"해제거래 {_dg['cancelled_excluded_n']}건 제외")
+                if _dg.get("direct_deal_n"):
+                    # 제외하지 **않았다** — 밝히기만 한다(측정된 편향 +0.1%로 근거 부족).
+                    _notes.append(f"직거래 {_dg['direct_deal_n']}건 포함")
+                if _dg.get("latest_ym") and not _dg.get("latest_ym_rows"):
+                    _notes.append(
+                        f"★{_dg['latest_ym']} 신고 0건 — 신고 지연(약 30일)으로 "
+                        "최신 시세가 아직 반영되지 않았을 수 있다")
+                if _upper.get("p75"):
+                    _notes.append(
+                        f"같은 표본 상위 25% {_upper['p75']:,}만원/평"
+                        + (f"·최고 {_upper['max']:,}만원/평" if _upper.get("max") else "")
+                        + "(전용) — 신규 분양은 시장 상위 대역을 겨냥한다")
                 basis = (
                     f"분양권 전매(MOLIT) {p_scope} 중앙값 {p_med:,}만원/평"
                     f"(전용, 표본 {p_n}건·최근 12개월) × {ratio_note}"
-                    " → 공급 평당가(신축 프리미엄 미적용 — 분양권은 이미 신축가"
-                    "·물건종별 apt_presale)"
+                    "(신축 프리미엄 미적용 — 분양권은 이미 신축가·물건종별 apt_presale)"
+                    # ★이 앵커가 **무엇인지** 말한다 — 호가가 아니라 «신고된 실거래»이고,
+                    #   중앙값이라 상위 대역이 보이지 않는다.
+                    " ※실거래 **신고** 기준(호가 아님)"
+                    + ("" if not _notes else " · " + " · ".join(_notes))
                 )
                 # ★채택한 경로의 사례만 내보낸다 — 폴백으로 내려가면 그 사례는 근거가 아니다.
                 if cases_out is not None:
@@ -306,13 +441,14 @@ async def _trade_sale_price_per_pyeong(
             r_scope = None
         if r_scope:
             yrs = pp.get("recent_build_years")
-            ratio, ratio_note = _exclusive_ratio_for(dev_type, building_type)
             premium = _PREMIUM["base"]
-            price = int(round(r_med * ratio * premium * 10000))
+            price, ratio_note = _to_supply_per_pyeong_won(
+                r_med, dev_type=dev_type, building_type=building_type,
+                prop_type=prop_type, premium=premium, user_ratio=user_exclusive_ratio)
             basis = (
                 f"신축 실거래(MOLIT · 준공 {yrs}년 이내) {r_scope} 중앙값 {r_med:,}만원/평"
-                f"(전용, 표본 {r_n}건·최근 8개월) × {ratio_note} × 신축 프리미엄 {premium}"
-                f" → 공급 평당가(공급면적 기준·물건종별 {prop_type})"
+                f"(전용, 표본 {r_n}건·최근 8개월) × {ratio_note}"
+                f"(물건종별 {prop_type})"
             )
             return price, "신축 실거래(MOLIT)", basis, None, r_n
     except Exception as e:  # noqa: BLE001 — 실거래 조회 실패는 지역 시세로 폴백(무중단)
@@ -331,11 +467,12 @@ async def _trade_sale_price_per_pyeong(
 
     premium = _PREMIUM["base"]
     # 전용 평당가(만원) → 공급 평당가(원/평) × 신축 프리미엄.
-    ratio, ratio_note = _exclusive_ratio_for(dev_type, building_type)
-    price = int(round(med * ratio * premium * 10000))
+    price, ratio_note = _to_supply_per_pyeong_won(
+        med, dev_type=dev_type, building_type=building_type,
+        prop_type=prop_type, premium=premium, user_ratio=user_exclusive_ratio)
     basis = (
         f"주변 실거래(MOLIT) {scope} 중앙값 {med:,}만원/평(전용, 표본 {n}건·최근 8개월) × "
-        f"{ratio_note} × 신축 프리미엄 {premium} → 공급 평당가(공급면적 기준·물건종별 {prop_type})"
+        f"{ratio_note}(물건종별 {prop_type})"
     )
     # ★표본수를 **구조적으로** 돌려준다. 종전엔 소비처가 `basis` **산문에서 정규식으로
     #   긁었고**(`표본\s*([0-9,]+)\s*건`), 여기서 문구를 조금만 바꾸면 소비처가 조용히
@@ -347,6 +484,8 @@ async def _trade_sale_price_per_pyeong(
 async def _resolve_sale_price_per_pyeong(
     *, db: Any, site_id: Any, dev_type: str, region: str, address: str,
     precision_out: dict[str, Any] | None = None,
+    # ★사용자 직접입력 전용률 — 키워드 전용·기본 None(기존 호출부 무회귀).
+    user_exclusive_ratio: float | None = None,
 ) -> tuple[int | None, str, str, str | None]:
     """분양단가(원/평, 공급면적 기준) 결정 — 실거래 1순위, 지역 시세표는 '추정' 폴백.
 
@@ -405,7 +544,8 @@ async def _resolve_sale_price_per_pyeong(
     #     사례를 만들고도 밖으로 안 내보내는 것은 «만들었는데 안 불린다» 그 자체다.
     _cases: list[dict[str, Any]] | None = [] if precision_out is not None else None
     trade = await _trade_sale_price_per_pyeong(
-        dev_type=dev_type, address=address, cases_out=_cases)
+        dev_type=dev_type, address=address, cases_out=_cases,
+        user_exclusive_ratio=user_exclusive_ratio)
     if trade is not None:
         # ★이 리졸버의 **외부 계약은 4-튜플 그대로**다(rough 호출부 무회귀).
         #   표본수는 `_molit_sale_price_source` 만 쓰므로 여기서 벗겨 낸다.

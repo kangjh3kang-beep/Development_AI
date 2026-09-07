@@ -190,6 +190,24 @@ def _extract_dong(address: str | None) -> str | None:
     return m[-1] if m else None
 
 
+def _quantile(vals: list[float], q: float) -> float:
+    """표본이 작아도 죽지 않는 분위수.
+
+    ★`statistics.quantiles` 는 **표본 2건 미만에서 StatisticsError** 를 낸다.
+      분양권 전매는 표본이 원래 작다(실측: 빌리브센트하이 12개월 **7건**) — 여기서
+      예외가 나면 상위 대역 축이 통째로 사라지는데, 그 실패는 **조용하다**.
+    """
+    if not vals:
+        raise ValueError("빈 표본에 분위수를 물었다 — 호출부가 먼저 걸러야 한다")
+    xs = sorted(vals)
+    if len(xs) == 1:
+        return xs[0]
+    pos = q * (len(xs) - 1)
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    return xs[lo] + (xs[hi] - xs[lo]) * (pos - lo)
+
+
 async def _trade_per_pyeong(
     sigungu5: str, dong: str | None, prop_type: str, *, collect_cases: bool = False,
 ) -> dict[str, Any]:
@@ -218,11 +236,16 @@ async def _trade_per_pyeong(
     recent_sigu_pp: list[float] = []
     _NOW_YEAR = now.year
     cases: list[dict[str, Any]] = []
+    direct_n = 0        # 직거래(제외하지 않음 — 근거에 밝히기만 한다)
+    cancelled_n = 0     # 계약 해제(제외한다)
+    latest_ym_n = 0     # 조회 최신월 건수 — 0이면 「신고 지연으로 최신 시세 미반영」
     for ym in yms:
         try:
             rows = await m.get_transactions(sigungu5, ym, prop_type=prop_type, num_rows=1000)
         except Exception:  # noqa: BLE001
             rows = []
+        if ym == yms[0]:
+            latest_ym_n = len(rows or [])
         for r in rows or []:
             try:
                 amt = float(r.get("price_10k_won") or 0)
@@ -250,16 +273,36 @@ async def _trade_per_pyeong(
                     })
                 continue
             pp = amt / (ar / PYEONG_SQM)   # 만원/평(전용)
-            in_range = _PP_MIN <= pp <= _PP_MAX
+            # ★★2026-09-07 — **소비처 0 결함 봉합.** `molit_client` 는 `is_cancelled`·
+            #   `dealing_type` 을 파싱해 **보존만** 하면서 주석에 *"제외·가중은 **소비처
+            #   판단**이다"* 라고 적어 뒀는데, **판단하는 소비처가 한 곳도 없었다**
+            #   (`git grep is_cancelled` → 파서 외 0건). 계약이 해제된 거래는 **성립하지
+            #   않은 가격**이라 시세가 아니다. 같은 파일 실측(3,482건): 해제 68건(1.95%) ·
+            #   **해제 건 평균이 정상 대비 +11.5%(고가 편향)**.
+            cancelled = bool(r.get("is_cancelled"))
+            in_range = (_PP_MIN <= pp <= _PP_MAX) and not cancelled
             matched_dong = bool(dong and dong in str(r.get("dong") or ""))
+            # ★직거래(`dealingGbn`)는 **제외하지 않는다.** 라이브 실측(빌리브센트하이 7건)에서
+            #   직거래를 빼도 중앙값이 **2,436 → 2,439(+0.1%)** 로 사실상 불변이었다.
+            #   *안 재본 편향을 근거로 행을 버리지 않는다* — 대신 **건수를 근거에 밝힌다**.
+            if str(r.get("dealing_type") or "").strip() == "직거래":
+                direct_n += 1
+            if cancelled:
+                cancelled_n += 1
             if collect_cases:
                 cases.append({
                     "ym": ym, "dong": r.get("dong"), "jibun": r.get("jibun"),
                     "building_name": r.get("building_name"), "deal_date": r.get("deal_date"),
                     "price_10k_won": amt, "area_m2": ar, "per_pyeong_10k": round(pp, 1),
                     "matched_dong": matched_dong, "included": in_range,
+                    "dealing_type": r.get("dealing_type"),
+                    "is_cancelled": cancelled,
+                    # ★사유를 **가른다** — 「해제」와 「범위 밖」이 같은 문구면 원장을 보고
+                    #   되짚을 수 없다(§유료 규율 4: 실패는 전용 필드로 자기를 구별한다).
                     "exclude_reason": (
                         None if in_range
+                        else "계약 해제 거래(cdealType) — 성립하지 않은 가격이라 시세가 아니다"
+                        if cancelled
                         else f"평당가 sanity 범위({_PP_MIN:.0f}~{_PP_MAX:.0f}만원/평) 벗어남"
                     ),
                 })
@@ -293,6 +336,29 @@ async def _trade_per_pyeong(
             "median": round(statistics.median(recent_sigu_pp)) if recent_sigu_pp else None,
             "n": len(recent_sigu_pp)},
         "recent_build_years": _RECENT_BUILD_YEARS,
+        # ★★2026-09-07 — **중앙값이 「분양 가능 대역」을 가린다.**
+        #   라이브 실측(빌리브센트하이 7건, 전용→공급 0.75 환산):
+        #       중앙값 1,827만원/평  ↔  **최고 2,032만원/평**  (같은 단지·같은 12개월)
+        #   신규 분양은 **시장 평균가가 아니라 상위 대역**을 겨냥한다(신축·고층·최근).
+        #   ★그래서 «중앙값을 상위값으로 바꾼다»가 아니라 **둘 다 낸다** — 어느 쪽을 쓸지는
+        #     사용자 판단이고, 한 수로 뭉개면 근거가 사라진다.
+        #   ★기존 키는 손대지 않는다(무회귀 — 소비처가 없으면 그냥 안 읽는다).
+        "dong_upper": {
+            "p75": round(_quantile(dong_pp, 0.75)) if dong_pp else None,
+            "max": round(max(dong_pp)) if dong_pp else None,
+            "n": len(dong_pp)},
+        "sigungu_upper": {
+            "p75": round(_quantile(sigu_pp, 0.75)) if sigu_pp else None,
+            "max": round(max(sigu_pp)) if sigu_pp else None,
+            "n": len(sigu_pp)},
+        # ★진단 — 「왜 이 값인가」를 되짚을 수 있게. **표시가 아니라 판정 재료**다.
+        "diagnostics": {
+            "cancelled_excluded_n": cancelled_n,   # 제외했다
+            "direct_deal_n": direct_n,             # 제외하지 않았다(근거에 밝힌다)
+            "latest_ym": yms[0],
+            "latest_ym_rows": latest_ym_n,         # 0이면 신고 지연으로 최신 시세 미반영
+            "months_scanned": len(yms),
+        },
     }
     if collect_cases:
         result["cases"] = cases

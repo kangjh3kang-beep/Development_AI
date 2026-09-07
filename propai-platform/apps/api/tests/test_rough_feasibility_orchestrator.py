@@ -445,7 +445,9 @@ async def test_high1_trade_sale_price_without_site_id(monkeypatch):
     # ★기대값의 **파생 출처**가 낡았다 — 전용률이 평면 상수에서 정본
     #   (`unit_standards.get_exclusive_ratio`)으로 옮겨졌다(2026-09-05).
     #   ★파생시키는 것만으로는 부족하다 — **무엇에서 파생시키는가**가 같이 낡는다.
-    from app.services.feasibility.unit_standards import get_exclusive_ratio
+    # ★2026-09-07 — `get_exclusive_ratio`(대상 축) 임포트를 걷어냈다. 축이 사례로
+    #   바뀌어 더는 이 기대값의 원천이 아니다. 바로 위 주석이 예고한 그대로
+    #   **«무엇에서 파생시키는가»가 같이 낡았다.**
     from app.services.sales.pricing.suggest import _PREMIUM
 
     _stub_happy(monkeypatch, stub_saleprice=False)  # 분양단가만 실경로로
@@ -470,7 +472,13 @@ async def test_high1_trade_sale_price_without_site_id(monkeypatch):
     assert rev["source"] == "주변 실거래(MOLIT)"
     assert "추정" not in rev["source"] and "비실거래" not in rev["source"]
     # 분양단가 = 동 중앙값(전용) × 전용률 × 신축 프리미엄 → 공급 평당가(원/평)
-    expected = int(round(6000 * get_exclusive_ratio("M01") * _PREMIUM["base"] * 10000))
+    # ★2026-09-07 — 기대값이 **파생형이었지만 축이 틀렸다**: `get_exclusive_ratio("M01")`
+    #   은 **대상(dev_type) 축**이고, 분양가 환산은 **사례(prop_type) 축**으로 바뀌었다.
+    #   이 락의 의도는 «site_id 없이도 주변 실거래로 분양단가를 잡는가»(HIGH-1)와
+    #   «신축 프리미엄이 곱해지는가» 이지 전용률 값이 아니다 → 축만 정본으로 바꾼다.
+    #   ★전용률 축 자체는 `tests/test_supply_basis_contract.py` 가 전담한다.
+    from app.services.feasibility.sale_price_resolver import _COMPARABLE_SUPPLY_RATIO
+    expected = int(round(6000 * _COMPARABLE_SUPPLY_RATIO["apt"] * _PREMIUM["base"] * 10000))
     assert rev["sale_price_per_pyeong"] == expected
     # 실거래 경로는 '추정' degraded를 남기지 않는다(정직)
     assert not any("추정" in n for n in out["degraded_notes"])

@@ -875,7 +875,13 @@ async def test_분양권이_있으면_그것을_쓰고_신축프리미엄을_곱
     assert src == "분양권 전매(MOLIT)", src
     assert n == 17
     # ★신축 프리미엄 **미적용** — 2491 × 0.75 × 10000 (1.15 를 곱하지 않는다)
-    assert price == round(2491 * 0.75 * 10000), (
+    # ★2026-09-07 — 리터럴 `0.75`(대상 M01 전용률)를 박아 두어, 전용률 축이
+    #   **사례 관례(0.747)** 로 바뀌자 걸렸다. 이 락의 의도는 단언 메시지가 말하듯
+    #   **프리미엄 이중계상 금지**이지 전용률 값이 아니다 → 의도로 좁힌다.
+    #   ★전용률 값 자체는 별도 락(사례 축)이 본다.
+    from app.services.feasibility.sale_price_resolver import _COMPARABLE_SUPPLY_RATIO
+    _r = _COMPARABLE_SUPPLY_RATIO["apt_presale"]
+    assert price == round(2491 * _r * 10000), (
         f"신축 프리미엄이 이중 계상됐다: {price:,} (기대 {round(2491*0.75*10000):,})")
     # ★근거가 그 사실을 말한다(사후에 되짚을 수 있어야)
     assert "분양권 전매" in basis and "신축 프리미엄 미적용" in basis, basis
@@ -904,7 +910,10 @@ async def test_분양권이_없거나_표본미달이면_매매로_폴백한다(
     assert src == "주변 실거래(MOLIT)", src
     # ★매매 경로는 신축 프리미엄을 **적용한다**(혼합 표본을 신축 수준으로 근사)
     assert "신축 프리미엄" in basis and "미적용" not in basis, basis
-    assert price == round(1391 * 0.75 * 1.15 * 10000)
+    from app.services.feasibility.sale_price_resolver import _COMPARABLE_SUPPLY_RATIO
+    _r2 = _COMPARABLE_SUPPLY_RATIO["apt"]
+    # ★프리미엄 축을 본다 — 이중계상이면 1.15² 가 되어 여기서 갈린다.
+    assert price == round(1391 * _r2 * 1.15 * 10000)
 
 
 @pytest.mark.asyncio

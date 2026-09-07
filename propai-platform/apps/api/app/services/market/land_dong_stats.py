@@ -157,8 +157,35 @@ def _time_factor(deal_ym: str, now_ym: str, series: list[tuple[str, float]]) -> 
     return factor
 
 
+def _dong_eq(row_dong: str, target_dong: str) -> bool:
+    """법정동 일치 — **읍·면 접두를 흡수**한다.
+
+    ## ★★2026-09-07 라이브 적발 — 읍·면 지역에서 동 층이 **원리적으로 0건**이었다
+
+    MOLIT `umdNm` 은 읍·면이 있으면 **`"화도읍 마석우리"`** 로 온다. 주소에서 뽑은
+    타깃은 **`"마석우리"`** 다. 종전 `==` 비교라 **정확일치 0건**(포함일치 16건)이었고,
+    그 결과 `dong_zone_jimok`·`dong_jimok`·`dong_zone`·`dong` **네 층이 전부 실패**해
+    `sigungu_jimok` 으로 떨어졌다. 그 표본은 **개발제한구역 40.2%** 가 섞여 있었고,
+    대상(일반상업지역) 실거래 대비 채택가가 **−24%** 였다.
+
+    ★**실해 범위**: 남양주 3개월 표본에서 `umdNm` 의 **81.5%가 읍·면 접두**를 갖는다.
+      시(동) 지역은 `"논현동" == "논현동"` 이라 멀쩡했고 — **읍·면만 조용히 깨져 있었다.**
+
+    ★**`in` 이 아니라 마지막 토큰 일치**로 좁힌다. `in` 이면 `"석우리"` 같은 부분문자열이
+      걸리고, 같은 시군구 안의 다른 동을 오염시킨다.
+    """
+    r, t = _norm(row_dong), _norm(target_dong)
+    if not r or not t:
+        return False
+    return r == t or r.endswith(" " + t)
+
+
 def _matches(row: dict[str, Any], keys: tuple[str, ...], target: dict[str, str]) -> bool:
-    return all(_norm(row.get(k)) == target.get(k, "") for k in keys)
+    return all(
+        _dong_eq(row.get(k), target.get(k, "")) if k == "dong"
+        else _norm(row.get(k)) == target.get(k, "")
+        for k in keys
+    )
 
 
 def dong_land_stats(

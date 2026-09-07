@@ -46,8 +46,31 @@ export const EXCLUSIVE_TO_PYEONGHYEONG: ReadonlyArray<readonly [number, number]>
 /** 앵커 매칭 허용오차(㎡). 실거래는 59.97·84.93 처럼 소수가 붙는다. */
 const ANCHOR_TOLERANCE_SQM = 2.0;
 
-/** 앵커 밖에서 쓰는 표준 전용률. ★관례값이지 정밀값이 아니다 — 그래서 폴백을 표기한다. */
-const FALLBACK_EXCLUSIVE_RATIO = 0.75;
+/**
+ * 국민평형(전용 84㎡)의 **표준 공급면적(㎡)** — 프론트 전용률의 **유일 정본**.
+ *
+ * ★백엔드 `suggest._REF_SUPPLY_SQM = 112.4`("84타입 표준 공급면적")의 미러다.
+ *   `84 / 112.4 = 0.747` 이고 공급 **34.0평** — 사용자 확인(*"전용 84㎡는 공급 34평형"*)과
+ *   일치하며, 이 표의 `[84, 34]` 앵커와도 정합한다.
+ */
+export const REF_SUPPLY_SQM = 112.4;
+/** 국민평형 전용면적(㎡) — 전용률의 분자. */
+export const REF_EXCLUSIVE_SQM = 84;
+
+/**
+ * 표준 전용률(전용/공급). ★**리터럴을 쓰지 않고 파생**한다.
+ *
+ * ★★2026-09-07 실측 — 이 저장소에 전용률 사본이 **여섯 벌**이었고 값이 갈렸다:
+ *   `suggest._JEONYULRYUL` 0.747 · 여기 **0.75** · `PricingBandPanel` 0.747 …
+ *   프론트 안에서만 84㎡ 기준 공급면적이 **112.0㎡(33.88평) ↔ 112.4㎡(34.02평)** 로
+ *   갈렸다. 사본은 **값이 어긋날 때 아무 소리도 내지 않는다.**
+ *   → 정본 하나(`REF_SUPPLY_SQM`)에서 나눠 얻고, **다른 파일은 이것을 import 한다.**
+ */
+export const EXCLUSIVE_TO_SUPPLY_RATIO =
+  Math.round((REF_EXCLUSIVE_SQM / REF_SUPPLY_SQM) * 1000) / 1000;
+
+/** 앵커 밖에서 쓰는 표준 전용률(= 위 파생값). ★관례값이지 정밀값이 아니다. */
+const FALLBACK_EXCLUSIVE_RATIO = EXCLUSIVE_TO_SUPPLY_RATIO;
 
 export interface Pyeonghyeong {
   /** 평형 수치(공급 기준 통칭). */
@@ -97,5 +120,12 @@ export function formatPyeonghyeong(exclusiveSqm: number | null | undefined): str
  */
 export function formatAreaDual(exclusiveSqm: number | null | undefined): string {
   if (exclusiveSqm == null || !Number.isFinite(exclusiveSqm) || exclusiveSqm <= 0) return "—";
-  return `전용 ${formatExclusive(exclusiveSqm)} (${formatPyeonghyeong(exclusiveSqm)})`;
+  // ★★2026-09-07 사용자 지적 — 종전 `"전용 84㎡ (34평형)"` 은 괄호 안 값에 **기준이
+  //   없어** 「전용이 34평」으로 읽힌다. 실제 전용 84㎡ 는 **25.4평**이고, 34평형은
+  //   **공급** 기준 통칭이다. → 두 값에 각각 기준을 붙이고, 전용의 평 환산도 함께 보인다.
+  const excPyeong = Math.round((exclusiveSqm / PYEONG_SQM) * 10) / 10;
+  return (
+    `전용 ${formatExclusive(exclusiveSqm)}(${excPyeong}평)` +
+    ` · 공급 ${formatPyeonghyeong(exclusiveSqm)}`
+  );
 }

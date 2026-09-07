@@ -17,6 +17,9 @@
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DEV_TYPE_PRESETS } from "@/lib/dev-type-presets";
+import { EditableTile } from "@/components/feasibility/EditableTile";
+import { EXCLUSIVE_TO_SUPPLY_RATIO } from "@/lib/area-notation";
 import { useSearchParams } from "next/navigation";
 import {
   ComposedChart,
@@ -233,6 +236,11 @@ type OverrideKey =
   | "sale_duration_months"
   | "margin_rate_pct"
   | "discount_rate_pct";
+// ★2026-09-07 — 개발유형은 **분양가를 바꾸지 않게 됐지만**(사례 축 전환) 공사비·세대수·
+//   부담금은 여전히 유형을 따른다. 그리고 백엔드 `build_rough_scenario(dev_type=…)` 는
+//   **이미 이 인자를 받는다**(*"미지정 시 Top1 자동 추천"*) — 프론트가 안 보냈을 뿐이다.
+//   `_exclusive_ratio_for` 독스트링이 *"진짜 처방은 호출부가 dev_type 을 갖는 것이고,
+//   파이프라인은 아직 못 갖는다"* 라고 **부채로 적어 둔 그것**이다.
 const OVERRIDE_FIELDS: { key: OverrideKey; label: string; hint: string }[] = [
   { key: "land_cost_won", label: "토지비 총액(원)", hint: "적정 토지비(취득세 등 포함)" },
   { key: "construction_unit_won", label: "공사비 단가(원/㎡)", hint: "연면적당 직접공사비" },
@@ -375,6 +383,21 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
   }, [feasibilityData?.equityWon, feasibilityData?.equityIsManual]);
 
   /** rough-scenario 요청 body 조립(공용) — 다필지는 2필지↑일 때만 첨부(무회귀). */
+  // 사용자가 고른 개발유형(미선택이면 백엔드 Top1 자동 추천 — 현행 동작 불변).
+  const [devTypeOverride, setDevTypeOverride] = useState<string>("");
+  // ★건축개요 직접입력(2026-09-07) — 「수정 → 입력 → 저장」 패턴. null = 자동값 사용.
+  //   ★키를 **안 보내는 것**과 «0을 보내는 것»은 다르다 — null 이면 payload 에서 뺀다.
+  const [briefOv, setBriefOv] = useState<Record<string, number | null>>({
+    gfa_sqm: null,
+    saleable_area_pyeong: null,
+    exclusive_ratio: null,
+    project_months_total: null,
+  });
+  const setBrief = useCallback(
+    (k: string) => (v: number | null) => setBriefOv((p) => ({ ...p, [k]: v })),
+    [],
+  );
+
   const buildBody = useCallback(
     (overrides?: Record<string, number>) => ({
       address: address.trim(),
@@ -384,9 +407,20 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
       //  '서울' 기본값이 지방 부지를 과대평가하지 않게 한다(백엔드 주소 시도추론에 위임).
       region: regionFromAddress(address) ?? "",
       ...(equityWon ? { equity_won: equityWon } : {}),
-      ...(overrides && Object.keys(overrides).length > 0 ? { overrides } : {}),
+      // ★미선택이면 **키 자체를 안 보낸다** — 빈 문자열을 보내면 백엔드가 «지정됐다»로
+      //   읽어 Top1 자동추천이 죽는다(「없음」을 유효값으로 표현하지 않는다).
+      ...(devTypeOverride ? { dev_type: devTypeOverride } : {}),
+      // ★건축개요 직접입력을 기존 overrides 와 **합친다**. null 은 키 자체를 뺀다
+      //   (「없음」을 0으로 표현하면 0㎡·0개월이 확정치처럼 계산에 들어간다).
+      ...(() => {
+        const brief = Object.fromEntries(
+          Object.entries(briefOv).filter(([, v]) => v != null),
+        ) as Record<string, number>;
+        const merged = { ...(overrides ?? {}), ...brief };
+        return Object.keys(merged).length > 0 ? { overrides: merged } : {};
+      })(),
     }),
-    [address, parcelRows, projectId, ctxProjectId, equityWon],
+    [address, parcelRows, projectId, ctxProjectId, equityWon, devTypeOverride, briefOv],
   );
 
   // ★아이디어#4(지불여력→개략수지 원클릭 퍼널) read 끝 봉합: PricingBandPanel CTA가
@@ -625,16 +659,65 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
                 <Tile label="통합면적" text={sqmStr(inp?.land_area_sqm)} />
                 <Tile label="용도지역" text={inp?.zone_type ?? null} textOnly />
                 <Tile label="실효 용적률" text={pctStr(inp?.effective_far_pct)} />
-                <Tile
-                  label="개발유형(Top1)"
-                  text={inp?.dev_type_name || inp?.dev_type || null}
-                  textOnly
-                  accent
+                <div className="sa-di-tile sa-di-tile--accent">
+                  <span className="sa-di-tile__label">
+                    개발유형{devTypeOverride ? "(직접 지정)" : "(Top1 자동)"}
+                  </span>
+                  <select
+                    aria-label="개발유형 선택"
+                    className="sa-di-tile__value w-full bg-transparent outline-none"
+                    value={devTypeOverride}
+                    onChange={(e) => setDevTypeOverride(e.target.value)}
+                  >
+                    <option value="">
+                      {inp?.dev_type_name || inp?.dev_type || "자동 추천"} (자동)
+                    </option>
+                    {DEV_TYPE_PRESETS.map((p) => (
+                      <option key={p.code} value={p.code}>
+                        {p.label} ({p.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <EditableTile
+                  label="연면적(GFA)"
+                  autoText={sqmStr(inp?.gfa_sqm)}
+                  value={briefOv.gfa_sqm}
+                  onSave={setBrief("gfa_sqm")}
+                  unit="㎡"
+                  step="0.1"
+                  hint="설계 확정 연면적이 있으면 입력 — 분양가능면적도 함께 재산출됩니다"
                 />
-                <Tile label="연면적(GFA)" text={sqmStr(inp?.gfa_sqm)} />
-                <Tile label="분양가능면적" text={pyStr(inp?.saleable_area_pyeong)} />
+                <EditableTile
+                  label="분양가능면적"
+                  autoText={pyStr(inp?.saleable_area_pyeong)}
+                  value={briefOv.saleable_area_pyeong}
+                  onSave={setBrief("saleable_area_pyeong")}
+                  unit="평"
+                  step="0.1"
+                  hint="공급(분양)면적 기준 · 미입력 시 연면적 × 0.70"
+                />
+                <EditableTile
+                  label="전용률"
+                  autoText={null}
+                  value={briefOv.exclusive_ratio}
+                  onSave={setBrief("exclusive_ratio")}
+                  step="0.001"
+                  // ★힌트 문구의 숫자도 **정본에서 파생**한다. 리터럴로 적으면 ①정본이 바뀔 때
+                  //   조용히 낡고 ②전용률 사본 래칫에 **위양성**으로 걸린다(실제로 걸렸다).
+                  hint={`전용/공급 (0.30~1.00) · 미입력 시 사례 관례 ${EXCLUSIVE_TO_SUPPLY_RATIO} — 분양가 환산에 쓰입니다`}
+                />
+                {/* ★읽기 전용 유지 — 필지 선택의 **파생값**이라 여기서 덮으면 지도·법규
+                    판정과 조용히 갈린다. 파생값은 상류(필지 선택)에서 고친다. */}
                 <Tile label="필지 수" text={inp?.parcel_count ? `${inp.parcel_count}필지` : null} />
-                <Tile label="사업기간" text={moStr(inp?.project_months)} />
+                <EditableTile
+                  label="사업기간"
+                  autoText={moStr(inp?.project_months)}
+                  value={briefOv.project_months_total}
+                  onSave={setBrief("project_months_total")}
+                  unit="개월"
+                  hint="인허가~준공~분양완료 총 개월"
+                />
               </div>
             </div>
           </section>
