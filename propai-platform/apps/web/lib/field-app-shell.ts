@@ -32,6 +32,13 @@ import { usePwaRuntime } from "@/components/pwa/PwaRuntimeProvider";
  * 현장앱을 별도 창으로 열 때 쓰는 창 이름 — 그 창이 **자기를 다시 알아보는 표식**이다.
  * 여는 쪽(`window.open`)과 판별하는 쪽이 **같은 상수**를 써야 한다(문자열 두 벌 금지).
  */
+/*
+ * ★변이 생존 설명(2026-09-07 · scripts/mutate_changed.py) — 점수를 부풀리지 않기 위해 적는다.
+ *   이 상수의 **값을 바꾸는 변이는 생존한다.** 구멍이 아니다 — 값 자체는 임의이고, 계약은
+ *   *"여는 이름과 판별하는 이름이 **같다**"* 이기 때문이다. 양쪽이 이 상수를 쓰므로 값이 함께
+ *   움직이면 동작이 같다. **어긋나는 쪽**은 따로 잠가 뒀다(손 변이 ⑦: window.open 의 이름을
+ *   리터럴로 바꾸면 CAUGHT). 값을 단언하면 그건 자기지시적 기대값이라 아무것도 못 잡는다.
+ */
 export const FIELD_APP_WINDOW_NAME = "propai-field-app";
 
 export type FieldAppShellState = {

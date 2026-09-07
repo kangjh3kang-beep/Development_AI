@@ -75,6 +75,14 @@ describe("L5 — 라벨이 실제 동작과 일치한다", () => {
     expect(screen.queryByRole("button", { name: /별도 창/ })).toBeNull();
   });
 
+  it("★「앱 설치」가 실제로 설치를 부른다 — 라벨만 맞고 아무 일도 안 하면 안 된다", () => {
+    // 기계적 변이가 짚은 자리: onClick 줄을 지워도 위 케이스는 통과했다(라벨만 봤다).
+    runtime.installState = "available";
+    render(<FieldAppAffordance />);
+    screen.getByRole("button", { name: /앱 설치/ }).click();
+    expect(runtime.requestInstall).toHaveBeenCalled();
+  });
+
   it("설치 불가 → 「별도 창으로 열기」", () => {
     render(<FieldAppAffordance />);
     expect(screen.getByRole("button", { name: /별도 창으로 열기/ })).toBeTruthy();
@@ -101,5 +109,18 @@ describe("★여는 이름과 판별 이름이 같은 상수다(어긋나면 앱
     expect(String(features)).not.toContain("location=no");
     // 대조군 — features 자체는 비어 있지 않다(단언이 공허하지 않다).
     expect(String(features)).toContain("popup=yes");
+  });
+
+  it("★팝업이 차단되면 새 탭으로 폴백한다 — 기능이 조용히 죽지 않는다", () => {
+    // 기계적 변이가 짚은 자리: 폴백 줄을 바꿔도 아무 락이 안 울었다.
+    const open = vi.spyOn(window, "open").mockReturnValue(null); // 차단 상황
+    render(<FieldAppAffordance />);
+    screen.getByRole("button", { name: /별도 창으로 열기/ }).click();
+
+    expect(open).toHaveBeenCalledTimes(2); // 팝업 시도 → 차단 → 새 탭
+    const [, target, features] = open.mock.calls[1];
+    expect(target).toBe("_blank");
+    // 두 모집단 — 폴백은 팝업 옵션을 들고 가지 않는다(새 탭이지 창이 아니다).
+    expect(String(features)).not.toContain("popup=yes");
   });
 });

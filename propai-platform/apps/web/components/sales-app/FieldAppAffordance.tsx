@@ -25,6 +25,16 @@ import { AppWindow } from "lucide-react";
 import { usePwaRuntime } from "@/components/pwa/PwaRuntimeProvider";
 import { FIELD_APP_WINDOW_NAME, useFieldAppShell } from "@/lib/field-app-shell";
 
+/*
+ * ★변이 생존 설명(2026-09-07 · scripts/mutate_changed.py 45변이 · 생존 28) — 구멍이 아닌 이유.
+ *   ① `className` 문자열 변경 다수 — **표기**이지 계약이 아니다. 문구·스타일까지 단언하면
+ *      다듬을 때마다 깨지는 취약한 락이 된다(이 저장소가 명시적으로 경계하는 형태).
+ *   ② `typeof window === "undefined"` 의 문자열 변경 — **SSR 방어**라 jsdom 에서는 도달 불가.
+ *      이 축은 여기서 잴 수 없다(미측정이지 무잠금이 아니다).
+ *   ③ `"use client"` 변경 — 빌드 지시자라 vitest 가 태우지 않는다.
+ *   ★반면 **설명할 수 없던 생존 둘**(설치 onClick 삭제 · 팝업 차단 폴백)은 그대로 두지 않고
+ *     락을 추가했다 — 그것이 진짜 구멍이었다.
+ */
 export default function FieldAppAffordance() {
   const { inAppShell } = useFieldAppShell();
   const { installState, requestInstall } = usePwaRuntime();
