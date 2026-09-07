@@ -1,17 +1,22 @@
 "use client";
 
 /**
- * 분양 현장앱 — 모바일 하단 탭바 + 전체메뉴 시트(디자인 핸드오프 P0 #2).
+ * 분양 현장앱 내비게이션 — **두 표면이 같은 IA 를 접는 방식만 다르다**(DESIGN.md B3.3).
  *
- * 21탭 가로스크롤의 모바일 인지부하를 디자인 의도(하단 5탭 + 전체메뉴 4그룹)대로 해소한다.
- * - 하단 탭바: 홈/고객/배치도/수납 주 슬롯(BOTTOM_NAV_KEYS) + '전체' 상시 슬롯.
+ * 21탭 인지부하를 디자인 의도(하단 5탭 + 4그룹)대로 해소한다. IA SSOT 는 roleConfig 하나이고
+ * 이 파일은 소비만 한다(라벨·아이콘·게이팅 재정의 0).
+ * - `FieldBottomNav`(모바일 `sm:hidden`): 주 슬롯(BOTTOM_NAV_KEYS) + '전체' 상시 슬롯.
  *   주 슬롯은 내 권한 노출 탭(visibleTabs)과 교집합만 렌더(고아 탭 이동 금지 — FieldHome 과 동일 규칙).
- * - 전체메뉴 시트: MENU_GROUPS(4그룹 IA SSOT)를 노출 탭과 교집합해 그리드로. 빈 그룹은 숨김.
- * - 데스크톱(sm+)은 기존 상단 탭바 유지 — 이 컴포넌트는 모바일 전용(sm:hidden).
- * 라벨·아이콘·게이팅 전부 roleConfig SSOT 소비(재정의 0).
+ * - `FieldMenuSheet`(모바일): MENU_GROUPS 를 노출 탭과 교집합해 그리드로. 빈 그룹은 숨김.
+ * - `FieldDesktopNav`(데스크톱 `hidden sm:block`): **같은** MENU_GROUPS 를 그룹 레일로.
+ *   활성 그룹만 펼치므로 탭이 늘어도 상단이 길어지지 않는다.
+ *
+ * ★2026-09-07 — 종전엔 데스크톱만 **전 탭을 가로로 나열**했다(SiteWorkspaceClient 인라인).
+ *   P0 가 선언한 인지부하 해소가 모바일 모집단에만 착지해 있었고 사용자가 데스크톱에서 신고했다.
+ *   **처방을 한쪽에만 적용하면 나머지 절반이 그대로 샌다** — DESIGN.md B3.3 이 이것을 못 박는다.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LayoutGrid, X } from "lucide-react";
 import { BOTTOM_NAV_KEYS, MENU_GROUPS, type SalesTabDef } from "@/components/sales-app/roleConfig";
 import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
@@ -200,6 +205,126 @@ export function FieldMenuSheet({
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 데스크톱(sm+) 그룹 레일 — 모바일 시트와 **같은 MENU_GROUPS** 를 소비한다.
+ *
+ * 1줄: 고정 슬롯(어느 그룹에도 없는 탭) + 그룹 칩.  2줄: **활성 그룹만** 펼친 탭.
+ * 종전 인라인 탭바는 `tabs.map` 으로 21개를 전부 그렸다 — 탭이 늘면 상단이 함께 길어졌다.
+ *
+ * ★고정 슬롯을 목록으로 적지 않는다 — 어느 그룹에도 속하지 않은 탭을 **파생**시킨다.
+ *   목록으로 두면 새 탭이 그룹에도 목록에도 없을 때 **데스크톱에서만 조용히 사라진다**.
+ *   (모바일 쪽 전단사 가드 `BOTTOM_NAV_KEYS ∪ MENU_GROUPS ∪ {home} == SALES_TABS` 와 같은 규율.)
+ */
+export function FieldDesktopNav({
+  tabs,
+  activeTab,
+  onNavigate,
+}: {
+  /** 내 권한으로 노출되는 탭(visibleTabs 결과) — 라벨·아이콘·게이팅의 단일 출처. */
+  tabs: SalesTabDef[];
+  activeTab: string;
+  onNavigate: (tab: string) => void;
+}) {
+  const byKey = new Map(tabs.map((t) => [t.key, t]));
+  const groups = MENU_GROUPS.map((g) => ({
+    title: g.title,
+    items: g.keys.map((k) => byKey.get(k)).filter((t): t is SalesTabDef => Boolean(t)),
+  })).filter((g) => g.items.length > 0); // 빈 그룹은 숨긴다(빈 껍데기 금지).
+
+  const groupedKeys = new Set(MENU_GROUPS.flatMap((g) => g.keys));
+  const pinned = tabs.filter((t) => !groupedKeys.has(t.key));
+
+  // 펼친 그룹 = 사용자가 고른 것 > 활성 탭이 속한 그룹 > 첫 그룹.
+  // ★상태를 하나만 둔다 — 활성 탭이 바뀌면 사용자 선택을 비워 두 값이 어긋나지 않게 한다.
+  const [picked, setPicked] = useState<string | null>(null);
+  useEffect(() => setPicked(null), [activeTab]);
+  const activeGroupTitle = groups.find((g) => g.items.some((t) => t.key === activeTab))?.title ?? null;
+  const openTitle = picked ?? activeGroupTitle ?? groups[0]?.title ?? null;
+  const open = groups.find((g) => g.title === openTitle) ?? null;
+
+  return (
+    <div className="sticky top-0 z-20 -mx-1 hidden border-b border-[var(--line)] bg-[color:color-mix(in_srgb,var(--background)_85%,transparent)] px-1 pt-1.5 backdrop-blur sm:block">
+      <div className="mb-1.5 flex flex-wrap items-center gap-1.5 px-1">
+        <span className="cc-label">MENU</span>
+
+        {pinned.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => onNavigate(t.key)}
+            aria-current={activeTab === t.key ? "page" : undefined}
+            data-active={activeTab === t.key}
+            className={`inline-flex min-h-[30px] items-center gap-1 rounded-lg px-2.5 text-[11.5px] font-black transition ${
+              activeTab === t.key
+                ? "bg-[var(--accent-strong)] text-white"
+                : "border border-[var(--line)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]"
+            }`}
+          >
+            {t.icon && <t.icon className="size-3.5" aria-hidden />}
+            {t.label}
+          </button>
+        ))}
+
+        {pinned.length > 0 && groups.length > 0 && (
+          <span aria-hidden className="mx-0.5 h-4 w-px bg-[var(--line)]" />
+        )}
+
+        {groups.map((g) => {
+          const isOpen = g.title === openTitle;
+          const holdsActive = g.items.some((t) => t.key === activeTab);
+          return (
+            <button
+              key={g.title}
+              type="button"
+              onClick={() => setPicked(g.title)}
+              aria-expanded={isOpen}
+              data-open={isOpen}
+              data-holds-active={holdsActive}
+              className={`inline-flex min-h-[30px] items-center gap-1.5 rounded-lg px-2.5 text-[11.5px] font-black transition ${
+                isOpen
+                  ? "border border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                  : "border border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+              }`}
+            >
+              {g.title}
+              <span className="text-[10px] font-bold opacity-70">{g.items.length}</span>
+              {holdsActive && !isOpen && (
+                <span aria-hidden className="size-1.5 rounded-full bg-[var(--accent-strong)]" />
+              )}
+            </button>
+          );
+        })}
+
+        <span className="ml-auto text-[11px] font-bold text-[var(--text-tertiary)]">
+          {tabs.length}개 메뉴 · 내 권한 기준
+        </span>
+      </div>
+
+      {open && (
+        <div className="sa-tabbar" role="tablist" aria-label={`${open.title} 메뉴`}>
+          {open.items.map((t) => (
+            <button
+              key={t.key}
+              role="tab"
+              aria-selected={activeTab === t.key}
+              data-active={activeTab === t.key}
+              onClick={() => onNavigate(t.key)}
+              className="sa-tab"
+            >
+              {t.icon && (
+                <span className="sa-tab__icon" aria-hidden>
+                  <t.icon className="size-4" />
+                </span>
+              )}
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

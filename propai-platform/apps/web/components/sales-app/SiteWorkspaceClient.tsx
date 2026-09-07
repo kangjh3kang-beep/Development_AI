@@ -57,7 +57,7 @@ import InstallGuide from "@/components/sales-app/InstallGuide";
 // 역할별 홈(랜딩) 대시보드 — 기본 진입 탭.
 import FieldHome from "@/components/sales-app/FieldHome";
 // 모바일 하단 5탭+전체메뉴 시트(디자인 핸드오프 P0#2) — 데스크톱은 기존 상단 탭바.
-import { FieldBottomNav, FieldMenuSheet } from "@/components/sales-app/FieldNav";
+import { FieldBottomNav, FieldDesktopNav, FieldMenuSheet } from "@/components/sales-app/FieldNav";
 import { captureLandingRef } from "@/lib/referralRef";
 
 interface RoleResponse {
@@ -299,31 +299,11 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
       {!loading && role && (
         <>
           {/* 역할 기반 탭 — features[]에 포함된 메뉴만 노출.
-              데스크톱(sm+) 전용 가로 탭바. 모바일은 하단 5탭+전체메뉴 시트(FieldNav —
-              디자인 핸드오프 P0#2, 21탭 가로스크롤 인지부하 해소)로 대체한다. */}
-          <div className="sticky top-0 z-20 -mx-1 hidden border-b border-[var(--line)] bg-[color:color-mix(in_srgb,var(--background)_85%,transparent)] px-1 pt-1.5 backdrop-blur sm:block">
-            <div className="mb-1.5 flex items-center gap-2 px-1">
-              <span className="cc-label">MENU</span>
-              <span className="text-[11px] font-bold text-[var(--text-tertiary)]">
-                {tabs.length}개 메뉴 · 내 권한 기준
-              </span>
-            </div>
-            <div className="sa-tabbar" role="tablist" aria-label="현장 메뉴">
-              {tabs.map((t) => (
-                <button
-                  key={t.key}
-                  role="tab"
-                  aria-selected={tab === t.key}
-                  data-active={tab === t.key}
-                  onClick={() => setTab(t.key)}
-                  className="sa-tab"
-                >
-                  {t.icon && <span className="sa-tab__icon" aria-hidden><t.icon className="size-4" /></span>}
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          </div>
+              ★두 표면이 **같은 MENU_GROUPS** 를 접는다(DESIGN.md B3.3):
+                데스크톱(sm+) = FieldDesktopNav 그룹 레일 · 모바일 = 하단 5탭 + 전체메뉴 시트.
+              종전엔 여기서 `tabs.map` 으로 21개를 전부 나열해, P0 가 선언한 인지부하 해소가
+              모바일에만 착지해 있었다(2026-09-07 사용자 신고). */}
+          <FieldDesktopNav tabs={tabs} activeTab={tab} onNavigate={setTab} />
 
           {/* 동·호표 생성 모달(세대 탭) — 기존 빌더 재사용 */}
           <UnitOutlineBuilder
