@@ -125,6 +125,65 @@ def _shape_factor(irregularity: float | None) -> tuple[float, str]:
     return 1.0, "정형(효율 우세)"
 
 
+def _assemble_methods(
+    method_pub: dict | None,
+    method_cmp: dict | None,
+    building: dict | None,
+    income: dict | None,
+    *,
+    land_stats: dict | None,
+    comparable_skip_note: str | None,
+) -> list[dict[str, Any]]:
+    """감정평가 **4방법을 전부 목록에 남긴다** — 적용 못 한 것은 사유와 함께.
+
+    ## 왜 (2026-09-07 사용자 신고)
+
+    화면 부제는 *"4방법(공시지가기준·거래사례·원가·수익환원)"* 이라 주장하는데 응답의
+    `methods` 에는 **성립한 것만** 들어가 라이브에서 **1개만 보였다**. 사용자는
+    «4방법이라더니 왜 하나뿐인가 · 나머지는 왜 안 됐나»를 알 길이 없었다.
+
+    ★「감정평가에 관한 규칙」 §12 는 **주된 방법 + 다른 방법 검토**를 요구한다.
+      «검토했고 이런 이유로 안 썼다»가 산출물에 남아야 검토한 것이다.
+
+    ★★**채택 단가는 바꾸지 않는다.** `applicable=false` 항목은 값이 있어도 참고다.
+    """
+    out: list[dict[str, Any]] = []
+    if method_pub:
+        out.append({**method_pub, "applicable": True, "why_not": None})
+    if method_cmp:
+        out.append({**method_cmp, "applicable": True, "why_not": None})
+    else:
+        out.append({
+            "method": "거래사례비교법",
+            "unit_price": None,
+            "applicable": False,
+            "why_not": comparable_skip_note or "인근 거래사례를 확보하지 못했습니다.",
+            # ★참고값이 **있으면** 함께 싣는다 — 없는 척하지 않는다. 다만 채택 아님을 명시.
+            "reference_unit_price": (land_stats or {}).get("unit_price_per_sqm"),
+            "reference_note": (
+                "법정동·지목 층화 실거래(참고) — **개별 필지 위치가 반영되지 않았습니다.** "
+                "지역요인까지만 반영된 값이라 개별요인 보정 전이며, 채택 단가에 쓰지 않습니다."
+            ) if (land_stats or {}).get("unit_price_per_sqm") else None,
+        })
+    if building and building.get("building_value_won"):
+        out.append({"method": "원가법(건물)", "unit_price": None,
+                    "total_won": building.get("building_value_won"),
+                    "applicable": True, "why_not": None,
+                    "rationale": building.get("rationale")})
+    else:
+        out.append({"method": "원가법(건물)", "unit_price": None, "applicable": False,
+                    "why_not": "건물 정보가 없어 재조달원가를 산정할 수 없습니다(나지 또는 미입력)."})
+    if income and income.get("income_value_won"):
+        out.append({"method": "수익환원법", "unit_price": None,
+                    "total_won": income.get("income_value_won"),
+                    "applicable": True, "why_not": None,
+                    "rationale": income.get("rationale")})
+    else:
+        out.append({"method": "수익환원법", "unit_price": None, "applicable": False,
+                    "why_not": "임대수익 자료가 없어 순영업소득을 산정할 수 없습니다."})
+    return out
+
+
 async def desk_appraisal(
     *,
     pnu: str | None = None,
@@ -602,7 +661,20 @@ async def desk_appraisal(
         "confidence_basis": confidence_basis,
         "cross_check": cross_check,
         "irregularity": irregularity,
-        "methods": [m for m in (method_pub, method_cmp) if m],
+        # ★★2026-09-07 W5 — **적용 못 한 방법도 목록에 남긴다.**
+        #   화면 부제는 *"4방법(공시지가기준·거래사례·원가·수익환원)"* 이라 주장하는데
+        #   `methods` 에는 성립한 것만 들어가 **1개만 보였다**. 사용자는 «4방법이라더니
+        #   왜 하나뿐인가»를 알 길이 없었다.
+        #   ★**채택 단가는 바꾸지 않는다** — 이 저장소는 *"토지 층화 통계는 참고값이다.
+        #     채택 단가에 넣지 않았다 … 값만 주면 「내 땅 시세」로 오독한다(개별 필지
+        #     위치 미반영)"* 는 판단을 **명문으로** 갖고 있고 그 판단은 옳다.
+        #     감정평가로 보면 층화 통계는 **지역요인까지만** 반영된 값이고 개별요인
+        #     보정 전이다. 그래서 **`applicable=false` + 사유**로 등재만 한다.
+        "methods": _assemble_methods(
+            method_pub, method_cmp, building, income,
+            land_stats=land_dong_stats_out,
+            comparable_skip_note=comparable_skip_note,
+        ),
         "weight_note": weight_note,
         # ★W1-b 리뷰(M-2) — 거래사례비교법이 빠진 **사유**. 값이 조용히 사라지면 사용자는
         #   "이 지역엔 거래가 없나 보다"로 오독한다(실제로는 근접성 판정 불가라 안 쓴 것).
