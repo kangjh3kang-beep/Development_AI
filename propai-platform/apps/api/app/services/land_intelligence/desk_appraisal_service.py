@@ -15,6 +15,7 @@ from typing import Any
 
 import structlog
 
+from app.services.land_intelligence import market_multiplier as _mm
 from app.services.land_intelligence.land_price_estimator import _market_multiplier
 from app.services.market.land_dong_stats import stats_note as land_stats_note
 from app.utils.pnu import lawd_cd_from_pnu
@@ -502,6 +503,12 @@ async def desk_appraisal(
 
     # ── 1) 공시지가기준법 ──
     other_factor, other_rationale = _market_multiplier(address)   # 그 밖의 요인(기타요인) 보정
+    # ★그밖의요인의 **출처를 기계 판독 가능하게** 함께 싣는다(2026-09-07 · 독립 리뷰 R2 MEDIUM).
+    #   왜 여기인가: 이 표면이 **제출용 감정평가 PDF** 로 나가는 자리다. 그런데 출처 코드를
+    #   `land_price_estimator` 의 `trust` 블록에만 실어 두어, **가장 값비싼 표면에만 없었다.**
+    #   그밖의요인은 가액을 직접 곱하는 계수이므로, 그 값이 «실거래로 검증된 것이 아니다» 라는
+    #   사실은 표시 문구가 아니라 **코드**로 남아야 한다(문구를 다듬어도 안 죽게).
+    other_factor_provenance = _mm.PROVENANCE_UNVERIFIED_PRESET
     road_f, road_label = _road_factor(road_side)
     area_fac, area_label = _area_factor(area_f)
     shape_f, shape_label = _shape_factor(irregularity)
@@ -515,6 +522,9 @@ async def desk_appraisal(
             "그밖의요인": other_factor,
         },
         "rationale": f"개별공시지가 {int(op):,}원/㎡ × 시점수정 {time_adjust} × 접도 {road_f}({road_label}) × 면적 {area_fac} × 형상 {shape_f}({shape_label}) × 그밖의요인 {other_factor}({other_rationale})",
+        # ★요인별 출처 코드(가산) — 표시 문구와 분리된 안정 식별자. 현재는 그밖의요인만 싣는다
+        #   (다른 요인은 이 PR 범위 밖 · 각자 근거 체계가 다르다).
+        "factor_provenance": {"그밖의요인": other_factor_provenance},
     }
 
     # ── 2) 거래사례비교법 ──

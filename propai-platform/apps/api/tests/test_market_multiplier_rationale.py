@@ -321,32 +321,78 @@ def test_provenance_code_reaches_the_real_payload() -> None:
     assert trust.get("basis_kind") == mm.PROVENANCE_UNVERIFIED_PRESET, trust
 
 
-# ★프로즈 가드는 **최선노력**이다(계약 아님 — 위 provenance 가 계약이다).
-#   낱말 목록은 원리적으로 불완전하므로 여기에 «완전 탐지» 를 기대하지 말 것.
-#   그래도 두는 이유: 가장 흔한 재발 형태를 싸게 잡고, 다음 사람에게 의도를 보여 준다.
-#   ★부정문을 긍정 주장으로 읽지 않는다 — **가드의 위양성도 결함이다**(CLAUDE.md §A-6).
-#     첫 판에서 이 가드가 우리 한정어("검증된 현실화율이 **아닌** …")를 위반으로 신고했다.
-#     "검증된" 이라는 낱말만 보고 **부정 구문**을 놓친 것이다. 정상 코드를 막는 가드는 곧 꺼진다.
-_NEGATOR = r"(?![^.]{0,24}(?:아닌|아니|않|없))"
-_CLAIMS_PROVENANCE = re.compile(
-    r"(?:검증된|확인된|실측된|산출된|근거한|기반한|집계된)" + _NEGATOR + r"|"
-    r"(?:국토교통부|한국부동산원|통계청|국가통계)" + _NEGATOR
-)
+# ─────────────────────────────────────────────────────────────
+# ★★블랙리스트를 걷어내고 **화이트리스트로 뒤집는다** (R2 HIGH-1·HIGH-3)
+#
+#   1차 처방은 «출처를 주장하는 낱말» 목록(`검증된|확인된|…|국토교통부|…`)이었다. R2 가
+#   **14/14 우회**를 실증했다 — `검증된`→`검증됨`(어미 한 글자) · `국토교통부`→`국토부` ·
+#   `산출된`→`산정된` · `현실화율`→`실현율` · `%`→`퍼센트`. 그리고 부정어 억제(`_NEGATOR`)는
+#   **담요**라서 문장 끝에 «· 오차 없음» 다섯 글자를 붙이면 가드 전체가 꺼졌다.
+#   동시에 **위양성**도 냈다 — `한국부동산원 R-ONE 통계 기준 자본환원율` 처럼 **정확한 출처 표기**를
+#   위반으로 신고한다(같은 서비스가 이미 `cap_source = "R-ONE"` 을 쓴다). 정상 코드를 막는
+#   가드는 곧 꺼진다(§A-6).
+#
+#   ⇒ **금지어를 세지 말고, 허용된 모양을 요구한다.** 아래 셋이 계약이다:
+#     ① **수 불변식** — 우리가 만든 사유에는 **계수 자신 말고 어떤 수도 없다**.
+#        이것이 이 PR 의 금지 대상(«계수로부터 통계를 역산하지 않는다»)의 **직접 표현**이고
+#        **어휘와 완전히 무관**하다. `실현율 83퍼센트` 든 `realization 83pct` 든 전부 걸린다.
+#     ② **한정어 토큰** — 고지 문자열은 승인된 한정어 상수를 **담아야** 한다(없애면 실패).
+#     ③ **출처 코드** — 리터럴로 못 박은 `PROVENANCE_UNVERIFIED_PRESET`.
+#   ★①은 실측으로 위양성 0을 확인했다: 현재 `short` 의 수 토큰은 **0개**, `sentence` 는 **{계수}** 뿐.
+# ─────────────────────────────────────────────────────────────
+
+_NUM_TOKEN = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
 
-def test_caveat_prose_does_not_assert_a_source_best_effort() -> None:
-    """한정어 문구가 **없는 출처를 지어내지** 않는지(최선노력 가드).
+def _numbers_in(text: str) -> set[float]:
+    """문자열의 **완전한 수 토큰**만 값으로 추출(부분문자열 오탐 방지 — 콤마 제거 후 비교)."""
+    return {float(t.replace(",", "")) for t in _NUM_TOKEN.findall(text)}
 
-    ★이 가드는 **계약이 아니다** — 계약은 위 `provenance` 코드다. 낱말 목록은 원리적으로
-      불완전하므로 «완전 탐지» 를 기대하지 말 것.
+
+def test_short_form_contains_no_numbers_at_all() -> None:
+    """★수 불변식 ① — 짧은형에는 **어떤 수도 없다**.
+
+    역산 통계(100/계수)를 넣으려면 반드시 **수**가 들어간다. 낱말을 무엇으로 바꾸든 이 락에 걸린다.
     """
-    # 탐지축 생존(양성 대조) — 리뷰어가 실제로 통과시킨 바로 그 문자열을 쓴다.
-    assert _CLAIMS_PROVENANCE.search("국토교통부 실거래가 통계로 산출된 지역 계수입니다"), "검사기 사망"
-    assert _CLAIMS_PROVENANCE.search("실거래로 검증된 지역 보정계수"), "검사기 사망"
-    # ★판별력 두 축 — 현재 문구(부정 구문)는 안 걸려야 하고, 무관한 문장도 안 걸려야 한다.
-    assert not _CLAIMS_PROVENANCE.search(mm.UNVERIFIED_CAVEAT), mm.UNVERIFIED_CAVEAT
-    assert not _CLAIMS_PROVENANCE.search(mm.SHORT_CAVEAT), mm.SHORT_CAVEAT
-    assert not _CLAIMS_PROVENANCE.search("남양주시에 대해 사전 설정된 계수 1.2배를 적용했습니다.")
+    for addr in _all_addresses() + [_ADDR_UNKNOWN]:
+        v = mm.resolve_market_multiplier(addr)
+        assert _numbers_in(v.short) == set(), f"{addr} → 짧은형에 수가 있다: {v.short}"
+
+
+def test_sentence_contains_exactly_the_multiplier_and_no_other_number() -> None:
+    """★수 불변식 ② — 문장형의 수는 **계수 자신 하나뿐**이다.
+
+    ★이것이 «계수로부터 통계를 역산하지 않는다» 의 기계 표현이다. R2 가 뚫은 변이
+      `실현율{100/mult:.0f}퍼센트` 는 어휘 가드를 통과했지만 **수를 하나 더 만들기 때문에**
+      이 락에는 반드시 걸린다.
+    """
+    for addr in _all_addresses() + [_ADDR_UNKNOWN]:
+        v = mm.resolve_market_multiplier(addr)
+        assert _numbers_in(v.sentence) == {float(v.multiplier)}, (
+            f"{addr} → 문장형의 수 집합이 {{계수}} 가 아니다: "
+            f"{sorted(_numbers_in(v.sentence))} (계수 {v.multiplier}) · {v.sentence}"
+        )
+
+
+def test_number_invariant_actually_catches_a_derived_statistic() -> None:
+    """★양성 대조 — 이 불변식이 **역산 통계를 실제로 잡는지**. 없으면 위 둘은 공허하다."""
+    mult = 1.2
+    evasive = f"남양주시 실현율{100 / mult:.0f}퍼센트 · 실거래 미검증"   # R2 가 뚫은 그 형태
+    assert _numbers_in(evasive) != set(), "검사기 사망 — 수를 못 찾는다"
+    assert _numbers_in(evasive) != {mult}, "검사기 사망 — 역산값을 계수와 구별 못 한다"
+    # 판별력 — 현재 문구는 통과해야 한다(위양성도 결함이다).
+    assert _numbers_in(mm.resolve_market_multiplier(_ADDR_DISTRICT).short) == set()
+
+
+def test_caveat_constants_carry_no_numbers_and_are_pinned() -> None:
+    """★한정어 상수 자신도 수를 담아선 안 되고, **리터럴로 못 박는다**(화이트리스트).
+
+    자기 상수 비교는 아무것도 안 잠근다 — 이 PR 에서 두 번 겪었다.
+    """
+    assert _numbers_in(mm.UNVERIFIED_CAVEAT) == set(), mm.UNVERIFIED_CAVEAT
+    assert _numbers_in(mm.SHORT_CAVEAT) == set(), mm.SHORT_CAVEAT
+    assert mm.SHORT_CAVEAT == "실거래 미검증"
+    assert mm.UNVERIFIED_CAVEAT == "실거래로 검증된 현실화율이 아닌 사전 설정 참고 계수입니다"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -526,23 +572,105 @@ def test_golden_fixture_annotation_matches_the_real_producer() -> None:
 # ─────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_real_payload_prose_does_not_assert_a_source() -> None:
-    """실제 payload 의 사용자 노출 문자열이 **없는 출처를 주장하지** 않는지."""
+async def test_disclosure_strings_carry_the_approved_caveat_token() -> None:
+    """★화이트리스트 — 고지 문자열은 **승인된 한정어를 담아야** 한다(금지어를 세지 않는다).
+
+    R2 가 `trust.basis` 를 `"개별공시지가 × 실거래로 검증된 지역 보정계수"` 나
+    `"국토교통부 실거래가로 검증된 … · 오차 없음"` 으로 바꾸는 변이를 통과시켰다. 블랙리스트로는
+    한국어 표현을 다 못 센다. **한정어가 있어야 한다**고 요구하면 그 변이들은 전부 실패한다 —
+    거짓 주장으로 바꾸려면 한정어를 **지워야** 하기 때문이다.
+    """
     payload = await estimate_land_price(
         address=_ADDR_DISTRICT, area_sqm=500.0, official_price_per_sqm=1_000_000.0
     )
+    trust = payload.get("trust") or {}
+    # 전제 — 기계 판독 출처가 «미검증» 이라고 말하고 있는가(아니면 아래 대조가 무의미).
+    assert trust.get("basis_kind") == mm.PROVENANCE_UNVERIFIED_PRESET, trust
+
+    basis = str(trust.get("basis") or "")
+    assert mm.SHORT_CAVEAT in basis, (
+        "기계 판독 출처는 «미검증» 인데 사람이 읽는 줄에 한정어가 없다 — 두 표면이 갈린다: "
+        f"{basis!r}"
+    )
+    # ★양성 대조 — 이 검사가 R2 의 변이 문자열을 실제로 거부하는가.
+    for bad in (
+        "개별공시지가 × 실거래로 검증된 지역 보정계수",
+        "국토교통부 실거래가로 검증된 지역 보정계수 · 오차 없음",
+    ):
+        assert mm.SHORT_CAVEAT not in bad, f"검사기 사망 — 이 문자열을 통과시킨다: {bad}"
+
+    # 보조 그물(계약 아님) — 역산 통계 형태는 payload 어디에도 없어야 한다.
     strings = _collect_user_facing_strings(payload)
     assert len(strings) >= 5, f"수집기가 죽었다 — 문자열 {len(strings)}건"
+    offenders = [t for t in strings if _FABRICATED_RATE.search(t)]
+    assert not offenders, "실제 출력면에 조작된 현실화율이 실렸다: " + " | ".join(offenders)
 
-    # 기계 판독 출처는 «미검증»이라고 말하고 있는가(전제 — 이게 아니면 아래 대조가 무의미).
-    assert (payload.get("trust") or {}).get("basis_kind") == mm.PROVENANCE_UNVERIFIED_PRESET
 
-    offenders = [t for t in strings if _CLAIMS_PROVENANCE.search(t)]
-    assert not offenders, (
-        "기계 판독 출처는 «미검증 사전설정» 인데 **사람이 읽는 줄은 출처를 주장한다** — "
-        "한 산출물의 두 표면이 모순한다:\n  " + "\n  ".join(offenders)
+# ─────────────────────────────────────────────────────────────
+# ★출처 코드가 **가장 값비싼 표면**에 도달하는가 (R2 MEDIUM)
+#
+#   1차에서는 출처 코드를 `land_price_estimator` 의 `trust` 블록에만 실었다. R2 가 재보니
+#   **3개 표면 중 1개**였고, 빠진 하나가 하필 이 PR 의 계획서가 「제출용 감정평가 PDF」라고
+#   지목한 `desk_appraisal` 이었다. 그밖의요인은 **가액을 직접 곱하는 계수**이므로 그 자리가
+#   가장 중요하다. ⇒ `methods[0].factor_provenance` 로 전파하고 여기서 태운다.
+# ─────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_desk_appraisal_carries_factor_provenance() -> None:
+    """감정평가 표면(=PDF 원천)이 그밖의요인의 **출처 코드**를 싣는지 실제 호출로 태운다."""
+    from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
+
+    result = await desk_appraisal(
+        address=_ADDR_DISTRICT, area_sqm=500.0, official_price_per_sqm=1_000_000.0
     )
+    methods = result.get("methods") or []
+    assert methods, "methods 가 비었다 — 이 락이 공허해진다"
+    pub = next((m for m in methods if isinstance(m, dict) and m.get("unit_price")), None)
+    assert pub is not None, f"채택 방법이 없다: {[m.get('method') for m in methods if isinstance(m, dict)]}"
 
-    # ★양성 대조 — 같은 검사기가 리뷰어의 변이 문자열을 실제로 잡는가.
-    bad = "개별공시지가 × 실거래로 검증된 지역 보정계수"
-    assert [t for t in strings + [bad] if _CLAIMS_PROVENANCE.search(t)] == [bad], "검사기 사망"
+    prov = pub.get("factor_provenance")
+    assert isinstance(prov, dict), f"factor_provenance 부재: {pub.keys()}"
+    assert prov.get("그밖의요인") == mm.PROVENANCE_UNVERIFIED_PRESET, prov
+
+    # ★수식 문자열도 같은 축으로 태운다 — 짧은형이 쓰였는가(문장이 섞이지 않았는가).
+    rationale = str(pub.get("rationale") or "")
+    assert "그밖의요인" in rationale, rationale
+    assert "습니다" not in rationale, f"수식에 문장이 섞였다: {rationale}"
+    assert _numbers_in(rationale) & {round(100 / other, 0) for other in (1.2,)} == set(), rationale
+
+
+# ★부채 — 출처 코드를 **읽는 소비처가 아직 0**이다(R2 MEDIUM).
+#   저장소가 반복해 데인 «정의만 하고 소비처 0» 형태다. 커밋 메시지에만 적으면 안 보이므로
+#   **초록 안에 드러낸다**(xfail strict — 소비처가 생기면 XPASS 로 실패해 이 줄을 지우게 된다).
+#
+#   ★★조회 함정을 하나 밟고 적는다: 처음엔 검색어에 `basis_kind` 를 넣었는데, 그 이름은
+#     **다른 기능의 동명 필드**(`feasibility/legacy_ledger.py` 의 `"data"|"structural"`)라
+#     소비처 4곳을 잘못 세어 이 부채가 **이미 해소된 것처럼** 통과했다. R2 가 그 함정을 경고했고
+#     나는 그 경고를 **바로 윗줄에 적어 놓고도** 검색어에 넣었다.
+#     ⇒ 부재를 판정할 때는 **모호하지 않은 식별자**로만 조회한다(§«내가 말한 집합 ≠ 내 도구가 센 집합»).
+_UNAMBIGUOUS_MARKERS = ("PROVENANCE_UNVERIFIED_PRESET", "factor_provenance")
+_PRODUCERS_AND_TESTS = (
+    "market_multiplier.py",
+    "land_price_estimator.py",
+    "desk_appraisal_service.py",
+    "test_market_multiplier_rationale.py",
+    "_workspace/",          # 계획서는 소비처가 아니다(문서)
+)
+
+
+@pytest.mark.xfail(strict=True, reason="★부채: provenance/scope 를 읽는 소비처가 아직 0건(배지·감사 미배선)")
+def test_provenance_has_a_consumer() -> None:
+    """출처 코드를 **읽는** 코드가 저장소에 있는가(현재 없음 — 부채로 노출)."""
+    import subprocess
+
+    out = subprocess.run(
+        ["git", "grep", "-l", "-E", "|".join(_UNAMBIGUOUS_MARKERS)],
+        capture_output=True, text=True, cwd="../../..",
+    )
+    files = [f for f in out.stdout.splitlines() if f.strip()]
+    # ★공허 방지 — 생산자는 반드시 잡혀야 한다(조회기 생존 대조군).
+    assert any("market_multiplier.py" in f for f in files), (
+        f"조회기가 죽었다 — 생산자조차 못 찾았다: {files}"
+    )
+    consumers = [f for f in files if not any(k in f for k in _PRODUCERS_AND_TESTS)]
+    assert consumers, "소비처 0 — 선언만 하고 아무도 안 읽는다"
