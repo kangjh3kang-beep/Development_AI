@@ -1,26 +1,50 @@
 """토지 적정 매입가 추정 — 공시지가 × 지역 시세보정계수 (+ 주변 토지 실거래 블렌딩).
 
-토지조서 '매입예정가' 자동 산정용. 개별공시지가(NED/VWorld)에 지역별 공시지가 현실화율
-역수(MARKET_MULTIPLIER)를 곱해 적정 시세를 추정한다. 사용자가 수정 가능(참고값).
+토지조서 '매입예정가' 자동 산정용. 개별공시지가(NED/VWorld)에 **사전 설정된 지역별
+보정계수**(market_multiplier SSOT)를 곱해 적정 시세를 추정한다. 사용자가 수정 가능(참고값).
+
+★그 계수는 «공시지가 현실화율의 역수» 가 **아니다**(종전 서술 정정 · 2026-09-07).
+  계수의 근거는 문서화돼 있지 않은 휴리스틱이므로 그렇게 부른다. **«잴 수 없다» 는 뜻이 아니다** —
+  근거·실측 대조는 `market_multiplier` 모듈 독스트링 한 곳에 적었다(형제 세션이 남양주에서
+  1.448배를 실측했고 표의 1.2배와 어긋난다). 여기서 그 명제를 **복제하지 말 것** —
+  복제본이 낡으면 같은 파일이 자기모순한다(실제로 그렇게 됐다 · 독립 리뷰 R2 HIGH-2).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-# 지역 시세보정계수는 comprehensive_analysis_service의 검증된 맵을 재사용(인스턴스화 없이).
-from app.services.land_intelligence.comprehensive_analysis_service import ComprehensiveAnalysisService as _CAS
+# 지역 시세보정계수는 market_multiplier 모듈이 SSOT 다(2026-09-07).
+# ★종전에는 이 모듈이 자체 사본을 두고 comprehensive 의 맵만 빌려 썼는데, **사유 문구를 따로
+#   조립**하는 바람에 같은 거짓("현실화율 약 N%" = 100/계수)이 두 곳에 복제돼 있었다.
+#   맵만 공유하고 «말하는 방식» 을 복제하면 한 곳을 고쳐도 나머지가 남는다 — 그래서 계수와
+#   사유를 **함께** SSOT 로 옮기고 여기서는 위임만 한다.
+from app.services.land_intelligence import market_multiplier as _mm
+
+# 신뢰 고지 문구 템플릿 — 표시 문구를 상수로 꺼내 테스트가 **리터럴로 못 박게** 한다.
+TRUST_BASIS_TEMPLATE = "개별공시지가 × 사전 설정 지역 보정계수({caveat})"
+
+# ★산정식 템플릿 — 자유 리터럴을 없애 「첨가 우회」를 막는다(독립 리뷰 R4 HIGH·MED-3).
+#   ★★MED-3: 종전 판은 `× {rationale}` 만 넣어 **계수 값이 문자열에서 사라졌다**.
+#     1,000,000 × 500.0 = 500,000,000 인데 결과는 600,000,000 으로 찍혀 **독자가 검산할 수 없었다**
+#     (짧은형에 수를 금지한 락의 부작용). 거짓을 지운 것은 개선이지만 **참인 계수까지 지운 것은 퇴행**이다.
+#     ⇒ desk_appraisal 과 같은 모양(`× 지역보정 {계수}({사유})`)으로 되살린다.
+PRICE_RATIONALE_HEAD = "개별공시지가 {op:,}원/㎡ × 지역보정 {mult}({rationale})"
+PRICE_RATIONALE_TAIL = " × 면적 {area:,}㎡ = 적정 매입가 약 {total:,}원"
+PRICE_RATIONALE_NOTE = ". 참고용 추정치이며 사용자가 수정할 수 있습니다."
 
 
 def _market_multiplier(address: str) -> tuple[float, str]:
-    addr = address or ""
-    for district, mult in _CAS.MARKET_MULTIPLIER_MAP.items():
-        if district in addr:
-            return mult, f"{district} 공시지가 현실화율(약 {100/mult:.0f}%) 반영 보정 {mult}배"
-    for region, mult in _CAS.MARKET_MULTIPLIER_REGION.items():
-        if region in addr:
-            return mult, f"{region} 평균 공시지가 현실화율 반영 보정 {mult}배"
-    return 1.2, "전국 평균 보정 1.2배(지역 미등록)"
+    """주소 → (보정계수, **짧은** 사유). SSOT 위임 — 계수로부터 통계를 역산하지 않는다.
+
+    ★왜 짧은 형태인가(2026-09-07 · 독립 리뷰 M-4): 이 함수의 두 소비처가 모두 사유를
+      **곱셈식 안의 연산 항 주석**으로 쓴다 — 아래 `rationale` 과
+      `desk_appraisal_service` 의 `… × 그밖의요인 {계수}({사유})`. 문장형(마침표 포함)을 넣으면
+      괄호가 3중으로 중첩되고 수식 한가운데 문장 종결부가 박힌다. 자리에 맞는 표현을 고른다.
+      독립 문장이 필요한 곳(예: comprehensive 의 분석 주석)은 `.sentence` 를 쓴다.
+    """
+    v = _mm.resolve_market_multiplier(address)
+    return v.multiplier, v.short
 
 
 def _price_evidence(
@@ -126,15 +150,25 @@ async def estimate_land_price(
         "estimated_total_won": est_total,
         "source": src,
         "rationale": (
-            f"개별공시지가 {int(op):,}원/㎡ × {rationale}"
-            + (f" × 면적 {round(area_f, 1):,}㎡ = 적정 매입가 약 {est_total:,}원" if area_f and est_total else "")
-            + ". 참고용 추정치이며 사용자가 수정할 수 있습니다."
+            PRICE_RATIONALE_HEAD.format(op=int(op), mult=mult, rationale=rationale)
+            + (
+                PRICE_RATIONALE_TAIL.format(area=round(area_f, 1), total=est_total)
+                if area_f and est_total else ""
+            )
+            + PRICE_RATIONALE_NOTE
         ),
         # 신뢰 정보(정직 표기) — 단일출처(공시지가×보정) 추정임을 명시하고 교차검증 경로를 안내한다.
         # (가짜 cross_validation 신호를 만들지 않고, 단일출처 한계를 정직하게 고지)
         "trust": {
             "method": "single_source",
-            "basis": "개별공시지가 × 지역 시세보정(현실화율 역수)",
+            # ★자유 리터럴을 쓰지 않고 SSOT 한정어에서 **조립**한다(독립 리뷰 R3 HIGH-A).
+            #   종전에는 리터럴이라 「한정어를 담고 있는가」 검사를 **덧붙이기로 우회**할 수 있었다
+            #   (`"국토교통부 실거래가로 검증된 … (실거래 미검증)"` 이 통과했다).
+            "basis": TRUST_BASIS_TEMPLATE.format(caveat=_mm.SHORT_CAVEAT),
+            # ★출처 판정용 안정 코드 — 표시 문구(basis)와 분리한다. 문구를 쉬운 말로
+            #   바꿔도 «이 값의 출처가 미검증 사전설정» 이라는 계약은 안 죽는다
+            #   (형제 선례: field_audit market_methodology 의 source_kind).
+            "basis_kind": _mm.PROVENANCE_UNVERIFIED_PRESET,
             "confidence": 0.7,
             "recheck_recommended": True,
             "cross_validation": None,
