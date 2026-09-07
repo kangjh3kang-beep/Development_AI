@@ -328,3 +328,44 @@ async def test_real_estimator_payload_carries_no_fabricated_rate() -> None:
 
     # 양성 대조 — 같은 검사기가 옛 형태를 실제로 잡는가(대조군 없는 "0건" 은 근거가 아니다).
     assert [t for t in strings + [_OLD_FORM] if _FABRICATED_RATE.search(t)] == [_OLD_FORM]
+
+
+# 구멍 5 — trust.basis 가 **통째로 사라져도** 초록이었다(기계 변이 [3] 줄삭제).
+#   그 필드는 "이 값이 어떻게 나왔나" 를 사용자에게 말하는 **정직 고지**다. 값이 틀리는 것보다
+#   사유가 사라지는 것이 더 조용하다 — 화면에서 그냥 안 보이므로 아무도 신고하지 않는다.
+#   (이 저장소의 유료·비가역 산출물 규율: "사유를 버렸다" 가 네 얼굴 중 하나였다.)
+#   => 문구가 아니라 **존재와 형태**를 잠근다(산문 단언 아님).
+@pytest.mark.asyncio
+async def test_trust_disclosure_fields_are_present_and_nonempty() -> None:
+    """정직 고지 필드가 payload 에 **실재**하는지 — 문구가 아니라 계약을 본다."""
+    payload = await estimate_land_price(
+        address=_ADDR_DISTRICT, area_sqm=500.0, official_price_per_sqm=1_000_000.0
+    )
+    trust = payload.get("trust")
+    assert isinstance(trust, dict), f"trust 블록이 없다: {type(trust)}"
+    for key in ("method", "basis", "note"):
+        assert key in trust, f"정직 고지 필드 누락: trust.{key}"
+        assert str(trust[key] or "").strip(), f"trust.{key} 가 비었다 — 고지가 침묵한다"
+    # 산출 근거 트레이스(EvidencePanel)도 비면 안 된다 — 근거 0줄은 근거 없음과 같다.
+    ev = payload.get("evidence")
+    assert isinstance(ev, list) and len(ev) >= 3, f"evidence 트레이스 부족: {ev!r}"
+    # 보정계수 행이 사유(basis)를 달고 있는가 — 배선 락(라벨만 있고 근거가 빈 행 방지).
+    mult_rows = [r for r in ev if isinstance(r, dict) and "보정계수" in str(r.get("label", ""))]
+    assert mult_rows, f"보정계수 근거 행이 없다: {[r.get('label') for r in ev if isinstance(r, dict)]}"
+    assert all(str(r.get("basis") or "").strip() for r in mult_rows), mult_rows
+
+
+# ─────────────────────────────────────────────────────────────
+# ★설명된 생존 6건(구멍 아님 · 기계 변이 재실행 결과 7 중 6)
+#   변이 점수를 부풀리지 않기 위해 **왜 잠그지 않았는지**를 적는다.
+#
+#   [34] UNVERIFIED_CAVEAT · [41][44][46] 사유 f-string 3종 · [4] trust.basis 문구
+#     -> **산문이다.** 이 락들은 «금지된 의미»(검증 주장 · 역산된 통계)만 잠그고 표현은 잠그지
+#        않는다. 문구를 다듬을 때마다 깨지는 락은 곧 꺼지기 때문이다(CLAUDE.md §30).
+#        의미를 뒤집는 변이는 실제로 CAUGHT 다 — 손 변이 ⑩(한정어를 "검증된 현실화율입니다"로)
+#        · ⑫(trust.basis 에 "현실화율 83%" 재도입) 둘 다 잡혔다.
+#   [36] SCOPE_DISTRICT 문자열 변경
+#     -> **내부 식별자**다. 계약은 «세 코드가 상호 구별되는가» 이고 그것은
+#        test_scope_codes_are_pairwise_distinct 가 잠근다(손 변이 ⑪ 충돌 = CAUGHT).
+#        고유한 다른 이름으로 바뀌는 것은 관측 가능한 결함이 아니다 — 잠그면 위양성이 된다.
+# ─────────────────────────────────────────────────────────────
