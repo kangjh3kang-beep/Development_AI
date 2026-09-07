@@ -445,12 +445,63 @@ def test_short_form_is_formula_safe() -> None:
     assert len(sent) > 45
 
 
-def test_desk_appraisal_formula_uses_the_short_form() -> None:
-    """★배선 — 수식을 만드는 자리가 실제로 짧은 형태를 받는지 **행위로** 확인한다."""
-    mult, rationale = _market_multiplier(_ADDR_DISTRICT)
-    formula = f"개별공시지가 1,000,000원/㎡ × 그밖의요인 {mult}({rationale}) × 면적 500㎡"
-    assert formula.count("(") == formula.count(")") == 1, formula
-    assert "습니다" not in formula, f"수식에 문장이 섞였다: {formula}"
+@pytest.mark.asyncio
+async def test_desk_appraisal_formula_is_the_pinned_template() -> None:
+    """★수식을 **실제 산출물**로 태운다 — 테스트가 만든 문자열을 단언하면 장식이다(R4 LOW-2).
+
+    ★종전 판은 테스트가 직접 조립한 f-string 의 괄호 균형을 봤다. 생산자가 모양을 바꿔도
+      초록이었다(리뷰어가 변이로 실증). 지금은 **템플릿 상수와의 동일성**으로 잠근다.
+    """
+    from app.services.land_intelligence.desk_appraisal_service import (
+        PUB_METHOD_RATIONALE_TEMPLATE,
+        desk_appraisal,
+    )
+
+    # ★템플릿을 리터럴로 못 박는다 — 여기에 거짓 출처를 **덧붙이면** 이 줄이 깨진다(R4 HIGH).
+    assert PUB_METHOD_RATIONALE_TEMPLATE == (
+        "개별공시지가 {op:,}원/㎡ × 시점수정 {time_adjust} × 접도 {road_f}({road_label})"
+        " × 면적 {area_fac} × 형상 {shape_f}({shape_label})"
+        " × 그밖의요인 {other_factor}({other_rationale})"
+    )
+
+    result = await desk_appraisal(
+        address=_ADDR_DISTRICT, area_sqm=500.0, official_price_per_sqm=1_000_000.0
+    )
+    pub = next((m for m in (result.get("methods") or []) if isinstance(m, dict) and m.get("unit_price")), None)
+    assert pub is not None, "채택 방법이 없다 — 이 락이 공허해진다"
+    rationale = str(pub.get("rationale") or "")
+
+    # 실제 산출물이 템플릿에서 나왔는가 — 조립해 **동일성**으로 대조한다.
+    f = pub["factors"]
+    v = mm.resolve_market_multiplier(_ADDR_DISTRICT)
+    assert rationale.endswith(f"× 그밖의요인 {f['그밖의요인']}({v.short})"), rationale
+    assert rationale.startswith(f"개별공시지가 {f['개별공시지가']:,}원/㎡ × 시점수정 "), rationale
+    assert "습니다" not in rationale, f"수식에 문장이 섞였다: {rationale}"
+    assert rationale.count("(") == rationale.count(")"), rationale
+
+
+@pytest.mark.asyncio
+async def test_estimator_formula_keeps_the_multiplier_value() -> None:
+    """★산정식에서 **계수 값이 사라지면 독자가 검산할 수 없다**(R4 MED-3 회귀 락).
+
+    이 PR 의 1차 판은 `× {짧은사유}` 만 넣어 계수를 지웠고, 그 결과
+    `1,000,000 × 500.0 = 600,000,000` 이라는 **검산 불가능한 식**이 사용자 화면
+    (`LandScheduleClient` 「산정근거」 알림)에 나갔다. 거짓 제거는 개선이지만
+    **참인 계수까지 지운 것은 퇴행**이다.
+    """
+    from app.services.land_intelligence.land_price_estimator import PRICE_RATIONALE_HEAD
+
+    assert PRICE_RATIONALE_HEAD == "개별공시지가 {op:,}원/㎡ × 지역보정 {mult}({rationale})"
+    payload = await estimate_land_price(
+        address=_ADDR_DISTRICT, area_sqm=500.0, official_price_per_sqm=1_000_000.0
+    )
+    r = str(payload.get("rationale") or "")
+    mult = payload["market_multiplier"]
+    assert f"지역보정 {mult}(" in r, f"계수가 식에서 사라졌다: {r}"
+    # ★검산 가능성을 **행위로** 확인 — 식에 실린 수로 결과가 재현되는가.
+    op = payload["official_price_per_sqm"]
+    area = payload["area_sqm"]
+    assert round(op * mult * area) == payload["estimated_total_won"], payload
 
 
 # ─────────────────────────────────────────────────────────────
@@ -662,6 +713,29 @@ def test_every_short_form_equals_its_template_exactly() -> None:
         assert v.short == expected, f"{addr}\n  got     : {v.short}\n  expected: {expected}"
 
 
+def test_every_sentence_equals_its_template_exactly() -> None:
+    """★전수 — 문장형도 템플릿 **그대로**여야 한다(R4 MED-1 · short 와 대칭).
+
+    종전에는 문장형이 «한정어를 담고 있는가» 라는 포함 검사뿐이라, 앞에
+    `"국토부 실거래로 검증된 계수입니다 · "` 를 **덧붙이는** 변이가 생존했다.
+    그 문자열은 `land_prices.annotations`(공개 API 표면)로 나간다.
+    """
+    templates = {
+        mm.SCOPE_DISTRICT: mm.SENTENCE_TEMPLATE_DISTRICT,
+        mm.SCOPE_REGION: mm.SENTENCE_TEMPLATE_REGION,
+        mm.SCOPE_DEFAULT: mm.SENTENCE_TEMPLATE_DEFAULT,
+        mm.SCOPE_UNKNOWN: mm.SENTENCE_TEMPLATE_UNKNOWN,
+    }
+    for addr in _all_addresses() + [_ADDR_UNKNOWN]:
+        v = mm.resolve_market_multiplier(addr)
+        key = next(
+            (k for k in list(mm.MARKET_MULTIPLIER_MAP) + list(mm.MARKET_MULTIPLIER_REGION) if k in (addr or "")),
+            "",
+        )
+        expected = templates[v.scope].format(key=key, mult=v.multiplier, caveat=mm.UNVERIFIED_CAVEAT)
+        assert v.sentence == expected, f"{addr}\n  got     : {v.sentence}\n  expected: {expected}"
+
+
 def test_no_markdown_emphasis_in_runtime_strings() -> None:
     """★런타임 문자열에 마크다운 강조를 넣지 않는다 (R3 MED-2).
 
@@ -768,7 +842,12 @@ def _repo_root() -> Path:
     맞았지만(`working-directory: propai-platform/apps/api`), repo root 에서 돌리면 조회기가
     **빈 결과**를 냈다 — 그리고 그 빈 결과가 xfail 안에 있어 **의도된 부채와 구별되지 않았다**.
     """
-    return Path(__file__).resolve().parents[3]
+    # ★parents[4] 다 — parents[3] 은 `propai-platform` 이라 저장소 루트가 **아니었다**
+    #   (독립 리뷰 R4 LOW-1 · `git grep` 은 cwd 서브트리로 한정되므로 루트 `scripts/`·`tests/` 를
+    #   못 봤고, 실패 메시지도 «저장소 루트» 라는 **틀린 라벨**을 인쇄했다).
+    root = Path(__file__).resolve().parents[4]
+    assert (root / ".git").exists(), f"저장소 루트가 아니다: {root}"
+    return root
 
 
 def _marker_files() -> list[str]:
@@ -809,3 +888,54 @@ def test_provenance_has_a_consumer() -> None:
 def test_number_invariant_catches_korean_numerals() -> None:
     """한글 수사로 쓴 역산 통계도 잡아야 이상적이다 — 현재 **미구현**이라 초록 안에 드러낸다."""
     assert _numbers_in("공시지가 현실화율 팔십삼 퍼센트") != set()
+
+
+# ─────────────────────────────────────────────────────────────
+# ★가드의 **모집단을 payload 전체로** 올린다 (R4 MED-2)
+#
+#   마크다운 락과 출처 락의 축이 «`resolve_market_multiplier` 산출 + 한정어 상수» 였다.
+#   그래서 `trust.note` 와 `evidence[].basis` 는 **어떤 가드의 모집단에도 없었고**,
+#   리뷰어가 거기에 `"**국토교통부 실거래가로 교차검증된** 확정 추정입니다"` 를 넣어 생존시켰다.
+#   `trust.method="single_source"` · `cross_validation=None` 이라는 **기계 축과 정반대**를
+#   산문이 말하는데도 초록이었다 — 이 PR 이 고치는 «두 표면이 모순» 의 또 다른 얼굴이다.
+#   ⇒ 이미 있던 `_collect_user_facing_strings`(파생형 수집기)를 축으로 쓴다.
+# ─────────────────────────────────────────────────────────────
+
+# 「교차검증됐다」류 **긍정 주장** — 기계 축이 `single_source`/`None` 일 때는 거짓이다.
+#   ★부정 구문을 오탐하지 않도록 대상 낱말 **바로 뒤**만 본다(담요 억제 금지 · R3 교훈).
+_CLAIMS_CROSS_VALIDATION = re.compile(
+    r"(?:교차검증|상호검증|이중검증)(?:된|됨|되었|했)(?![^.]{0,12}(?:않|아니|없|미))"
+)
+
+
+@pytest.mark.asyncio
+async def test_whole_payload_has_no_markdown_and_no_cross_validation_claim() -> None:
+    """payload **전체**를 태운다 — 축을 산출 함수가 아니라 **산출물**로 올린다."""
+    payload = await estimate_land_price(
+        address=_ADDR_DISTRICT, area_sqm=500.0, official_price_per_sqm=1_000_000.0
+    )
+    strings = _collect_user_facing_strings(payload)
+    # ★공허 방지 — 실제로 `trust.note`·`evidence[].basis` 가 모집단에 들어왔는가.
+    assert len(strings) >= 10, f"수집기가 죽었다 — {len(strings)}건"
+    note = str((payload.get("trust") or {}).get("note") or "")
+    assert note and note in strings, "trust.note 가 모집단 밖이다 — 축이 여전히 좁다"
+    ev_bases = [str(r.get("basis") or "") for r in (payload.get("evidence") or []) if isinstance(r, dict)]
+    assert ev_bases and all(b in strings for b in ev_bases if b), "evidence[].basis 가 모집단 밖이다"
+
+    md = [t for t in strings if "**" in t or "__" in t]
+    assert not md, "사용자 노출 문자열에 마크다운 강조가 있다(화면에 그대로 찍힌다): " + " | ".join(md)
+
+    # 기계 축이 「단일 출처」라고 말하는 상태에서 산문이 교차검증을 주장하면 모순이다.
+    trust = payload.get("trust") or {}
+    assert trust.get("method") == "single_source" and trust.get("cross_validation") is None, trust
+    claims = [t for t in strings if _CLAIMS_CROSS_VALIDATION.search(t)]
+    assert not claims, (
+        "기계 축은 single_source/cross_validation=None 인데 산문이 교차검증을 주장한다: "
+        + " | ".join(claims)
+    )
+
+    # ★양성 대조 — 검사기가 리뷰어의 변이 문자열을 실제로 잡는가(대조군 없는 0건은 근거가 아니다).
+    bad = "**국토교통부 실거래가로 교차검증된** 확정 추정입니다."
+    assert "**" in bad and _CLAIMS_CROSS_VALIDATION.search(bad), "검사기 사망"
+    # 판별력 — 현재 note(부정 구문 포함)는 안 걸려야 한다.
+    assert not _CLAIMS_CROSS_VALIDATION.search("교차검증은 별도 경로를 활용하세요"), "위양성"

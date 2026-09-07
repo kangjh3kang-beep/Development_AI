@@ -16,6 +16,14 @@ from typing import Any
 import structlog
 
 from app.services.land_intelligence import market_multiplier as _mm
+
+# ★공시지가기준법 산정식 템플릿 — 표시 문구를 상수로 꺼내 테스트가 **리터럴로 못 박게** 한다.
+#   이 문자열은 감정평가 제출문서(PDF·DOCX)의 「근거」 칸으로 그대로 나간다.
+PUB_METHOD_RATIONALE_TEMPLATE = (
+    "개별공시지가 {op:,}원/㎡ × 시점수정 {time_adjust} × 접도 {road_f}({road_label})"
+    " × 면적 {area_fac} × 형상 {shape_f}({shape_label})"
+    " × 그밖의요인 {other_factor}({other_rationale})"
+)
 from app.services.land_intelligence.land_price_estimator import _market_multiplier
 from app.services.market.land_dong_stats import stats_note as land_stats_note
 from app.utils.pnu import lawd_cd_from_pnu
@@ -525,7 +533,16 @@ async def desk_appraisal(
             "개별요인_접도": road_f, "개별요인_면적": area_fac, "개별요인_형상": shape_f,
             "그밖의요인": other_factor,
         },
-        "rationale": f"개별공시지가 {int(op):,}원/㎡ × 시점수정 {time_adjust} × 접도 {road_f}({road_label}) × 면적 {area_fac} × 형상 {shape_f}({shape_label}) × 그밖의요인 {other_factor}({other_rationale})",
+        # ★자유 리터럴을 쓰지 않고 **모듈 템플릿 상수**에서 조립한다(독립 리뷰 R4 HIGH).
+        #   종전에는 f-string 리터럴이라 어떤 락의 모집단에도 없었고, 앞에 거짓 출처를
+        #   **덧붙이는** 변이가 974건 전부를 통과했다 — 그리고 그 문자열은 **제출문서
+        #   (DOCX word/document.xml · PDF)에 도달**한다(리뷰어 실측). 한 문단 안에
+        #   «국토교통부 실거래 검증» 과 «실거래 미검증» 이 나란히 찍히는 상태였다.
+        "rationale": PUB_METHOD_RATIONALE_TEMPLATE.format(
+            op=int(op), time_adjust=time_adjust, road_f=road_f, road_label=road_label,
+            area_fac=area_fac, shape_f=shape_f, shape_label=shape_label,
+            other_factor=other_factor, other_rationale=other_rationale,
+        ),
         # ★요인별 출처 코드(가산) — 표시 문구와 분리된 안정 식별자. 현재는 그밖의요인만 싣는다
         #   (다른 요인은 이 PR 범위 밖 · 각자 근거 체계가 다르다).
         "factor_provenance": {"그밖의요인": other_factor_provenance},

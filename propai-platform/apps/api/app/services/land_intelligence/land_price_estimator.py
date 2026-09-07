@@ -24,6 +24,15 @@ from app.services.land_intelligence import market_multiplier as _mm
 # 신뢰 고지 문구 템플릿 — 표시 문구를 상수로 꺼내 테스트가 **리터럴로 못 박게** 한다.
 TRUST_BASIS_TEMPLATE = "개별공시지가 × 사전 설정 지역 보정계수({caveat})"
 
+# ★산정식 템플릿 — 자유 리터럴을 없애 「첨가 우회」를 막는다(독립 리뷰 R4 HIGH·MED-3).
+#   ★★MED-3: 종전 판은 `× {rationale}` 만 넣어 **계수 값이 문자열에서 사라졌다**.
+#     1,000,000 × 500.0 = 500,000,000 인데 결과는 600,000,000 으로 찍혀 **독자가 검산할 수 없었다**
+#     (짧은형에 수를 금지한 락의 부작용). 거짓을 지운 것은 개선이지만 **참인 계수까지 지운 것은 퇴행**이다.
+#     ⇒ desk_appraisal 과 같은 모양(`× 지역보정 {계수}({사유})`)으로 되살린다.
+PRICE_RATIONALE_HEAD = "개별공시지가 {op:,}원/㎡ × 지역보정 {mult}({rationale})"
+PRICE_RATIONALE_TAIL = " × 면적 {area:,}㎡ = 적정 매입가 약 {total:,}원"
+PRICE_RATIONALE_NOTE = ". 참고용 추정치이며 사용자가 수정할 수 있습니다."
+
 
 def _market_multiplier(address: str) -> tuple[float, str]:
     """주소 → (보정계수, **짧은** 사유). SSOT 위임 — 계수로부터 통계를 역산하지 않는다.
@@ -141,9 +150,12 @@ async def estimate_land_price(
         "estimated_total_won": est_total,
         "source": src,
         "rationale": (
-            f"개별공시지가 {int(op):,}원/㎡ × {rationale}"
-            + (f" × 면적 {round(area_f, 1):,}㎡ = 적정 매입가 약 {est_total:,}원" if area_f and est_total else "")
-            + ". 참고용 추정치이며 사용자가 수정할 수 있습니다."
+            PRICE_RATIONALE_HEAD.format(op=int(op), mult=mult, rationale=rationale)
+            + (
+                PRICE_RATIONALE_TAIL.format(area=round(area_f, 1), total=est_total)
+                if area_f and est_total else ""
+            )
+            + PRICE_RATIONALE_NOTE
         ),
         # 신뢰 정보(정직 표기) — 단일출처(공시지가×보정) 추정임을 명시하고 교차검증 경로를 안내한다.
         # (가짜 cross_validation 신호를 만들지 않고, 단일출처 한계를 정직하게 고지)

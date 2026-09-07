@@ -75,7 +75,7 @@ MARKET_MULTIPLIER_MAP: dict[str, float] = {
 
 MARKET_MULTIPLIER_REGION: dict[str, float] = {
     "서울특별시": 1.4, "서울": 1.4,
-    "경기도": 1.2, "경기": 1.2,
+
     "인천광역시": 1.2, "인천": 1.2,
     "부산광역시": 1.2, "부산": 1.2,
     "대구광역시": 1.15, "대전광역시": 1.15,
