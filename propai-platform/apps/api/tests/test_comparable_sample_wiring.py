@@ -428,10 +428,20 @@ async def test_desk_appraisal_really_emits_masked_reason_end_to_end() -> None:
     # ★거래사례비교법이 실제로 빠졌는지도 확인 — 사유만 싣고 값은 쓰는 상태면 모순이다.
     # ★R5 리뷰(F-9) — `methods` 가 비면 아래 `not any(...)` 는 **공허하게 참**이 된다.
     assert result.get("methods"), "산정방법이 비었다 — 아래 단언이 공허해진다"
-    assert not any(
-        "거래사례" in str(m.get("name") or m.get("method") or "")
-        for m in (result.get("methods") or [])
-    ), "사유를 실으면서 거래사례비교법을 그대로 썼다"
+    # ★★2026-09-07 — 이 단언은 «이름이 목록에 **없어야** 한다» 였는데, 그 사이 계약이
+    #   바뀌었다: 감정평가 규칙 §12(주된 방법 + **다른 방법 검토**)를 지키려고 **적용 못 한
+    #   방법도 `applicable=false` + 사유로 목록에 남긴다**(W5).
+    #   ★락을 **지우지 않고 의도로 옮긴다** — 이 락의 의도는 «사유를 실으면서 그 방법을
+    #     **채택하지는 않았는가**» 이지 «이름이 없는가» 가 아니다.
+    _cmp = [m for m in (result.get("methods") or [])
+            if "거래사례" in str(m.get("name") or m.get("method") or "")]
+    assert _cmp, "거래사례비교법이 목록에서 아예 사라졌다 — 검토 사실이 산출물에 안 남는다"
+    for m in _cmp:
+        assert m.get("applicable") is False, (
+            "사유를 실으면서 거래사례비교법을 **적용했다**고 표시한다")
+        assert not m.get("unit_price"), (
+            "미적용인데 단가가 실려 있다 — 채택 단가에 섞일 수 있다")
+        assert m.get("why_not"), "미적용인데 사유가 없다(무음 폐기)"
 
 
 def test_user_inputs_do_not_suppress_comparable_lookup() -> None:
