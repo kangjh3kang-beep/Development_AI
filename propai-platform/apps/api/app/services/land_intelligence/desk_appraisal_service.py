@@ -125,6 +125,125 @@ def _shape_factor(irregularity: float | None) -> tuple[float, str]:
     return 1.0, "정형(효율 우세)"
 
 
+# 지목이 「대」가 아닌데 도시지역 용도(상업·주거·공업)인 조합 — **틀림이 아니라 확인 대상**.
+# ★지목은 등기·대장의 표시이고 용도지역은 도시계획이라 **원래 어긋날 수 있다**(농지에
+#   상업지역이 지정되는 일은 흔하다). 다만 그때 감정평가는 **현황과 공부 중 무엇을
+#   기준으로 삼았는지**를 밝혀야 하므로, 조용히 넘기면 안 된다.
+# ★독립 리뷰 적발(MEDIUM-11) — 종전엔 10개 **손 목록**이라 잡종지·공장용지·창고용지·
+#   학교용지·주차장·주유소용지·종교용지·묘지·철도용지·수도용지·광천지·염전·양어장·
+#   공원·체육용지·유원지·사적지가 **전부 빠져** 있었다(실측: 잡종지+일반상업 → conflicts 0).
+#   → **「대」가 아닌 것**으로 파생시킨다(목록은 곧 상한).
+_DAE_JIMOK = {"대"}
+_URBAN_ZONES = ("상업지역", "주거지역", "공업지역", "준주거", "준공업")
+
+
+def _subject_consistency(subject: dict[str, Any] | None) -> dict[str, Any]:
+    """지목 ↔ 용도지역 ↔ 이용상황의 **확인이 필요한 조합**을 표면에 올린다.
+
+    ★**틀렸다고 단정하지 않는다.** 셋이 동시에 참인 경우가 실제로 많다
+      (지목 미변경 상태에서 용도지역만 상향되고 현황은 이미 업무용).
+      그래서 `ok=False` 가 아니라 `conflicts` 목록과 «확인하라»를 준다.
+    ★조합 규칙의 **법적 근거는 미확인**이다(실무 관행으로 안다) — 그래서 판정이 아니라
+      **고지**다. 근거 없이 값을 바꾸지 않는다.
+    """
+    s = subject or {}
+    jimok = str(s.get("land_category") or s.get("jimok") or "").strip()
+    zone = str(s.get("zone_type") or s.get("land_use") or "").strip()
+    # ★★2026-09-07 독립 리뷰 적발(HIGH-5) — 이 줄이 **프로덕션이 만들지 않는 키**를
+    #   읽고 있었다. 생산자(:298)는 **`land_use_situation`** 으로 넣는데 여기는
+    #   `usage`/`use_status` 를 읽어 **이용상황 규칙이 원리적으로 발화 불가**였다.
+    #   ★내 테스트는 합성 키(`usage`)를 먹여 초록이었다 — 「사유가 도달하는가」만 재고
+    #     **「그 사유가 발생하는가」를 안 쟀다**.
+    #   ★★정답이 바로 옆에 있었다: PDF 어댑터가 같은 필드를 `land_use_situation` 으로
+    #     읽고 있다(§29 형제를 먼저 봐라).
+    usage = str(
+        s.get("land_use_situation") or s.get("usage") or s.get("use_status") or ""
+    ).strip()
+    conflicts: list[dict[str, str]] = []
+    if jimok and zone and jimok not in _DAE_JIMOK and any(z in zone for z in _URBAN_ZONES):
+        conflicts.append({
+            "field_a": f"지목 {jimok}", "field_b": f"용도지역 {zone}",
+            "note": ("지목이 「대」가 아닌데 도시지역 용도가 지정돼 있습니다. "
+                     "지목 미변경 상태일 수 있으며(정상), 그때 평가는 **현황과 공부 중 "
+                     "무엇을 기준으로 했는지**를 밝혀야 합니다."),
+        })
+    # ★독립 리뷰 적발(MEDIUM-10) — 화이트리스트가 5개뿐이라 `도로 ↔ 도로` 처럼
+    #   **자기 자신과 충돌**했다("공부상 지목과 현황 이용이 다릅니다" — 같은데도).
+    #   → 같은 값이면 충돌이 아니다(당연한 것을 명시). 화이트리스트도 지운다.
+    if jimok and usage and jimok not in _DAE_JIMOK and usage != jimok:
+        conflicts.append({
+            "field_a": f"지목 {jimok}", "field_b": f"이용상황 {usage}",
+            "note": ("공부상 지목과 현황 이용이 다릅니다. 감정평가는 **현황 기준**이 "
+                     "원칙이므로 이 차이가 가액에 반영됐는지 확인이 필요합니다."),
+        })
+    return {
+        "ok": not conflicts,
+        "conflicts": conflicts,
+        # ★검증하지 못한 것을 값 안에 적는다 — 이 판정을 결론으로 쓰지 않게.
+        "basis": ("지목·용도지역·이용상황 조합 점검(실무 관례 기준 · **법적 근거 미확인** — "
+                  "틀렸다는 판정이 아니라 확인 요청입니다)."),
+    }
+
+
+def _assemble_methods(
+    method_pub: dict | None,
+    method_cmp: dict | None,
+    building: dict | None,
+    income: dict | None,
+    *,
+    land_stats: dict | None,
+    comparable_skip_note: str | None,
+) -> list[dict[str, Any]]:
+    """감정평가 **4방법을 전부 목록에 남긴다** — 적용 못 한 것은 사유와 함께.
+
+    ## 왜 (2026-09-07 사용자 신고)
+
+    화면 부제는 *"4방법(공시지가기준·거래사례·원가·수익환원)"* 이라 주장하는데 응답의
+    `methods` 에는 **성립한 것만** 들어가 라이브에서 **1개만 보였다**. 사용자는
+    «4방법이라더니 왜 하나뿐인가 · 나머지는 왜 안 됐나»를 알 길이 없었다.
+
+    ★「감정평가에 관한 규칙」 §12 는 **주된 방법 + 다른 방법 검토**를 요구한다.
+      «검토했고 이런 이유로 안 썼다»가 산출물에 남아야 검토한 것이다.
+
+    ★★**채택 단가는 바꾸지 않는다.** `applicable=false` 항목은 값이 있어도 참고다.
+    """
+    out: list[dict[str, Any]] = []
+    if method_pub:
+        out.append({**method_pub, "applicable": True, "why_not": None})
+    if method_cmp:
+        out.append({**method_cmp, "applicable": True, "why_not": None})
+    else:
+        out.append({
+            "method": "거래사례비교법",
+            "unit_price": None,
+            "applicable": False,
+            "why_not": comparable_skip_note or "인근 거래사례를 확보하지 못했습니다.",
+            # ★참고값이 **있으면** 함께 싣는다 — 없는 척하지 않는다. 다만 채택 아님을 명시.
+            "reference_unit_price": (land_stats or {}).get("unit_price_per_sqm"),
+            "reference_note": (
+                "법정동·지목 층화 실거래(참고) — **개별 필지 위치가 반영되지 않았습니다.** "
+                "지역요인까지만 반영된 값이라 개별요인 보정 전이며, 채택 단가에 쓰지 않습니다."
+            ) if (land_stats or {}).get("unit_price_per_sqm") else None,
+        })
+    if building and building.get("building_value_won"):
+        out.append({"method": "원가법(건물)", "unit_price": None,
+                    "total_won": building.get("building_value_won"),
+                    "applicable": True, "why_not": None,
+                    "rationale": building.get("rationale")})
+    else:
+        out.append({"method": "원가법(건물)", "unit_price": None, "applicable": False,
+                    "why_not": "건물 정보가 없어 재조달원가를 산정할 수 없습니다(나지 또는 미입력)."})
+    if income and income.get("income_value_won"):
+        out.append({"method": "수익환원법", "unit_price": None,
+                    "total_won": income.get("income_value_won"),
+                    "applicable": True, "why_not": None,
+                    "rationale": income.get("rationale")})
+    else:
+        out.append({"method": "수익환원법", "unit_price": None, "applicable": False,
+                    "why_not": "임대수익 자료가 없어 순영업소득을 산정할 수 없습니다."})
+    return out
+
+
 async def desk_appraisal(
     *,
     pnu: str | None = None,
@@ -588,6 +707,12 @@ async def desk_appraisal(
         "appraised_price_per_sqm": appraised_unit,
         "appraised_total_won": appraised_total,
         "subject": subject,                              # 대상물건 표시(지목·용도지역·이용상황 등)
+        # ★★2026-09-07 W7 — 물건표시 **정합 검증**. 라이브에서 지목 **답** · 이용상황
+        #   **업무용** · 용도지역 **일반상업지역** 이 나란히 떴는데 **아무도 확인하지
+        #   않았다.** 감정평가는 「현황 기준」이 원칙이라 이 셋의 관계가 **평가 전제**다.
+        #   ★셋이 동시에 참일 수 있다(지목 미변경 + 현황 업무용). 그래서 **틀렸다고
+        #     단정하지 않고** «확인이 필요한 조합»으로 표면에 올린다.
+        "subject_consistency": _subject_consistency(subject),
         "official_price_per_sqm": int(op),               # 적용 개별공시지가(원/㎡)
         "pnu": pnu,
         "building": building,
@@ -602,7 +727,20 @@ async def desk_appraisal(
         "confidence_basis": confidence_basis,
         "cross_check": cross_check,
         "irregularity": irregularity,
-        "methods": [m for m in (method_pub, method_cmp) if m],
+        # ★★2026-09-07 W5 — **적용 못 한 방법도 목록에 남긴다.**
+        #   화면 부제는 *"4방법(공시지가기준·거래사례·원가·수익환원)"* 이라 주장하는데
+        #   `methods` 에는 성립한 것만 들어가 **1개만 보였다**. 사용자는 «4방법이라더니
+        #   왜 하나뿐인가»를 알 길이 없었다.
+        #   ★**채택 단가는 바꾸지 않는다** — 이 저장소는 *"토지 층화 통계는 참고값이다.
+        #     채택 단가에 넣지 않았다 … 값만 주면 「내 땅 시세」로 오독한다(개별 필지
+        #     위치 미반영)"* 는 판단을 **명문으로** 갖고 있고 그 판단은 옳다.
+        #     감정평가로 보면 층화 통계는 **지역요인까지만** 반영된 값이고 개별요인
+        #     보정 전이다. 그래서 **`applicable=false` + 사유**로 등재만 한다.
+        "methods": _assemble_methods(
+            method_pub, method_cmp, building, income,
+            land_stats=land_dong_stats_out,
+            comparable_skip_note=comparable_skip_note,
+        ),
         "weight_note": weight_note,
         # ★W1-b 리뷰(M-2) — 거래사례비교법이 빠진 **사유**. 값이 조용히 사라지면 사용자는
         #   "이 지역엔 거래가 없나 보다"로 오독한다(실제로는 근접성 판정 불가라 안 쓴 것).
