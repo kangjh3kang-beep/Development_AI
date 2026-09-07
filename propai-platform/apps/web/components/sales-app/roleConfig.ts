@@ -183,6 +183,17 @@ export function visibleTabs(features: string[]): SalesTabDef[] {
 // 역할별 노출은 visibleTabs 결과와 교집합(예: MEMBER 는 payments 미노출 → 3슬롯+전체).
 export const BOTTOM_NAV_KEYS = ["home", "customers", "units", "payments"] as const;
 
+/**
+ * 한 그룹의 항목 수 상한 — 데스크톱 레일은 **활성 그룹 하나만** 펼치므로, 상단 높이는
+ * 「전체 탭 수」가 아니라 **「가장 큰 그룹의 크기」** 로 정해진다.
+ *
+ * ★그래서 「탭이 늘어도 상단이 길어지지 않는다」는 **그룹당 상한이 있어야만** 참이다.
+ *   상한 없이 그 문장만 쓰면 거짓이 된다(적대 리뷰 2026-09-07 지적 — Operations 가 이미 9개이고
+ *   `.sa-tabbar` 는 데스크톱에서 wrap 이라 그룹이 커지면 상단이 실제로 여러 줄로 감긴다).
+ *   그룹이 이 값을 넘으면 **그룹을 쪼갠다.** 잠금: FieldNav.test.tsx.
+ */
+export const MENU_GROUP_MAX = 9;
+
 /** 전체메뉴 시트의 4그룹(IA SSOT) — 각 그룹의 탭 키. 노출은 visibleTabs 와 교집합으로 판정. */
 export const MENU_GROUPS: { title: string; keys: string[] }[] = [
   { title: "Sales", keys: ["units", "customers", "pricing", "subscription"] },

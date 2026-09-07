@@ -36,14 +36,21 @@ import { FIELD_APP_WINDOW_NAME, useFieldAppShell } from "@/lib/field-app-shell";
  *     락을 추가했다 — 그것이 진짜 구멍이었다.
  */
 export default function FieldAppAffordance() {
-  const { inAppShell } = useFieldAppShell();
+  const { standalone, inSeparateWindow } = useFieldAppShell();
   const { installState, requestInstall } = usePwaRuntime();
 
-  // ★이미 앱 안이면 어느 쪽도 노출하지 않는다 — 형제 InstallGuide 와 **같은 판별자**다.
-  if (inAppShell) return null;
+  // ★★가드를 **두 명제로 나눈다**(적대 리뷰 2026-09-07 BLOCKER).
+  //   종전엔 `inAppShell`(standalone ‖ 별도 창) 하나로 **둘 다** 껐다. 그래서 팝업 안에서
+  //   설치가 **원천 봉쇄**됐다 — 이 파일이 스스로 *"별도 창은 앱이 아니다"* 라고 쓰면서
+  //   그 「앱이 아닌 상태」를 「앱 안」으로 취급한 자기모순이었다.
+  //   ★iOS 에서 특히 나빴다: beforeinstallprompt 가 없어 보이는 단추가 「별도 창으로 열기」뿐인데,
+  //     그것을 한 번 누르면 그 창에서 **유일한 설치 경로가 영구히 닫혔다.**
+  //
+  //   설치본으로 실행 중이면 더 설치할 것이 없다 — 여기서만 전부 끈다.
+  if (standalone) return null;
 
-  // 네이티브 설치 프롬프트가 가능한 환경에서만 설치를 먼저 권한다.
-  // iOS Safari 는 beforeinstallprompt 가 **없어** 여기서 항상 거짓이고,
+  // 설치 권유는 **별도 창 안에서도 유효하다**(별도 창은 앱이 아니므로 설치가 여전히 개선이다).
+  // iOS Safari 는 beforeinstallprompt 가 **없어** 여기가 항상 거짓이고,
   // 수동 안내(공유→홈 화면 추가)는 InstallGuide 가 단계별로 낸다(플랫폼 분기 — MDN).
   if (installState === "available") {
     return (
@@ -55,6 +62,10 @@ export default function FieldAppAffordance() {
       </button>
     );
   }
+
+  // ★이미 별도 창 안이면 「별도 창으로 열기」는 무의미하다 — 여기서만 끈다.
+  //   (사용자가 신고한 «앱에 들어가도 버튼이 계속 뜬다» 가 정확히 이 자리다.)
+  if (inSeparateWindow) return null;
 
   return (
     <button

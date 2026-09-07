@@ -4,6 +4,7 @@ import { FieldBottomNav, FieldDesktopNav, FieldMenuSheet } from "@/components/sa
 import {
   BOTTOM_NAV_KEYS,
   MENU_GROUPS,
+  MENU_GROUP_MAX,
   SALES_TABS,
   visibleTabs,
 } from "@/components/sales-app/roleConfig";
@@ -101,92 +102,157 @@ describe("FieldMenuSheet 계약", () => {
 });
 
 /**
- * ★L1·L2 — 데스크톱 그룹 레일(2026-09-07 신설).
+ * ★데스크톱 그룹 레일 계약(2026-09-07 · 적대 리뷰 반영본).
  *
- * 이 자리를 태우는 락이 **0건**이었다. 그래서 P0 가 선언한 인지부하 해소가 모바일에만
- * 착지한 것을 아무 검사도 잡지 못했다. 두 모집단으로 건다:
- *   L1  그룹 소비 — 그룹 탭은 그 그룹에서 도달 ↔ 권한 밖 탭은 **어디에도 없다**
- *   L2  두 표면 IA 일치 — 같은 visibleTabs 로 렌더하면 **도달 가능한 키 집합이 같다**
+ * 초판 락은 상한을 `shown < DEV_TABS.length` 로 걸었다가 **뚫렸다** — 그룹 밖 탭이 `home`
+ * 하나뿐이라 여유가 **탭 1개**였고, 「모든 그룹을 한 줄에 펼치는」 변이가 `19 < 20` 으로
+ * 통과했다(적대 리뷰가 `::VERDICT=SURVIVED` 로 실증). 그 변이가 **바로 사용자가 신고한
+ * 나열식 회귀**다. 그래서 상한을 **활성 그룹 크기로 파생**시켜 못 박는다.
+ *
+ * 표면에서 탭 키를 읽을 때는 라벨이 아니라 `data-tab-key` 를 본다 — 하단바는 라벨을 축약해
+ * 그리므로(첫 어절만) 라벨 역매핑은 **모바일 절반을 잴 수 없었다**(초판의 자기지시적 결함).
  */
 
-/** 데스크톱 레일에서 도달 가능한 탭 키 전수 — 그룹 칩을 모두 눌러 모은다(활성 그룹만 펼치므로). */
+/** 한 표면이 지금 화면에 그린 탭 키 — DOM 에서 읽는다(소스 파생 아님). */
+function renderedKeys(root: ParentNode): string[] {
+  return Array.from(root.querySelectorAll<HTMLElement>("[data-tab-key]")).map(
+    (el) => el.dataset.tabKey!,
+  );
+}
+
+/** 데스크톱 레일에서 **도달 가능한** 탭 키 전수 — 그룹 칩을 모두 눌러 모은다. */
 function desktopReachableKeys(tabs: typeof DEV_TABS): Set<string> {
   const seen = new Set<string>();
-  const nav = vi.fn();
   const { container, unmount } = render(
-    <FieldDesktopNav tabs={tabs} activeTab="home" onNavigate={nav} />,
+    <FieldDesktopNav tabs={tabs} activeTab="home" onNavigate={() => {}} />,
   );
-  // 고정 슬롯(어느 그룹에도 없는 탭) + 그룹 칩을 차례로 눌러 2줄에 뜬 탭을 수집.
-  container.querySelectorAll<HTMLButtonElement>("[data-active]").forEach((b) => {
-    const t = tabs.find((x) => x.label === b.textContent?.trim());
-    if (t) seen.add(t.key);
-  });
-  const chips = Array.from(container.querySelectorAll<HTMLButtonElement>("[aria-expanded]"));
-  for (const chip of chips) {
+  renderedKeys(container).forEach((k) => seen.add(k));
+  for (const chip of Array.from(container.querySelectorAll<HTMLButtonElement>('[data-group]'))) {
     fireEvent.click(chip);
-    container.querySelectorAll<HTMLButtonElement>('[role="tab"]').forEach((b) => {
-      const t = tabs.find((x) => x.label === b.textContent?.trim());
-      if (t) seen.add(t.key);
-    });
+    renderedKeys(container).forEach((k) => seen.add(k));
   }
   unmount();
   return seen;
 }
 
-/** 모바일에서 도달 가능한 탭 키 전수 — 하단 주 슬롯 ∪ 전체메뉴 시트. */
+/** 모바일에서 도달 가능한 탭 키 전수 — 하단 주 슬롯 ∪ 전체메뉴 시트. **둘 다 DOM 에서 읽는다.** */
 function mobileReachableKeys(tabs: typeof DEV_TABS): Set<string> {
   const seen = new Set<string>();
   const bottom = render(
     <FieldBottomNav tabs={tabs} activeTab="home" onNavigate={() => {}} onOpenMenu={() => {}} />,
   );
-  for (const k of BOTTOM_NAV_KEYS) if (tabs.some((t) => t.key === k)) seen.add(k);
+  renderedKeys(bottom.container).forEach((k) => seen.add(k));
   bottom.unmount();
   const sheet = render(
     <FieldMenuSheet open tabs={tabs} activeTab="home" onNavigate={() => {}} onClose={() => {}} />,
   );
-  sheet.container.querySelectorAll<HTMLButtonElement>("button").forEach((b) => {
-    const t = tabs.find((x) => x.label === b.textContent?.trim());
-    if (t) seen.add(t.key);
-  });
+  renderedKeys(sheet.container).forEach((k) => seen.add(k));
   sheet.unmount();
   return seen;
 }
 
-describe("FieldDesktopNav 계약(L1) — 그룹을 소비한다", () => {
-  it("★전 탭을 한 줄에 나열하지 않는다 — 최초 렌더의 role=tab 은 **활성 그룹 하나**뿐", () => {
+describe("IA SSOT 상한(m4) — 「상단이 길어지지 않는다」가 참이려면 그룹당 상한이 있어야 한다", () => {
+  it("★모든 그룹이 MENU_GROUP_MAX 이하다 — 넘으면 그룹을 쪼갠다", () => {
+    expect(MENU_GROUPS.length).toBeGreaterThan(0); // 공허 방지
+    for (const g of MENU_GROUPS) {
+      expect(g.keys.length).toBeLessThanOrEqual(MENU_GROUP_MAX);
+    }
+    // 두 모집단 — 상한이 **실제로 빡빡한지** 확인(아무 값이나 넣은 상수가 아니다).
+    expect(Math.max(...MENU_GROUPS.map((g) => g.keys.length))).toBe(MENU_GROUP_MAX);
+  });
+});
+
+describe("FieldDesktopNav 계약(L1) — 활성 그룹만 펼친다", () => {
+  it("★★패널에는 **활성 그룹의 탭만** 있다 — 개수가 그룹 크기와 정확히 같다(전 탭 나열 회귀 차단)", () => {
     const { container } = render(
       <FieldDesktopNav tabs={DEV_TABS} activeTab="home" onNavigate={() => {}} />,
     );
-    const shown = container.querySelectorAll('[role="tab"]').length;
-    // 공허한 그린 방지 — 대상이 0개여서 "나열 안 함"이 참이 되면 안 된다.
-    expect(shown).toBeGreaterThan(0);
-    expect(shown).toBeLessThan(DEV_TABS.length);
+    const panel = container.querySelector('[role="tabpanel"]')!;
+    expect(panel).toBeTruthy(); // 공허 방지 — 패널이 없으면 아래가 전부 무의미하다
+
+    const shown = renderedKeys(panel);
+    const openGroupTitle = container
+      .querySelector<HTMLElement>('[data-group][data-open="true"]')!
+      .dataset.group!;
+    const expected = MENU_GROUPS.find((g) => g.title === openGroupTitle)!.keys.filter((k) =>
+      DEV_TABS.some((t) => t.key === k),
+    );
+
+    // ★상한을 **활성 그룹 크기로 파생**시킨다. 초판은 전체 탭 수와 비교해 여유가 1개였다.
+    expect(shown.sort()).toEqual(expected.sort());
+    // 그리고 그 그룹 밖 탭은 패널에 **하나도** 없다.
+    const outside = DEV_TABS.filter((t) => !expected.includes(t.key)).map((t) => t.key);
+    expect(outside.length).toBeGreaterThan(0); // 대조군 — 비교 대상이 실재한다
+    expect(shown.filter((k) => outside.includes(k))).toEqual([]);
   });
 
   it("① 그룹 칩을 누르면 그 그룹의 탭이 뜬다(Money → 수납·납부)", () => {
     const nav = vi.fn();
     render(<FieldDesktopNav tabs={DEV_TABS} activeTab="home" onNavigate={nav} />);
-    fireEvent.click(screen.getByRole("button", { name: /Money/ }));
-    fireEvent.click(screen.getByRole("tab", { name: /수납·납부/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Money/ }));
+    fireEvent.click(screen.getByRole("button", { name: /수납·납부/ }));
     expect(nav).toHaveBeenCalledWith("payments");
   });
 
   it("② 권한 밖 탭은 **어느 그룹에서도** 도달할 수 없다 — MEMBER 에 '수납·납부' 없음", () => {
     const keys = desktopReachableKeys(MEMBER_TABS);
     expect(keys.has("payments")).toBe(false);
-    // 두 모집단 — 권한 안 탭은 반드시 도달한다(검사기 생존).
-    expect(keys.has("units")).toBe(true);
+    expect(keys.has("units")).toBe(true); // 대조군 — 권한 안 탭은 반드시 도달
   });
 
   it("③ 빈 그룹은 칩 자체가 없다 — MEMBER 는 Money 그룹 미노출", () => {
     render(<FieldDesktopNav tabs={MEMBER_TABS} activeTab="home" onNavigate={() => {}} />);
-    expect(screen.queryByRole("button", { name: /Money/ })).toBeNull();
-    expect(screen.getByRole("button", { name: /Sales/ })).toBeTruthy(); // 대조군
+    expect(screen.queryByRole("tab", { name: /Money/ })).toBeNull();
+    expect(screen.getByRole("tab", { name: /Sales/ })).toBeTruthy(); // 대조군
   });
 
-  it("④ 고정 슬롯은 파생이다 — 어느 그룹에도 없는 '홈'이 그룹 칩과 함께 상시 노출", () => {
-    render(<FieldDesktopNav tabs={DEV_TABS} activeTab="units" onNavigate={() => {}} />);
-    expect(screen.getByRole("button", { name: /홈/ })).toBeTruthy();
+  it("④ 고정 슬롯은 파생이다 — 어느 그룹에도 없는 '홈'이 상시 노출", () => {
+    const { container } = render(
+      <FieldDesktopNav tabs={DEV_TABS} activeTab="units" onNavigate={() => {}} />,
+    );
+    expect(container.querySelector('[data-tab-key="home"]')).toBeTruthy();
+  });
+
+  it("★F3 데스크톱 전용 표면이다 — 루트가 sm+ 에서만 보인다(반응형 계약)", () => {
+    // 적대 리뷰 실증: `sm:block` → `sm:hidden` 변이가 SURVIVED 했다 —
+    // 이 PR 의 산출물이 **전 뷰포트에서 사라져도** 초록이었다. 이제 두 방향을 다 단언한다.
+    const { container } = render(
+      <FieldDesktopNav tabs={DEV_TABS} activeTab="home" onNavigate={() => {}} />,
+    );
+    const cls = (container.firstElementChild as HTMLElement).className;
+    expect(cls).toContain("hidden");   // 기본은 숨김
+    expect(cls).toContain("sm:block"); // sm+ 에서만 보인다
+    expect(cls).not.toContain("sm:hidden");
+  });
+});
+
+describe("★M2·M3 — 상태가 어긋나도 화면이 무너지지 않는다", () => {
+  it("M2 펼친 그룹이 권한 변경으로 사라져도 **패널이 남는다**(초판은 통째로 증발했다)", () => {
+    const { container, rerender } = render(
+      <FieldDesktopNav tabs={DEV_TABS} activeTab="units" onNavigate={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /Money/ }));
+    expect(container.querySelector('[role="tabpanel"]')).toBeTruthy(); // 전제
+
+    // Money 그룹의 탭이 권한에서 빠진다(활성 탭 units 는 그대로).
+    const shrunk = DEV_TABS.filter((t) => !["payments", "loan", "resale", "tax"].includes(t.key));
+    rerender(<FieldDesktopNav tabs={shrunk} activeTab="units" onNavigate={() => {}} />);
+
+    const panel = container.querySelector('[role="tabpanel"]');
+    expect(panel).toBeTruthy();
+    // 활성 탭이 속한 그룹으로 되돌아왔다.
+    expect(renderedKeys(panel!)).toContain("units");
+  });
+
+  it("M3 다른 그룹을 펼쳐도 **현재 위치가 보조기술에 남는다**(활성 그룹 칩이 aria-current)", () => {
+    const { container } = render(
+      <FieldDesktopNav tabs={DEV_TABS} activeTab="units" onNavigate={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /Money/ }));
+    const current = container.querySelector('[data-group][aria-current="true"]');
+    expect(current).toBeTruthy();
+    expect((current as HTMLElement).dataset.group).toBe("Sales"); // units 가 속한 그룹
+    expect(current!.textContent).toContain("현재 메뉴 포함"); // sr-only 문구
   });
 });
 
@@ -194,7 +260,7 @@ describe("★L2 — 데스크톱과 모바일이 같은 IA 를 쓴다(처방을 
   it("시행사(DEV): 두 표면의 **도달 가능한 탭 키 집합이 같다**", () => {
     const d = desktopReachableKeys(DEV_TABS);
     const m = mobileReachableKeys(DEV_TABS);
-    expect(d.size).toBeGreaterThan(0); // 공허한 그린 방지
+    expect(d.size).toBeGreaterThan(0); // 공허 방지
     expect(d).toEqual(m);
     expect(d).toEqual(new Set(DEV_TABS.map((t) => t.key))); // 노출 탭 전수 도달
   });
@@ -203,7 +269,9 @@ describe("★L2 — 데스크톱과 모바일이 같은 IA 를 쓴다(처방을 
     const d = desktopReachableKeys(MEMBER_TABS);
     const m = mobileReachableKeys(MEMBER_TABS);
     expect(d).toEqual(m);
-    // 두 모집단 — DEV 보다 확실히 작아야 한다(줄어들지 않으면 게이팅이 죽은 것).
+    // ★절대 기준을 둔다 — 초판은 `d===m` 과 크기 비교뿐이라 **양쪽이 같은 키를 함께 흘리면**
+    //   조용히 통과했다(적대 리뷰 m1).
+    expect(d).toEqual(new Set(MEMBER_TABS.map((t) => t.key)));
     expect(d.size).toBeLessThan(DEV_TABS.length);
   });
 });

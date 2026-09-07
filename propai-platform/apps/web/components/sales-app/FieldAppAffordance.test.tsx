@@ -124,3 +124,43 @@ describe("★여는 이름과 판별 이름이 같은 상수다(어긋나면 앱
     expect(String(features)).not.toContain("popup=yes");
   });
 });
+
+describe("★B2 — 「앱 안」과 「설치 억제」는 다른 명제다(적대 리뷰 BLOCKER 봉합)", () => {
+  it("별도 창 안이어도 **설치는 권한다** — 별도 창은 앱이 아니므로 설치가 여전히 개선이다", () => {
+    window.name = FIELD_APP_WINDOW_NAME;
+    runtime.installState = "available";
+    render(<FieldAppAffordance />);
+    // 초판은 여기서 null 을 반환해 **팝업 안에서 설치가 원천 봉쇄**됐다.
+    expect(screen.getByRole("button", { name: /앱 설치/ })).toBeTruthy();
+  });
+
+  it("두 모집단 — 설치본(standalone)이면 그때는 **아무것도 내지 않는다**", () => {
+    runtime.standalone = true;
+    runtime.installState = "available";
+    const { container } = render(<FieldAppAffordance />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("별도 창 안 + 설치 불가 → 「별도 창으로 열기」는 **내지 않는다**(무의미하다)", () => {
+    window.name = FIELD_APP_WINDOW_NAME;
+    const { container } = render(<FieldAppAffordance />);
+    expect(container.firstChild).toBeNull();
+  });
+});
+
+describe("★F1 — 새 탭 폴백의 역탭내빙 가드(적대 리뷰가 SURVIVED 로 실증한 자리)", () => {
+  it("폴백은 noopener·noreferrer 를 들고 간다 — 지워도 초록이던 자리다", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null); // 팝업 차단
+    render(<FieldAppAffordance />);
+    screen.getByRole("button", { name: /별도 창으로 열기/ }).click();
+
+    const [, , features] = open.mock.calls[1];
+    expect(String(features)).toContain("noopener");
+    expect(String(features)).toContain("noreferrer");
+    // 대조군 — 주 경로(팝업)에는 noopener 를 **넣지 않는다**(넣으면 window.open 이 null 을
+    // 돌려줘 폴백이 오작동한다). 형제 간 차이가 **의도된 것**임을 여기서 못 박는다.
+    const [, , popupFeatures] = open.mock.calls[0];
+    expect(String(popupFeatures)).not.toContain("noopener");
+    expect(String(popupFeatures)).toContain("popup=yes");
+  });
+});

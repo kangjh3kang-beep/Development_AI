@@ -51,6 +51,7 @@ export function FieldBottomNav({
             <button
               key={t.key}
               type="button"
+              data-tab-key={t.key}
               onClick={() => onNavigate(t.key)}
               aria-current={active ? "page" : undefined}
               className={`flex min-h-[52px] flex-col items-center justify-center gap-0.5 rounded-lg text-[10px] font-bold transition ${
@@ -184,6 +185,7 @@ export function FieldMenuSheet({
                     <button
                       key={t.key}
                       type="button"
+                      data-tab-key={t.key}
                       onClick={() => {
                         onNavigate(t.key);
                         onClose();
@@ -209,15 +211,27 @@ export function FieldMenuSheet({
   );
 }
 
+
 /**
  * 데스크톱(sm+) 그룹 레일 — 모바일 시트와 **같은 MENU_GROUPS** 를 소비한다.
  *
  * 1줄: 고정 슬롯(어느 그룹에도 없는 탭) + 그룹 칩.  2줄: **활성 그룹만** 펼친 탭.
  * 종전 인라인 탭바는 `tabs.map` 으로 21개를 전부 그렸다 — 탭이 늘면 상단이 함께 길어졌다.
+ * 지금은 상단 높이가 **가장 큰 그룹 크기**로 정해진다(그래서 `MENU_GROUP_MAX` 가 있다).
  *
  * ★고정 슬롯을 목록으로 적지 않는다 — 어느 그룹에도 속하지 않은 탭을 **파생**시킨다.
  *   목록으로 두면 새 탭이 그룹에도 목록에도 없을 때 **데스크톱에서만 조용히 사라진다**.
  *   (모바일 쪽 전단사 가드 `BOTTOM_NAV_KEYS ∪ MENU_GROUPS ∪ {home} == SALES_TABS` 와 같은 규율.)
+ *
+ * ## a11y — 두 층을 **다른 의미론**으로 나눈다 (적대 리뷰 2026-09-07 반영)
+ *
+ * 종전엔 2줄이 `role="tablist"` 인데 사용자가 다른 그룹을 펼치면 **`aria-selected="true"` 가
+ * 하나도 없는 상태**가 만들어졌다(실증됨). 그래서:
+ *   · 1줄 그룹 칩 = `role="tablist"`(어느 그룹을 볼지 고른다) · `aria-controls` 로 2줄을 가리킨다
+ *   · 2줄 = `role="tabpanel"` 안의 **평범한 버튼** + 활성은 `aria-current="page"`
+ *     (하단 탭바·고정 슬롯과 **같은 표기**로 통일 — 종전엔 `aria-current` 와 `aria-selected` 두 벌이었다)
+ *   · 활성 탭을 품은 그룹 칩은 `aria-current` + 스크린리더 문구로 **어디에 있는지 말한다**
+ *     (종전 표식은 `aria-hidden` 점 하나뿐이라 보조기술에 아무것도 전달되지 않았다)
  */
 export function FieldDesktopNav({
   tabs,
@@ -238,15 +252,21 @@ export function FieldDesktopNav({
   const groupedKeys = new Set(MENU_GROUPS.flatMap((g) => g.keys));
   const pinned = tabs.filter((t) => !groupedKeys.has(t.key));
 
-  // 펼친 그룹 = 사용자가 고른 것 > 활성 탭이 속한 그룹 > 첫 그룹.
-  // ★사용자 선택을 **그것을 고른 시점의 탭과 함께** 저장한다. 탭이 바뀌면 그 선택은
-  //   저절로 무효가 되므로 `useEffect` 로 비우지 않아도 된다 — effect 안 setState 는
-  //   연쇄 렌더를 만들고, 이 저장소의 lint 래칫이 그것을 게이트로 잡는다(실제로 잡혔다).
+  // 사용자 선택을 **그것을 고른 시점의 탭과 함께** 저장한다. 탭이 바뀌면 저절로 무효가 되므로
+  // effect 로 비우지 않아도 된다(effect 안 setState 는 연쇄 렌더 · lint 래칫이 잡는다).
   const [picked, setPicked] = useState<{ tab: string; title: string } | null>(null);
   const pickedTitle = picked?.tab === activeTab ? picked.title : null;
   const activeGroupTitle = groups.find((g) => g.items.some((t) => t.key === activeTab))?.title ?? null;
-  const openTitle = pickedTitle ?? activeGroupTitle ?? groups[0]?.title ?? null;
-  const open = groups.find((g) => g.title === openTitle) ?? null;
+
+  // ★폴백은 **그룹 객체 단계**에서 한다. 종전엔 title 문자열로만 폴백해서, 고른 그룹이
+  //   권한 변경으로 사라지면 `find` 가 null 이 되어 **2줄이 통째로 증발**했다(적대 리뷰 실증).
+  const open =
+    groups.find((g) => g.title === pickedTitle) ??
+    groups.find((g) => g.title === activeGroupTitle) ??
+    groups[0] ??
+    null;
+
+  const panelId = "field-desktop-nav-panel";
 
   return (
     <div className="sticky top-0 z-20 -mx-1 hidden border-b border-[var(--line)] bg-[color:color-mix(in_srgb,var(--background)_85%,transparent)] px-1 pt-1.5 backdrop-blur sm:block">
@@ -257,16 +277,17 @@ export function FieldDesktopNav({
           <button
             key={t.key}
             type="button"
+            data-tab-key={t.key}
             onClick={() => onNavigate(t.key)}
             aria-current={activeTab === t.key ? "page" : undefined}
             data-active={activeTab === t.key}
-            className={`inline-flex min-h-[30px] items-center gap-1 rounded-lg px-2.5 text-[11.5px] font-black transition ${
+            className={`inline-flex min-h-[44px] items-center gap-1 rounded-lg px-3 text-xs font-black transition ${
               activeTab === t.key
                 ? "bg-[var(--accent-strong)] text-white"
                 : "border border-[var(--line)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]"
             }`}
           >
-            {t.icon && <t.icon className="size-3.5" aria-hidden />}
+            {t.icon && <t.icon className="size-4" aria-hidden />}
             {t.label}
           </button>
         ))}
@@ -275,44 +296,53 @@ export function FieldDesktopNav({
           <span aria-hidden className="mx-0.5 h-4 w-px bg-[var(--line)]" />
         )}
 
-        {groups.map((g) => {
-          const isOpen = g.title === openTitle;
-          const holdsActive = g.items.some((t) => t.key === activeTab);
-          return (
-            <button
-              key={g.title}
-              type="button"
-              onClick={() => setPicked({ tab: activeTab, title: g.title })}
-              aria-expanded={isOpen}
-              data-open={isOpen}
-              data-holds-active={holdsActive}
-              className={`inline-flex min-h-[30px] items-center gap-1.5 rounded-lg px-2.5 text-[11.5px] font-black transition ${
-                isOpen
-                  ? "border border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
-                  : "border border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
-              }`}
-            >
-              {g.title}
-              <span className="text-[10px] font-bold opacity-70">{g.items.length}</span>
-              {holdsActive && !isOpen && (
-                <span aria-hidden className="size-1.5 rounded-full bg-[var(--accent-strong)]" />
-              )}
-            </button>
-          );
-        })}
+        <div role="tablist" aria-label="메뉴 그룹" className="flex flex-wrap items-center gap-1.5">
+          {groups.map((g) => {
+            const isOpen = open?.title === g.title;
+            const holdsActive = g.items.some((t) => t.key === activeTab);
+            return (
+              <button
+                key={g.title}
+                type="button"
+                role="tab"
+                aria-selected={isOpen}
+                aria-controls={panelId}
+                aria-current={holdsActive ? "true" : undefined}
+                data-group={g.title}
+                data-open={isOpen}
+                data-holds-active={holdsActive}
+                onClick={() => setPicked({ tab: activeTab, title: g.title })}
+                className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-3 text-xs font-black transition ${
+                  isOpen
+                    ? "border border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                    : "border border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+                }`}
+              >
+                {g.title}
+                <span className="text-xs font-bold opacity-70">{g.items.length}</span>
+                {/* ★보조기술에도 「현재 여기」를 말한다 — 종전엔 aria-hidden 점 하나뿐이었다. */}
+                {holdsActive && <span className="sr-only">현재 메뉴 포함</span>}
+                {holdsActive && !isOpen && (
+                  <span aria-hidden className="size-1.5 rounded-full bg-[var(--accent-strong)]" />
+                )}
+              </button>
+            );
+          })}
+        </div>
 
-        <span className="ml-auto text-[11px] font-bold text-[var(--text-tertiary)]">
+        <span className="ml-auto text-xs font-bold text-[var(--text-tertiary)]">
           {tabs.length}개 메뉴 · 내 권한 기준
         </span>
       </div>
 
       {open && (
-        <div className="sa-tabbar" role="tablist" aria-label={`${open.title} 메뉴`}>
+        <div id={panelId} role="tabpanel" aria-label={`${open.title} 메뉴`} className="sa-tabbar">
           {open.items.map((t) => (
             <button
               key={t.key}
-              role="tab"
-              aria-selected={activeTab === t.key}
+              type="button"
+              data-tab-key={t.key}
+              aria-current={activeTab === t.key ? "page" : undefined}
               data-active={activeTab === t.key}
               onClick={() => onNavigate(t.key)}
               className="sa-tab"
