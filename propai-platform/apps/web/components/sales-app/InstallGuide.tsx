@@ -13,6 +13,7 @@
 import { useMemo, useState } from "react";
 import { Smartphone } from "lucide-react";
 import { usePwaRuntime } from "@/components/pwa/PwaRuntimeProvider";
+import { useFieldAppShell } from "@/lib/field-app-shell";
 
 function isIos(): boolean {
   if (typeof navigator === "undefined") return false;
@@ -24,11 +25,21 @@ function isIos(): boolean {
 }
 
 export default function InstallGuide() {
-  const { installState, standalone, requestInstall } = usePwaRuntime();
+  const { installState, requestInstall } = usePwaRuntime();
+  // 셸 헤더 단추와 **같은 판별자 모듈**을 쓰되, **소비하는 축이 다르다**(DESIGN.md B3.3).
+  //  · 설치 안내는 **설치본일 때만** 숨긴다(`standalone`).
+  //  · 「별도 창」은 **앱이 아니다** — 그 안에서도 설치는 여전히 개선이므로 안내를 유지한다.
+  //
+  // ★★한때 이 가드를 `inAppShell`(standalone ‖ 별도 창)로 넓혔다가 되돌렸다(적대 리뷰 BLOCKER).
+  //   넓히면 팝업 안에서 설치 UI 가 통째로 사라지는데, **iOS Safari 는 이 컴포넌트의
+  //   단계 안내가 유일한 설치 경로**다(beforeinstallprompt 부재 — MDN). 즉 「별도 창으로 열기」를
+  //   한 번 누른 iOS 사용자는 그 창에서 영영 설치할 수 없게 된다.
+  //   그리고 배너 문구가 *"홈 화면에 추가하면…"* 이라 **행동을 권하면서 수단을 치우는** 자기모순이었다.
+  const { standalone, inSeparateWindow } = useFieldAppShell();
   const [iosOpen, setIosOpen] = useState(false);
   const ios = useMemo(() => isIos(), []);
 
-  // 이미 설치(앱 실행 중)면 안내 불필요.
+  // 이미 설치본으로 실행 중이면 설치 안내 불필요.
   if (standalone) {
     return (
       <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/5 px-4 py-3 text-sm font-bold text-emerald-300">
@@ -43,6 +54,13 @@ export default function InstallGuide() {
         <Smartphone className="size-5 text-[var(--accent-strong)]" aria-hidden />
         <p className="text-sm font-black text-[var(--text-primary)]">홈 화면에 앱 추가</p>
       </div>
+      {/* 별도 창 안에서는 「지금 상태가 앱이 아니다」를 정직하게 말한다 — 주소창이 남아 있다. */}
+      {inSeparateWindow && (
+        <p className="text-xs font-bold text-[var(--text-secondary)]">
+          지금은 별도 창으로 보고 있어요. 별도 창은 주소창이 남아 앱과 다릅니다 — 홈 화면에 추가하면
+          주소창 없이 앱처럼 쓸 수 있어요.
+        </p>
+      )}
       <p className="text-xs text-[var(--text-secondary)]">
         홈 화면에 추가하면 주소 입력 없이 한 번에 접속하고, 푸시 알림을 받을 수 있어요.
       </p>
