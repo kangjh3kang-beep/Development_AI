@@ -18,6 +18,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEV_TYPE_PRESETS } from "@/lib/dev-type-presets";
+import { EditableTile } from "@/components/feasibility/EditableTile";
 import { useSearchParams } from "next/navigation";
 import {
   ComposedChart,
@@ -383,6 +384,18 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
   /** rough-scenario 요청 body 조립(공용) — 다필지는 2필지↑일 때만 첨부(무회귀). */
   // 사용자가 고른 개발유형(미선택이면 백엔드 Top1 자동 추천 — 현행 동작 불변).
   const [devTypeOverride, setDevTypeOverride] = useState<string>("");
+  // ★건축개요 직접입력(2026-09-07) — 「수정 → 입력 → 저장」 패턴. null = 자동값 사용.
+  //   ★키를 **안 보내는 것**과 «0을 보내는 것»은 다르다 — null 이면 payload 에서 뺀다.
+  const [briefOv, setBriefOv] = useState<Record<string, number | null>>({
+    gfa_sqm: null,
+    saleable_area_pyeong: null,
+    exclusive_ratio: null,
+    project_months_total: null,
+  });
+  const setBrief = useCallback(
+    (k: string) => (v: number | null) => setBriefOv((p) => ({ ...p, [k]: v })),
+    [],
+  );
 
   const buildBody = useCallback(
     (overrides?: Record<string, number>) => ({
@@ -396,9 +409,17 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
       // ★미선택이면 **키 자체를 안 보낸다** — 빈 문자열을 보내면 백엔드가 «지정됐다»로
       //   읽어 Top1 자동추천이 죽는다(「없음」을 유효값으로 표현하지 않는다).
       ...(devTypeOverride ? { dev_type: devTypeOverride } : {}),
-      ...(overrides && Object.keys(overrides).length > 0 ? { overrides } : {}),
+      // ★건축개요 직접입력을 기존 overrides 와 **합친다**. null 은 키 자체를 뺀다
+      //   (「없음」을 0으로 표현하면 0㎡·0개월이 확정치처럼 계산에 들어간다).
+      ...(() => {
+        const brief = Object.fromEntries(
+          Object.entries(briefOv).filter(([, v]) => v != null),
+        ) as Record<string, number>;
+        const merged = { ...(overrides ?? {}), ...brief };
+        return Object.keys(merged).length > 0 ? { overrides: merged } : {};
+      })(),
     }),
-    [address, parcelRows, projectId, ctxProjectId, equityWon, devTypeOverride],
+    [address, parcelRows, projectId, ctxProjectId, equityWon, devTypeOverride, briefOv],
   );
 
   // ★아이디어#4(지불여력→개략수지 원클릭 퍼널) read 끝 봉합: PricingBandPanel CTA가
@@ -657,10 +678,43 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
                     ))}
                   </select>
                 </div>
-                <Tile label="연면적(GFA)" text={sqmStr(inp?.gfa_sqm)} />
-                <Tile label="분양가능면적" text={pyStr(inp?.saleable_area_pyeong)} />
+                <EditableTile
+                  label="연면적(GFA)"
+                  autoText={sqmStr(inp?.gfa_sqm)}
+                  value={briefOv.gfa_sqm}
+                  onSave={setBrief("gfa_sqm")}
+                  unit="㎡"
+                  step="0.1"
+                  hint="설계 확정 연면적이 있으면 입력 — 분양가능면적도 함께 재산출됩니다"
+                />
+                <EditableTile
+                  label="분양가능면적"
+                  autoText={pyStr(inp?.saleable_area_pyeong)}
+                  value={briefOv.saleable_area_pyeong}
+                  onSave={setBrief("saleable_area_pyeong")}
+                  unit="평"
+                  step="0.1"
+                  hint="공급(분양)면적 기준 · 미입력 시 연면적 × 0.70"
+                />
+                <EditableTile
+                  label="전용률"
+                  autoText={null}
+                  value={briefOv.exclusive_ratio}
+                  onSave={setBrief("exclusive_ratio")}
+                  step="0.001"
+                  hint="전용/공급 (0.30~1.00) · 미입력 시 사례 관례 0.747 — 분양가 환산에 쓰입니다"
+                />
+                {/* ★읽기 전용 유지 — 필지 선택의 **파생값**이라 여기서 덮으면 지도·법규
+                    판정과 조용히 갈린다. 파생값은 상류(필지 선택)에서 고친다. */}
                 <Tile label="필지 수" text={inp?.parcel_count ? `${inp.parcel_count}필지` : null} />
-                <Tile label="사업기간" text={moStr(inp?.project_months)} />
+                <EditableTile
+                  label="사업기간"
+                  autoText={moStr(inp?.project_months)}
+                  value={briefOv.project_months_total}
+                  onSave={setBrief("project_months_total")}
+                  unit="개월"
+                  hint="인허가~준공~분양완료 총 개월"
+                />
               </div>
             </div>
           </section>

@@ -529,6 +529,33 @@ async def build_rough_scenario(
     else:
         degraded.append("면적 또는 실효용적률 미확보 — GFA/공사비/분양수입 산출 불가.")
 
+    # ── 사용자 직접입력(2차 수정) — 건축개요 축 ────────────────────────────────
+    # ★2026-09-07 사용자 요구: *"입력요약의 각 필드별 데이터(건축개요 등)를 직접입력
+    #   선택할 수 있도록"*. 여기 값들은 **설계 산출물이 아니라 개략치(E)** 라서, 실제
+    #   설계·인허가 자료를 가진 사용자가 그것을 넣을 수 있어야 한다.
+    # ★★**정직 강등을 유지한다** — 직접입력이 들어와도 등급을 올리지 않는다. 사용자가
+    #   넣은 값이 «설계 확정»이라는 보장이 없고, 등급을 올리면 개략치와 확정치가 화면에서
+    #   구별되지 않는다(2026-08-23 사용자 검증에서 적발된 그 문제).
+    #   대신 **근거 문자열에 「사용자 직접입력」을 적어** 어디서 온 값인지 되짚게 한다.
+    ov_gfa = _num(overrides.get("gfa_sqm"))
+    if ov_gfa is not None and ov_gfa > 0:
+        gfa_sqm = round(float(ov_gfa), 1)
+        # ★분양가능면적은 GFA 에서 파생된다 — GFA 만 바꾸고 파생값을 안 고치면
+        #   화면의 두 칸이 서로 모순된다(사용자가 그 모순을 본다).
+        saleable_pyeong = round(gfa_sqm * _GFA_TO_SALEABLE_RATIO / _PYEONG_SQM, 1)
+        gfa_precision = PrecisionGrade.ESTIMATED
+        gfa_precision_basis = f"연면적 {gfa_sqm:,.1f}㎡ — **사용자 직접입력**(설계 확정 여부 미검증)"
+        applied.append("gfa_sqm")
+    # 분양가능면적은 GFA 뒤에 적용한다 — 순서가 바뀌면 위 파생이 사용자 값을 덮는다.
+    ov_saleable = _num(overrides.get("saleable_area_pyeong"))
+    if ov_saleable is not None and ov_saleable > 0:
+        saleable_pyeong = round(float(ov_saleable), 1)
+        applied.append("saleable_area_pyeong")
+        if gfa_precision_basis:
+            gfa_precision_basis += " · 분양가능면적 **사용자 직접입력**"
+        else:
+            gfa_precision_basis = "분양가능면적 — **사용자 직접입력**"
+
     # 세대수 가정(리스크시뮬 base 재계산·표시용): GFA ÷ 유형 표준 전용면적(unit_standards SSOT).
     # /baseline 라우트와 동일 관례 — 프론트가 산식을 복제하지 않고 이 값을 그대로 소비한다.
     total_households_assumed: int | None = None
@@ -544,6 +571,17 @@ async def build_rough_scenario(
     # 토지비(탁상감정/공시지가)와 분양단가(주변 실거래/지역시세)는 서로 독립적인 외부호출이라
     # 순차로 기다릴 이유가 없다. 각각 자기 주소 지오코딩으로 자립하므로 asyncio.gather로 동시에
     # 실행해 대기시간을 줄인다. override(2차 수정) 축은 네트워크 없이 즉시 처리한다.
+    # ★전용률 직접입력 — 사례 관례(0.747)와 대상 유형이 다를 때 사용자가 판단한다.
+    #   범위 밖 값은 **버리지 않고 무시하되 그 사실을 강등 노트에** 남긴다(무음 폐기 금지).
+    _ov_exclusive_ratio = _num(overrides.get("exclusive_ratio"))
+    if _ov_exclusive_ratio is not None:
+        if 0.3 <= float(_ov_exclusive_ratio) <= 1.0:
+            applied.append("exclusive_ratio")
+        else:
+            degraded.append(
+                f"전용률 직접입력 {_ov_exclusive_ratio} 은 허용범위(0.30~1.00) 밖 — 미적용.")
+            _ov_exclusive_ratio = None
+
     ov_land = _num(overrides.get("land_cost_won"))
     ov_price = _num(overrides.get("sale_price_per_pyeong"))
     if ov_land is not None:
@@ -584,6 +622,7 @@ async def build_rough_scenario(
         return await _resolve_sale_price_per_pyeong(
             db=db, site_id=site_id, dev_type=dev_type_final, region=region, address=address,
             precision_out=_precision,
+            user_exclusive_ratio=_ov_exclusive_ratio,
         )
 
     land_result, sale_result = await asyncio.gather(_land_leg(), _sale_leg())

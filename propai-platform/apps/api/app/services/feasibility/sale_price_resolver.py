@@ -162,6 +162,7 @@ def _to_supply_per_pyeong_won(
     building_type: str | None,
     prop_type: str,
     premium: float = 1.0,
+    user_ratio: float | None = None,
 ) -> tuple[int, str]:
     """전용 기준 평당가(만원) → **공급 기준 평당가(원)**.
 
@@ -172,6 +173,14 @@ def _to_supply_per_pyeong_won(
     ★`premium` 은 신축 프리미엄. 분양권 전매는 **이미 신축가**라 1.0 이다.
     """
     subj_ratio, subj_note = _exclusive_ratio_for(dev_type, building_type)
+    # ★사용자 직접입력이 **최우선**이다 — 설계·인허가 자료를 가진 사람이 관례보다 낫다.
+    #   ★다만 «어디서 온 값인지» 를 근거에 반드시 적는다(원장에 영속되므로).
+    if user_ratio is not None and 0.3 <= user_ratio <= 1.0:
+        won = int(round(exclusive_per_pyeong_man * user_ratio * premium * 10000))
+        note = f"전용률 {user_ratio} — **사용자 직접입력**"
+        if premium != 1.0:
+            note += f" × 신축 프리미엄 {premium}"
+        return won, note + " → **공급면적 기준** 평당가"
     comp_ratio = _COMPARABLE_SUPPLY_RATIO.get(prop_type)
     if comp_ratio is not None:
         ratio = comp_ratio
@@ -277,6 +286,9 @@ async def _trade_sale_price_per_pyeong(
     *, dev_type: str, address: str, sigungu5: str | None = None,
     building_type: str | None = None,
     cases_out: list[dict[str, Any]] | None = None,
+    # ★사용자 직접입력 전용률(2026-09-07). 키워드 전용·기본 None → 기존 호출부 무회귀.
+    #   §33: 인자는 **뒤에** 넣는다(앞에 넣으면 위치인자 호출부가 조용히 밀린다).
+    user_exclusive_ratio: float | None = None,
 ) -> tuple[int, str, str, None, int] | None:
     """주변 실거래(MOLIT) 직접 조회 → 분양단가(원/평, 공급면적). site_id 불필요(★HIGH-1).
 
@@ -374,7 +386,7 @@ async def _trade_sale_price_per_pyeong(
             if p_scope:
                 price, ratio_note = _to_supply_per_pyeong_won(
                     p_med, dev_type=dev_type, building_type=building_type,
-                    prop_type="apt_presale")
+                    prop_type="apt_presale", user_ratio=user_exclusive_ratio)
                 # ★★2026-09-07 사용자 신고 — *"분양가와 실거래가가 다르고 실거래가는
                 #   8억이 넘는다"*. 라이브 원문을 열어 **이 앵커가 무엇인지**를 재고 근거에
                 #   싣는다. 종전 문장은 값만 말해서, 읽는 사람이 **「현재 시세」로 오독**했다
@@ -432,7 +444,7 @@ async def _trade_sale_price_per_pyeong(
             premium = _PREMIUM["base"]
             price, ratio_note = _to_supply_per_pyeong_won(
                 r_med, dev_type=dev_type, building_type=building_type,
-                prop_type=prop_type, premium=premium)
+                prop_type=prop_type, premium=premium, user_ratio=user_exclusive_ratio)
             basis = (
                 f"신축 실거래(MOLIT · 준공 {yrs}년 이내) {r_scope} 중앙값 {r_med:,}만원/평"
                 f"(전용, 표본 {r_n}건·최근 8개월) × {ratio_note}"
@@ -457,7 +469,7 @@ async def _trade_sale_price_per_pyeong(
     # 전용 평당가(만원) → 공급 평당가(원/평) × 신축 프리미엄.
     price, ratio_note = _to_supply_per_pyeong_won(
         med, dev_type=dev_type, building_type=building_type,
-        prop_type=prop_type, premium=premium)
+        prop_type=prop_type, premium=premium, user_ratio=user_exclusive_ratio)
     basis = (
         f"주변 실거래(MOLIT) {scope} 중앙값 {med:,}만원/평(전용, 표본 {n}건·최근 8개월) × "
         f"{ratio_note}(물건종별 {prop_type})"
@@ -472,6 +484,8 @@ async def _trade_sale_price_per_pyeong(
 async def _resolve_sale_price_per_pyeong(
     *, db: Any, site_id: Any, dev_type: str, region: str, address: str,
     precision_out: dict[str, Any] | None = None,
+    # ★사용자 직접입력 전용률 — 키워드 전용·기본 None(기존 호출부 무회귀).
+    user_exclusive_ratio: float | None = None,
 ) -> tuple[int | None, str, str, str | None]:
     """분양단가(원/평, 공급면적 기준) 결정 — 실거래 1순위, 지역 시세표는 '추정' 폴백.
 
@@ -530,7 +544,8 @@ async def _resolve_sale_price_per_pyeong(
     #     사례를 만들고도 밖으로 안 내보내는 것은 «만들었는데 안 불린다» 그 자체다.
     _cases: list[dict[str, Any]] | None = [] if precision_out is not None else None
     trade = await _trade_sale_price_per_pyeong(
-        dev_type=dev_type, address=address, cases_out=_cases)
+        dev_type=dev_type, address=address, cases_out=_cases,
+        user_exclusive_ratio=user_exclusive_ratio)
     if trade is not None:
         # ★이 리졸버의 **외부 계약은 4-튜플 그대로**다(rough 호출부 무회귀).
         #   표본수는 `_molit_sale_price_source` 만 쓰므로 여기서 벗겨 낸다.

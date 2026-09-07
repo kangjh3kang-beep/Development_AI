@@ -28,6 +28,23 @@ function code(): string {
     .replace(/\/\/.*$/gm, "");
 }
 
+/**
+ * `useCallback` 의 **의존성 배열**만 뽑는다.
+ *
+ * ★★2026-09-07 자체 적발 — 첫 판은 `indexOf("[")` 로 첫 대괄호를 집었는데,
+ *   본문에 구조분해(`([, v]) => …`)가 생기자 **그것을 의존성 배열로 읽었다**.
+ *   조회기가 틀린 것을 코드 결함으로 신고할 뻔했다 → **닫는 형태로** 앵커한다.
+ */
+function buildBodyDeps(src: string): string {
+  const from = src.indexOf("const buildBody");
+  expect(from, "buildBody 를 찾지 못했다 — 조회기 사망").toBeGreaterThan(-1);
+  const tail = src.slice(from);
+  // useCallback(…, [deps]); 의 마지막 인자 — `],` 뒤에 닫는 `)` 가 오는 형태.
+  const m = tail.match(/\n\s*\[([^\]]*)\],?\s*\n\s*\);/);
+  expect(m, "의존성 배열을 찾지 못했다 — 조회기 사망").not.toBeNull();
+  return m![1];
+}
+
 describe("개발유형 배선", () => {
   it("★스캔이 실제 파일을 읽는다(공허진리 차단)", () => {
     expect(code().length).toBeGreaterThan(5000);
@@ -46,9 +63,7 @@ describe("개발유형 배선", () => {
 
   it("★buildBody 의존성에 devTypeOverride 가 있다 — 없으면 낡은 값이 캡처된다", () => {
     const src = code();
-    const dep = src.slice(src.indexOf("const buildBody"));
-    const arr = dep.slice(dep.indexOf("["), dep.indexOf("]") + 1);
-    expect(arr).toContain("devTypeOverride");
+    expect(buildBodyDeps(src)).toContain("devTypeOverride");
   });
 
   it("선택지는 **정본표에서 파생**된다 — 손 목록이 상한이 되지 않게", () => {
@@ -60,6 +75,34 @@ describe("개발유형 배선", () => {
     // 정본이 15유형 전수인지(부분집합 표를 쓰면 선택지가 조용히 줄어든다).
     expect(DEV_TYPE_PRESETS.length).toBe(15);
     expect(new Set(DEV_TYPE_PRESETS.map((p) => p.code)).size).toBe(15);
+  });
+
+  it("★건축개요 직접입력이 payload 에 **합쳐진다** — null 은 키에서 빠진다", () => {
+    const src = code();
+    // null 을 그대로 보내면 백엔드 `_num()` 이 0 으로 읽거나 «지정됨»으로 오해한다.
+    expect(src).toMatch(/Object\.entries\(briefOv\)\s*\.filter\(\s*\(\[,\s*v\]\)\s*=>\s*v\s*!=\s*null\s*\)/);
+    // 기존 overrides 와 **합쳐야** 한다 — 덮으면 2차 수정 패널 값이 사라진다.
+    expect(src).toMatch(/\{\s*\.\.\.\(overrides\s*\?\?\s*\{\}\)\s*,\s*\.\.\.brief\s*\}/);
+    // 의존성에 briefOv 가 없으면 낡은 값이 캡처된다.
+    expect(buildBodyDeps(src)).toContain("briefOv");
+  });
+
+  it("★편집 가능/읽기전용의 **경계**가 유지된다", () => {
+    const src = code();
+    // 파생값(필지 선택의 산출물)은 여기서 덮으면 지도·법규 판정과 갈린다 → 읽기 전용.
+    for (const readonlyLabel of ["통합면적", "용도지역", "실효 용적률", "필지 수"]) {
+      expect(
+        new RegExp(`<Tile\\s+label="${readonlyLabel}"`).test(src),
+        `${readonlyLabel} 이 편집 가능해졌다 — 상류 파생값을 하류에서 덮으면 조용히 갈린다`,
+      ).toBe(true);
+    }
+    // 건축개요 축은 편집 가능해야 한다(공허진리 차단 — 위 검사만 있으면 «전부 읽기전용»이 만점).
+    for (const editable of ["연면적(GFA)", "분양가능면적", "전용률", "사업기간"]) {
+      expect(
+        new RegExp(`<EditableTile\\s+[\\s\\S]{0,80}label="${editable.replace(/[()]/g, "\\$&")}"`).test(src),
+        `${editable} 이 편집 가능하지 않다`,
+      ).toBe(true);
+    }
   });
 
   it("자동 추천을 **끄지 않는다** — 기본 선택지가 빈 값이어야 한다", () => {
