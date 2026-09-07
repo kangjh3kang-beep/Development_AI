@@ -34,13 +34,59 @@ export type FieldAppLaunchResult =
   /** 둘 다 막혔다. 호출부는 기본 이동을 **막으면 안 된다**(같은 창 이동 = 오늘의 동작). */
   | "same";
 
-/** 팝업 크기 — 화면보다 크게 요청하지 않는다(일부 브라우저가 요청을 통째로 무시한다). */
+/**
+ * 팝업 크기 — ★**화면보다 크게 요청하지 않는다.** 일부 브라우저는 화면을 넘는 요청을
+ * 통째로 무시해 크기 지정이 전부 날아간다.
+ *
+ * ★2026-09-08 적대 리뷰 M-4 정정: 종전 판(`Math.max(360, …)`)은 **이 주석을 스스로 깼다** —
+ *   `availWidth=320`(초소형 단말)에서 `w=360 > 320` 이 된다. 하한을 바깥에 두면 상한이 무의미하다.
+ *   **화면 크기로 한 번 더 clamp** 해서 주석이 참이 되게 한다(경계는 양방향으로 건다).
+ *
+ * ★그리고 **치수가 바뀐 것을 선언한다**(종전 인라인은 1440×960, 지금은 1180×900).
+ *   리팩토링 커밋이 *"동작은 동일"* 이라 적었는데 **거짓이었다** — 값이 달랐다.
+ *   현장앱은 모바일 우선 레이아웃이라 1180 이면 충분하고, 넓은 창은 사용자가 늘릴 수 있다.
+ */
+const POPUP_MAX_W = 1180;
+const POPUP_MAX_H = 900;
+const POPUP_MIN_W = 360;
+const POPUP_MIN_H = 480;
+
 function popupFeatures(): string {
-  const w = Math.min(1180, Math.max(360, window.screen?.availWidth ?? 1180));
-  const h = Math.min(900, Math.max(480, window.screen?.availHeight ?? 900));
-  const left = Math.max(0, Math.round(((window.screen?.availWidth ?? w) - w) / 2));
-  const top = Math.max(0, Math.round(((window.screen?.availHeight ?? h) - h) / 2));
+  const availW = window.screen?.availWidth ?? POPUP_MAX_W;
+  const availH = window.screen?.availHeight ?? POPUP_MAX_H;
+  // 하한을 걸되 **화면을 넘지 않게** 다시 clamp — 이 두 번째 clamp 가 주석을 참으로 만든다.
+  const w = Math.min(availW, Math.max(POPUP_MIN_W, Math.min(POPUP_MAX_W, availW)));
+  const h = Math.min(availH, Math.max(POPUP_MIN_H, Math.min(POPUP_MAX_H, availH)));
+  const left = Math.max(0, Math.round((availW - w) / 2));
+  const top = Math.max(0, Math.round((availH - h) / 2));
   return `popup=yes,width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,status=no,resizable=yes,scrollbars=yes`;
+}
+
+/**
+ * ★**클릭을 가로챌 것인가** — 이 판정도 공용이다(2026-09-08 적대 리뷰 M-3).
+ *
+ * 종전엔 `FieldAppLaunchLink` 와 `SidebarNav` 가 **각자** 판정했고 실제로 갈려 있었다:
+ * 한쪽은 `defaultPrevented`·`button` 을 보고 다른 쪽은 안 봤다. 공용화가 «창을 여는 함수»
+ * 까지만 가고 **«무엇을 가로챌지»는 두 벌로 남은** 것이다 — 이 PR 이 막겠다고 선언한 그 형태다.
+ *
+ * ★`button !== 0` 과 `defaultPrevented` 는 **도달 불가일 수 있다**(정직하게 적는다):
+ *   현대 브라우저에서 가운데클릭은 `auxclick`, 우클릭은 `contextmenu` 를 내므로 `click` 의
+ *   `button` 은 사실상 항상 0 이고, 이 앵커에 `preventDefault` 를 부르는 다른 핸들러도 없다.
+ *   **jsdom 으로는 원리적으로 못 재므로 미측정**이다. 방어로 남기되 «실동작한다»고 말하지 않는다.
+ */
+export function shouldInterceptFieldAppClick(e: {
+  button: number;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  defaultPrevented: boolean;
+}): boolean {
+  if (e.defaultPrevented) return false;
+  if (e.button !== 0) return false;
+  // 수식키 클릭은 사용자가 **명시적으로** 새 탭·새 창을 요구한 것이다 — 브라우저에 맡긴다.
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return false;
+  return true;
 }
 
 /**

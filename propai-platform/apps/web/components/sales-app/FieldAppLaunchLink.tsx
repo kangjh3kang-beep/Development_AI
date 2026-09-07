@@ -2,7 +2,7 @@
 
 import type { MouseEvent, ReactNode } from "react";
 
-import { launchFieldApp } from "@/lib/field-app-launch";
+import { launchFieldApp, shouldInterceptFieldAppClick } from "@/lib/field-app-launch";
 
 /**
  * 플랫폼 → 현장앱(분양앱) **진입 링크**. 눌러도 **지금 창을 잃지 않는다.**
@@ -43,10 +43,8 @@ export default function FieldAppLaunchLink({
   onLaunched?: (how: "window" | "tab" | "same") => void;
 }) {
   function handleClick(e: MouseEvent<HTMLAnchorElement>) {
-    // ★사용자가 스스로 새 컨텍스트를 요구한 클릭 — 브라우저에 맡긴다.
-    if (e.defaultPrevented) return;
-    if (e.button !== 0) return; // 가운데·오른쪽 버튼
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    // ★가로챌지 말지는 **공용 판정**을 쓴다(형제 렌더러와 두 벌이 되지 않게).
+    if (!shouldInterceptFieldAppClick(e)) return;
 
     const how = launchFieldApp(href);
     onLaunched?.(how);

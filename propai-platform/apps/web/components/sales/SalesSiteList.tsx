@@ -185,11 +185,13 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
                     className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[var(--line-strong)] px-3 py-2 text-center text-xs font-bold text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]">
                     <Wrench className="size-3.5" aria-hidden /> 관리·설정
                   </Link>
-                  {/* 현장앱 진입은 UUID(s.id)로 2차비번 게이트(/sales/sites/{id}/workspace)로 이동 */}
-                  <Link href={`/${locale}/sales/sites/${s.id}/workspace`}
+                  {/* 현장앱 진입은 UUID(s.id)로 2차비번 게이트(/sales/sites/{id}/workspace)로 이동.
+                      ★이것도 **새 창**이다(2026-09-08 적대 리뷰 M-1) — 같은 헤더의 「내 현장(앱)」만
+                      고치고 여기를 빠뜨렸었다. 목적지가 (fieldapp) 그룹이면 진입 정책은 같다. */}
+                  <FieldAppLaunchLink href={`/${locale}/sales/sites/${s.id}/workspace`}
                     className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--accent-strong)] px-3 py-2 text-center text-xs font-black text-white transition hover:opacity-90">
                     <LockKeyhole className="size-3.5" aria-hidden /> 현장앱 진입
-                  </Link>
+                  </FieldAppLaunchLink>
                 </div>
                 {/* 2차 비밀번호 설정/변경 — 진입 전에 목록에서 직접(닭-달걀 해소). 권한 없으면 403 안내. */}
                 <button
