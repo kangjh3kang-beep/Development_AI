@@ -1141,11 +1141,20 @@ const PRESALE_STATUS_COLORS: Record<string, string> = {
  *
  * @param marketType `MARKET_TRADE_TYPES` 의 key. **모르면 아무것도 찍지 않는다**(무날조 —
  *   «유형 undefined» 같은 문자열을 만들지 않는다).
+ *
+ * ★★**왜 `marketType?` 이 아니라 「필수 + undefined 허용」인가**(변이가 시켰다):
+ *   `?` 로 두자 **호출부가 인자를 다시 빼는 변이가 SURVIVED** 였다 — 함수는 잠갔는데
+ *   **배선 층이 무잠금**이라는 이 저장소의 반복 결함 그대로다. 그런데 그 배선은 Leaflet
+ *   effect 안이라 목이 없는 이 파일에서는 **행위로 태울 수 없다.**
+ *   → **타입 계약으로 기계가 잡게** 만든다: 필수 인자면 누락이 **tsc 에러**(TS2554)이고
+ *     그것은 CI 의 실제 게이트다. 그리고 «다시 `?` 로 바꾸는 것» 은 arity 락이 잡는다
+ *     (`SatongMultiMap.marketPopupType.test.ts` — `marketPopupHtml.length === 3`).
+ *   ★유형을 정말 모르는 호출부는 **`undefined` 를 명시**한다 — 모름을 **말하게** 한다.
  */
 export function marketPopupHtml(
   group: SatongMarketGroup,
   kind: "trade" | "rent",
-  marketType?: string,
+  marketType: string | undefined,
 ): string {
   const avgArea = group.avg_area_m2 ?? 0;
   const pyeong = pyeongFromM2(avgArea);

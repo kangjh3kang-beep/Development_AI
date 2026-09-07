@@ -51,7 +51,8 @@ describe("★신고③ — 팝업이 「무엇의 거래인지」 말한다", ()
 
   it("★★무날조 — 유형을 모르면 **아무것도 찍지 않는다**", () => {
     const 미상 = marketPopupHtml(신고그룹, "trade", "zzz-없는유형");
-    const 무인자 = marketPopupHtml(신고그룹, "trade");
+    // ★인자는 **필수**다(아래 arity 락 참조) — 모르면 `undefined` 를 **명시**한다.
+    const 무인자 = marketPopupHtml(신고그룹, "trade", undefined);
     for (const html of [미상, 무인자]) {
       // 「유형 미상」·「undefined」 같은 말을 지어내면 안 된다 — 모름을 유효값으로 표현하지 않는다.
       expect(html).not.toContain("undefined");
@@ -96,6 +97,15 @@ describe("★신고③ — 팝업이 「무엇의 거래인지」 말한다", ()
     ]) {
       expect(html, 조각).toContain(조각);
     }
+  });
+
+  it("★★배선 락 — 유형 인자가 **필수**다(호출부가 빼면 tsc 가 잡는다)", () => {
+    // ★★이 케이스가 있는 이유: 초판은 `marketType?` 였고, **호출부에서 인자를 빼는 변이가
+    //   SURVIVED** 했다. 함수는 잠갔는데 **배선 층이 무잠금**이라는 반복 결함이다.
+    //   그 배선은 Leaflet effect 안이라 목이 없는 이 파일에서는 **행위로 못 태운다** →
+    //   **타입 계약**으로 옮겼다: 필수 인자면 누락이 tsc 에러(TS2554)이고 CI 가 잡는다.
+    //   여기서는 그 **계약 자체**가 되돌려지지 않는지를 지킨다(`?` 로 바꾸면 length 가 2가 된다).
+    expect(marketPopupHtml.length, "유형 인자가 선택적으로 되돌려졌다 — 호출부 누락이 조용해진다").toBe(3);
   });
 
   // ★부채를 초록 안에 남긴다(§C-13).
