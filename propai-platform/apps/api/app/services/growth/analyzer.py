@@ -659,6 +659,7 @@ async def analyze_window(
         insights.extend(await _analyze_fallback_rate(db, window_start, window_end, coverage))
         insights.extend(await _analyze_selection_contamination(db, window_start, window_end))
         insights.extend(await _analyze_quality_drop(db, window_start, window_end, coverage))
+        insights.extend(await _analyze_payment_funnel(db, window_start, window_end, coverage))
         insights.extend(await _analyze_latency_regression(db, window_start, window_end, coverage))
     except Exception as e:  # noqa: BLE001 — 스캔 실패는 배치를 죽이지 않는다.
         logger.warning("growth analyze 스캔 실패: %s", str(e)[:160])
@@ -932,6 +933,98 @@ async def _analyze_selection_contamination(db, w0, w1) -> list[dict[str, Any]]:
                 "malformed_rows": int(r[3] or 0),
             },
         })
+    return out
+
+
+#: 결제 퍼널 판정 하한 — 분모가 작으면 **판정하지 않는다**(노이즈를 결함으로 읽지 않는다).
+#:  ★그 사실을 `note_coverage` 로 **남긴다** — 「문제가 없었다」와 「판정할 표본이 없었다」는
+#:    다른 사실이고, 보는 사람이 그것을 구별할 수 있어야 한다.
+PAYMENT_FUNNEL_MIN_VIEWS = 10
+
+#: 이탈률 경고 임계 — 주문까지 왔는데 결제 시도로 가지 못한 비율.
+PAYMENT_FUNNEL_DROP_WARN_PCT = 50.0
+
+#: 퍼널 집계 SQL — 모듈 상수로 둬서 테스트가 **런타임 문자열**을 검사할 수 있게 한다.
+#:  ★`funnel` 을 좁힌다 — 다른 퍼널이 생겨도 이 판정이 오염되지 않는다.
+_PAYMENT_FUNNEL_SQL = (
+    "SELECT payload->>'step' AS step, COUNT(*) AS n "
+    "FROM platform_events "
+    "WHERE event_type='funnel_step' "
+    "  AND payload->>'funnel' = 'coin_topup' "
+    "  AND created_at >= :w0 AND created_at < :w1 "
+    # 아는 단계만 — 임의 값이 카디널리티를 늘리지 못하게 한다(형제 `_CONTAM_SQL` 과 같은 규율).
+    "  AND payload->>'step' IN ('view','order_created','pay_window_opened','pay_window_failed') "
+    "GROUP BY 1"
+)
+
+
+async def _analyze_payment_funnel(
+    db, w0, w1, coverage: dict[str, dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
+    """충전 퍼널의 **이탈**을 인사이트로 만든다.
+
+    ## 왜 (2026-09-06 라이브 실측)
+
+    성장루프 인사이트 **200건 전체**에서 `billing`·`payment`·`결제`·`충전` 문자열이
+    **모두 0건**이었다. 결제는 매출의 입구인데 **어디서 새는지 아무도 몰랐다.**
+    프론트의 `funnel_step` 타입은 양쪽 화이트리스트에 **선언만 되고 호출 0건**이었다.
+
+    ★수집만 늘리면 이 저장소가 이미 데인 형태가 된다 — *"이벤트는 쌓이는데 analyzer 는
+      타입별 손수 스캐너만 돌려 새 타입은 **영원히 조회되지 않는다**"*(#797).
+      그래서 **수집(프론트)·판정(여기)·표시(라벨)를 한 커밋에** 넣는다.
+
+    ## 무엇을 판정하고 무엇을 판정하지 않나 (정직한 경계)
+
+    · **판정한다**: 우리 화면 안에서 관측 가능한 이탈 — 주문을 만들었는데 결제 시도로
+      가지 못한 비율, 그리고 결제창이 **뜨지 못한** 횟수.
+    · **판정하지 않는다**: 「사용자가 은행에서 실제로 입금했는가」. 그것은 우리 화면 밖이고,
+      추측으로 채우면 그 수치가 다음 사람의 근거가 된다. 무통장입금의 실제 입금 여부는
+      **관리자 승인**이 유일한 진실이다.
+    """
+    from sqlalchemy import text
+
+    rows = (await db.execute(text(_PAYMENT_FUNNEL_SQL), {"w0": w0, "w1": w1})).fetchall()
+    steps = {str(r[0]): int(r[1] or 0) for r in rows}
+    views = steps.get("view", 0)
+    ordered = steps.get("order_created", 0)
+    opened = steps.get("pay_window_opened", 0)
+    failed = steps.get("pay_window_failed", 0)
+
+    out: list[dict[str, Any]] = []
+    judged = 0
+    withheld_n = 0
+
+    if views < PAYMENT_FUNNEL_MIN_VIEWS:
+        # ★표본 부족은 **결함이 아니다.** 다만 「판정 안 함」을 남긴다.
+        withheld_n = 1
+    else:
+        judged = 1
+        drop_pct = round(100.0 * (ordered - opened) / ordered, 1) if ordered else 0.0
+        # 결제창이 아예 못 뜬 것은 **우리 결함일 가능성이 높다** — 별도로 센다.
+        if failed > 0 or drop_pct >= PAYMENT_FUNNEL_DROP_WARN_PCT:
+            sev = "warn" if failed == 0 else "critical"
+            out.append({
+                "insight_type": "payment_funnel_drop",
+                "severity": sev,
+                "tenant_id": None,
+                # ★자동조치 금지 — 사용자가 마음을 바꾼 것과 우리가 고장 난 것을
+                #   이 지표만으로 가를 수 없다. 사람이 본다.
+                "recommended_action": "none",
+                "metrics_json": {
+                    # ★안정적 판별자 — 승계(retention)의 정체 필드다. 다른 퍼널이 생기면
+                    #   서로 다른 대상이 되어 서로를 닫지 않는다.
+                    "funnel": "coin_topup",
+                    "view": views, "order_created": ordered,
+                    "pay_window_opened": opened, "pay_window_failed": failed,
+                    "order_to_pay_drop_pct": drop_pct,
+                    "drop_warn_pct": PAYMENT_FUNNEL_DROP_WARN_PCT,
+                    # ★관측 경계를 **지표에 적는다** — 다음 사람이 이 수치를
+                    #   「입금까지의 전환율」로 오독하지 않게.
+                    "observation_boundary": "우리 화면 안까지. 실제 입금 여부는 관리자 승인이 진실.",
+                },
+            })
+    note_coverage(coverage, "payment_funnel_drop", judged=judged,
+                  withheld_count=withheld_n, floor=PAYMENT_FUNNEL_MIN_VIEWS)
     return out
 
 

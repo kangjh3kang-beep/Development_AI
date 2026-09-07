@@ -1100,10 +1100,46 @@ async def registry_rights_report(
     data, media_type, ext = render_report(model, req.format)
     logger.info(
         "권리분석 보고서 생성 user=%s 필지=%d fmt=%s bytes=%d",
-        getattr(current_user, "id", None), len(req.items), ext, len(data),
+        # ★CurrentUser 는 `id` 가 아니라 `user_id` 다 — getattr 기본값 때문에 이 로그가
+        #   **항상 user=None** 을 찍고 있었다(2026-09-06 전수 스윕이 잡았다).
+        #   유료 권리분석 보고서 생성인데 **누가 만들었는지 추적 불가**였다.
+        current_user.user_id, len(req.items), ext, len(data),
     )
     return StreamingResponse(
         io.BytesIO(data),
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="propai_rights_report.{ext}"'},
     )
+
+
+@router.post("/rights/ask", summary="권리분석 결과에 대한 추가 질의(LLM · 무과금)")
+@limiter.limit(ai_limiter)
+async def registry_rights_ask(
+    request: Request,
+    req: dict[str, Any],
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """이미 산출된 권리분석 JSON 에 대해 사용자가 원하는 추가 분석을 LLM 으로 받는다.
+
+    ★★**등기부를 새로 발급하지 않는다.** 등기부는 1,200원/필지 유료이고, 저장소가
+      *«실패를 캐시하기 싫으면 **파생물(해석)만** 재계산하라 — 원본을 다시 사지 마라»*
+      를 규율로 남겼다. 추가질의는 **파생물 재계산**이므로 호출부가 **이미 가진**
+      분석 JSON 만 받는다(`tests/test_registry_rights_interpreter_ssot.py` 가
+      해석기의 임포트 그래프로 그 불가능성을 잠근다).
+
+    Body:
+        analysis: 권리분석 결과 JSON(`/registry/get-one` 등이 이미 돌려준 것)
+        question: 사용자 질문(500자 상한, 초과분은 절단)
+
+    Returns:
+        {'ok', 'answer', 'basis', 'caveat'}  — 분석이 미완이면 answer='' + caveat 에 사유.
+    """
+    from app.services.ai.registry_rights_interpreter import RegistryRightsInterpreter
+
+    analysis = req.get("analysis")
+    if not isinstance(analysis, dict):
+        return {"ok": False, "answer": "", "basis": "",
+                "caveat": "권리분석 결과(analysis)가 필요합니다."}
+
+    res = await RegistryRightsInterpreter().answer(analysis, str(req.get("question") or ""))
+    return {"ok": bool(res.get("answer")), **res}
