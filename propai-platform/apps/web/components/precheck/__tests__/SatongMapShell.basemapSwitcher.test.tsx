@@ -11,6 +11,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SatongMapShell } from "@/components/precheck/SatongMapShell";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useProjectStore } from "@/store/useProjectStore";
+import {
+  defaultEnabledLayerIds,
+  defaultSatongMapControls,
+  useSatongMapPrefs,
+} from "@/store/useSatongMapPrefsStore";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ locale: "ko" }),
@@ -52,6 +57,15 @@ function resetStores() {
   act(() => {
     useProjectStore.setState({ projects: [], syncing: false });
     useProjectContextStore.setState({ projectId: null, projectName: "", projectStatus: "", siteAnalysis: null });
+    // ★★2026-09-07 — **지도 설정 스토어가 빠져 있었다.** 종전엔 `cadastre` 가 기본 ON 이라
+    //   레이어를 켜는 테스트가 있어도 «원래 켜져 있음» 과 구별되지 않아 누수가 보이지 않았다.
+    //   기본이 꺼짐이 되자 **앞 테스트가 켠 지적이 다음 테스트로 샜다**(단독 실행은 통과,
+    //   전체 실행은 실패 — 순서 의존의 전형). 여기서 함께 초기화한다.
+    useSatongMapPrefs.setState({
+      enabledLayerIds: defaultEnabledLayerIds(),
+      enabledLayersCustomized: false,
+      controlsByLayer: defaultSatongMapControls(),
+    });
   });
 }
 
@@ -136,8 +150,13 @@ describe("SatongMapShell 베이스맵 스위처(레일 통합)", () => {
   //   대신 "칩이 더 이상 클릭 가능한 button이 아니다"라는 새 계약을 고정해 회귀를 막는다.
   it("★UX C2: 좌상단 활성 레이어 칩은 비인터랙티브 배지다 — button이 아니고 클릭해도 무동작", () => {
     render(<SatongMapShell locale="ko" />);
-    // 지적도는 초기 활성(cadastre 기본 ON)이라 좌상단 칩이 이미 존재한다.
+    // ★2026-09-07 — 종전엔 «지적도는 초기 활성이라 칩이 이미 존재한다» 로 **기본값에 얹혀** 있었다.
+    //   기본이 꺼짐으로 바뀌자 이 테스트가 빨개졌다. **명제(칩은 비인터랙티브 배지)는 그대로**이므로
+    //   ***그 상태를 만들어서*** 검사한다 — 조건부 렌더 요소는 상태를 만들어 태우는 것이 규율이다.
     const railButton = screen.getByRole("button", { name: "지적도" });
+    hoverClick(railButton);
+    fireEvent.click(screen.getByRole("button", { name: /지도에 표시|지도 표시 중/ }));
+    fireEvent.keyDown(window, { key: "Escape" });
 
     // 칩의 접근성 명칭은 레일 버튼과 동일(aria-label="지적도")이지만, 칩은 button 역할이
     // 아니므로 getByRole("button", ...)은 레일 버튼 단 하나만 찾는다(칩=button 2개였다면
@@ -316,11 +335,46 @@ describe("SatongMapShell 레일 — 실이벤트 순서 계약", () => {
     }
   });
 
-  it("★cadastre(지적도)는 on/off 미노출 — 끌 수 없어 토글이 죽은 버튼이 된다", () => {
+  /**
+   * ★★2026-09-07 계약 변경 — 이 락은 **옛 계약을 잠그고 있었다.**
+   *
+   * 종전: *"cadastre 는 on/off 미노출 — 끌 수 없어 토글이 죽은 버튼이 된다"*.
+   * 사용자 신고로 뒤집혔다 — *"지적 경계선이 항상 나타나는데 기본은 없어야 하지 않나?"*
+   * 그리고 「끌 수 없다」의 **사유가 실재하지 않았다**(선택은 지적 타일과 독립).
+   *
+   * ★***락이 옛 계약을 잠그고 있으면 그것은 회귀 신호가 아니라 「낡은 잠금」이다.***
+   *   계약이 바뀌면 락도 바뀐다 — 다만 **무엇이 바뀌었는지 여기 남긴다.**
+   */
+  it("★cadastre(지적도)는 이제 on/off 를 노출한다 — 죽은 버튼이 살아났다", () => {
     render(<SatongMapShell locale="ko" />);
     hoverClick(screen.getByRole("button", { name: "지적도" }));
     expect(screen.getByRole("heading", { level: 3, name: "지적도" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /지도에 표시|지도 표시 중/ })).toBeNull();
+    // ★종전엔 이 버튼이 **없었다**(queryBy → null). 이제 있어야 한다.
+    expect(screen.getByRole("button", { name: /지도에 표시|지도 표시 중/ })).toBeTruthy();
+  });
+
+  it("★★기본은 꺼져 있고, 켜고 끌 수 있다 — 두 모집단을 같은 실행에서", () => {
+    render(<SatongMapShell locale="ko" />);
+    hoverClick(screen.getByRole("button", { name: "지적도" }));
+    // ★공허 진리 가드 — 팝오버가 실제로 열렸는가(대상 부재면 아래가 공허하다).
+    expect(screen.getByRole("heading", { level: 3, name: "지적도" })).toBeTruthy();
+
+    // ① 기본 = 꺼짐. 버튼 문구가 「지도에 표시」(켜라는 권유)여야 한다.
+    const before = screen.getByRole("button", { name: /지도에 표시|지도 표시 중/ });
+    expect(before.textContent).toContain("지도에 표시");
+
+    // ② 켠다 → 문구가 바뀐다(상태가 실제로 움직였는가).
+    fireEvent.click(before);
+    expect(
+      screen.getByRole("button", { name: /지도에 표시|지도 표시 중/ }).textContent,
+    ).toContain("지도 표시 중");
+
+    // ★③ **끈다** — 종전엔 스토어가 같은 참조를 돌려줘 **무동작**이었다.
+    //   한 방향만 보면 「항상 켬」도 통과하므로 두 모집단을 같은 실행에서 본다.
+    fireEvent.click(screen.getByRole("button", { name: /지도에 표시|지도 표시 중/ }));
+    expect(
+      screen.getByRole("button", { name: /지도에 표시|지도 표시 중/ }).textContent,
+    ).toContain("지도에 표시");
   });
 });
 
