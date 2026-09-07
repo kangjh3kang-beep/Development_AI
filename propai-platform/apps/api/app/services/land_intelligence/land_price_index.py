@@ -21,19 +21,53 @@ _ANNUAL_RATE: dict[str, float] = {
 _DEFAULT_RATE = 0.018  # 전국 평균 근사
 
 
-def _lookup_rate(address: str) -> tuple[float, str]:
-    addr = address or ""
-    for sido, rate in _ANNUAL_RATE.items():
-        if sido in addr:
-            return rate, f"{sido} 연 지가변동률 {rate*100:.1f}% 적용"
-    return _DEFAULT_RATE, f"전국 평균 지가변동률 {_DEFAULT_RATE*100:.1f}% 적용"
-
-
 def _sido_of(address: str) -> str:
-    for sido in _ANNUAL_RATE:
-        if sido in (address or ""):
-            return sido
-    return ""
+    """주소 → 시도 **축약키**(해석 실패 시 빈 문자열). 정본 해석기에 위임한다.
+
+    ★왜 위임인가(2026-09-08 · 실측):
+      종전 구현은 축약키(`"전남"`)를 주소에 **부분문자열**로 찾았는데, 정식 행정구역명
+      `"전라남도"` 에는 그 축약형이 **연속으로 없다**(한글은 음절 단위 — `전라남도` 안에
+      `전남` 이라는 연속열이 없다). 정식 시도 **17개 전수 실측: 5개 실패** —
+      충청북도 · 충청남도 · 전라남도 · 경상북도 · 경상남도.
+      (전북·강원·제주는 **특별자치도 개칭** 덕에 우연히 축약형을 포함해 통과했다.)
+
+    ★그리고 그 실패는 조용하지 않았다 — `""` 를 받은 `reb_client.rate_series_from_rows` 가
+      **fail-open** 으로 전국 시계열을 돌려주고, 그것이 「R-ONE 지가변동률 **실데이터**」로
+      라벨링됐다. 라이브 확증: `경상남도`→1.047 과 `zzz없는지역`→1.047 이 **같은 값**이었다
+      (반면 축약형 `경남` 은 판정 거부로 `None`). ⇒ **정식 명칭이 「존재하지 않는 지역」과
+      바이트 동일하게 처리됐다.**
+
+    ★**새로 만들지 않고 정본을 쓴다**(§29 — 없는 것을 만드는 것과 있는 것을 안 쓴 것은
+      처방이 다르다). `tax/regional_tax_data.sido_short_or_empty` 는 같은 입력 전수에서
+      **0/17 실패**이고, 그 모듈은 이미 단련돼 있다:
+        · 후보 순회를 **정렬 튜플**로 고정 — `frozenset` 순회가 `PYTHONHASHSEED` 마다
+          **다른 답**을 내던 CRITICAL 을 봉합한 자리다
+        · `"광주시"`(광주광역시 ↔ 경기도 광주시) 같은 **모호 접두는 판정하지 않는다**
+      그 독스트링이 이미 *"해석기는 **한 자리**에 둔다"* 고 선언했는데 이 모듈이 미이관이었다.
+    """
+    from app.services.tax.regional_tax_data import sido_short_or_empty
+
+    short = sido_short_or_empty(address)
+    # 정본은 17개 시도 전부를 축약키로 돌려준다. 이 모듈의 근사표에 없는 키는 «미해석» 으로 본다
+    # (모름을 유효값으로 표현하지 않는다 — 그 표현이 fail-open 을 먹였다).
+    return short if short in _ANNUAL_RATE else ""
+
+
+def _lookup_rate(address: str) -> tuple[float, str]:
+    """주소 → (연 지가변동률, 사유). 해석 실패면 전국 평균이고 **그렇다고 말한다**.
+
+    ★형제 결함이었다(§D-20 — 처방 범위 = 결함 범위): `_sido_of` 만 고치고 여기를 두면
+      5개 시도가 여전히 `_DEFAULT_RATE` 로 떨어진다. 실측 과대폭(연 변동률 기준):
+      충북·충남 **+38%** · 전남·경남 **+80%** · 경북 **+100%**.
+    """
+    sido = _sido_of(address)
+    if sido:
+        rate = _ANNUAL_RATE[sido]
+        return rate, f"{sido} 연 지가변동률 {rate*100:.1f}% 적용"
+    # ★해석하지 못했다는 사실을 사유에 남긴다 — 「전국 평균」과 「지역을 못 읽었다」는 다른 말이다.
+    return _DEFAULT_RATE, (
+        f"주소에서 시·도를 해석하지 못해 전국 평균 지가변동률 {_DEFAULT_RATE*100:.1f}% 적용"
+    )
 
 
 async def time_adjust_factor_async(address: str = "", base_year: int = 2025) -> dict[str, Any]:

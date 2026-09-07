@@ -193,7 +193,6 @@ def rate_series_from_rows(rows: list[dict[str, Any]], region_sido: str) -> list[
     """변동률(%) 시계열 [(YYYYMM, rate)] 추출 — ITM='변동률'만, 지역(sido→전국 폴백), 시점 오름차순."""
     if not rows:
         return []
-    region_keys = ("CLS_NM", "CLS_FULLNM", "REGION_NM", "REGION")
     val_keys = ("DTA_VAL", "VALUE", "DATA_VALUE", "dtaVal")
     time_keys = ("WRTTIME_IDTFR_ID", "WRTTIME", "PRD_DE")
 
@@ -205,8 +204,18 @@ def rate_series_from_rows(rows: list[dict[str, Any]], region_sido: str) -> list[
             itm = str(row.get("ITM_NM") or "")
             if itm and "변동" not in itm:   # '누계' 등 제외, 변동률만
                 continue
-            region_txt = " ".join(str(row.get(k, "")) for k in region_keys)
-            if region_filter and region_filter not in region_txt:
+            # ★★시도 행은 **정확일치**로 고른다(2026-09-08). 종전에는 `region_filter not in
+            #   region_txt` 였는데 `region_txt` 에 `CLS_FULLNM`(**계층 경로**)이 섞여 있어
+            #   `"경기"` 가 **경기 산하 모든 시군구·동**에 매칭됐다.
+            #
+            #   ★라이브 실측(`/land-price/rone-test` — 저장소가 그 용도로 갖고 있던 진단 경로):
+            #     · `CLS_NM` 은 **축약형 시도명**(`"전남"`) — 시도 행이 **정확일치로 실재**한다
+            #     · `CLS_FULLNM` 은 계층 경로(`"전남광주>전남"` · `"부산>중구"` ·
+            #       `"제주>제주시>일도일동"`) — 한 표에 시도·시군구·**동**이 섞여 있다
+            #   그래서 부분문자열 매칭은 **같은 달의 수십 개 하위지역**을 한 시계열로 모았고,
+            #   소비처는 그것을 「그 지역 24개월」로 읽어 ∏(1+r/100) 로 곱했다
+            #   (라이브: 경기 `yearly 2024 = +80.68%` — 월 최대 0.267%로는 물리적으로 불가).
+            if region_filter and row_region_name(row) != region_filter:
                 continue
             raw = next((row.get(k) for k in val_keys if row.get(k) not in (None, "")), None)
             try:
@@ -219,21 +228,25 @@ def rate_series_from_rows(rows: list[dict[str, Any]], region_sido: str) -> list[
 
     series = _collect(region_sido) if region_sido else []
     if not series:
-        # ★★2026-09-07 라이브 적발 — 이 폴백은 **fail-open 이다(현재형 · 미수정)**.
-        #   ★독립 리뷰 적발(HIGH-6): 종전 주석이 *"…이었다"* 라는 **과거형**이라
-        #     리뷰어·다음 세션이 **해결된 것으로 오독**한다(§C-12 «무잠금과 미수정을
-        #     섞어 쓰지 마라»). 코드는 **바뀌지 않았다** — 아래 줄 그대로다.
-        #   ★왜 안 고쳤나: R-ONE **원시 행의 지역 필드 표기를 확인하지 못했다**(시크릿이
-        #     서버 프로세스에만 있어 조회 불가). 표기를 모르는 채 필터를 손대면 다른 곳이
-        #     샌다. 그래서 **소비처에서 판정 거부**로 막았다(곱셈·배지 두 축).
-        #   ★★남은 소비처(이 fail-open 을 계속 먹는다): `trend_from_rows`(차트) ·
-        #     `rate_series_scope` · `land_price_index.monthly_rate_series_async`.
-        #   `_collect(None)` 은 **모든 지역**을 돌려준다. 지역 필터가 안 맞으면(원천의
-        #   표기가 달라지면) 조용히 전국+17개 시도가 한 시계열로 섞였고, 소비처는 그것을
-        #   「경기 24개월」로 읽었다. 실측: 라이브 시계열 24개의 **기간 고유가 1개**
-        #   (전부 `202607`) — 24개월이 아니라 **같은 달의 24개 지역**이었다.
-        #   그 24개를 ∏(1+r/100) 로 곱해 **1.0414** 를 만들고 채택 단가에 곱했다.
-        series = _collect("전국") or _collect(None)
+        # ★★fail-open 제거(2026-09-08). 종전에는 `_collect("전국") or _collect(None)` 이었고
+        #   그 **`_collect(None)` 이 fail-open** 이었다 — 지역 필터가 안 맞으면 **모든 지역**을
+        #   돌려주고, 소비처는 그것을 「그 지역 24개월」로 읽었다.
+        #
+        #   ★라이브 실측(2026-09-08): `zzz없는지역` 이 누적계수 **1.047** 을 냈다.
+        #     같은 값을 **정식 명칭 `경상남도`** 도 냈다(축약형 `경남` 은 판정 거부로 `None`).
+        #     ⇒ **존재하지 않는 지역이 확신 있는 답을 내고, 진짜 지역은 거부**되고 있었다.
+        #     그 1.047 은 「R-ONE 지가변동률 **실데이터**」로 라벨링돼 감정평가 단가에 곱해졌다.
+        #
+        #   ★종전에 못 고친 이유는 «원시 행의 지역 필드 표기를 확인하지 못해서» 였다.
+        #     이제 실측했다(`/land-price/rone-test` — 저장소가 그 용도로 이미 갖고 있던 진단
+        #     엔드포인트다): `CLS_NM` 은 **축약형**(`"전남"`) · `CLS_FULLNM` 은 **계층 경로**
+        #     (`"전남광주>전남"`) · 한 표에 시도·시군구·**동**이 섞여 있다.
+        #
+        #   ⇒ **전 지역 혼합(`_collect(None)`)은 더 이상 돌려주지 않는다.** 남기는 폴백은
+        #     **실제 「전국」 행**뿐이고, 그것은 `rate_series_scope` 가 «전국» 이라고 **말한다**.
+        #     둘 다 없으면 **빈 시계열**을 돌려준다 — 소비처의 판정 거부가 발화하게(모름을
+        #     유효값으로 표현하지 않는다).
+        series = _collect("전국")
     series.sort(key=lambda x: x[0])
     return series
 
@@ -250,12 +263,30 @@ def rate_series_scope(rows: list[dict[str, Any]], region_sido: str) -> str:
     return "미상(지역 필터 불일치 — 전체 행)"
 
 
+def row_region_name(row: dict[str, Any]) -> str:
+    """행의 **지역명**(축약형 시도명 등)을 뽑는다 — 계층 경로는 쓰지 않는다.
+
+    ★이 헬퍼가 생긴 이유(2026-09-08): 종전에는 `_collect` 와 `_has_region` 이 **각자**
+      `CLS_NM + CLS_FULLNM + …` 를 이어 붙여 부분문자열로 판정했다. 그래서 `"경기"` 가
+      계층 경로 `"경기>수원시"` 에 매칭됐고, `_collect` 만 고치자 **`_has_region` 이 남아**
+      `rate_series_scope` 가 전국 폴백을 받고도 «경기» 라고 말했다(내 락이 그것을 잡았다).
+      ⇒ 판정 규칙을 **한 자리**에 둔다 — 복제하면 두 축이 다시 갈린다.
+    """
+    if not isinstance(row, dict):
+        return ""
+    name = str(row.get("CLS_NM") or "").strip()
+    if name:
+        return name
+    for k in ("REGION_NM", "REGION"):
+        v = str(row.get(k) or "").strip()
+        if v:
+            return v
+    return ""
+
+
 def _has_region(rows: list[dict[str, Any]], needle: str) -> bool:
-    keys = ("CLS_NM", "CLS_FULLNM", "REGION_NM", "REGION")
-    return any(
-        isinstance(row, dict) and needle in " ".join(str(row.get(k, "")) for k in keys)
-        for row in rows or []
-    )
+    """그 지역의 행이 **정확일치**로 실재하는가(계층 경로 경유 과매칭 금지)."""
+    return any(row_region_name(row) == needle for row in rows or [])
 
 
 def distinct_period_count(series: list[tuple[str, float]]) -> int:
