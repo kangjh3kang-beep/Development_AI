@@ -239,11 +239,13 @@ export function FieldDesktopNav({
   const pinned = tabs.filter((t) => !groupedKeys.has(t.key));
 
   // 펼친 그룹 = 사용자가 고른 것 > 활성 탭이 속한 그룹 > 첫 그룹.
-  // ★상태를 하나만 둔다 — 활성 탭이 바뀌면 사용자 선택을 비워 두 값이 어긋나지 않게 한다.
-  const [picked, setPicked] = useState<string | null>(null);
-  useEffect(() => setPicked(null), [activeTab]);
+  // ★사용자 선택을 **그것을 고른 시점의 탭과 함께** 저장한다. 탭이 바뀌면 그 선택은
+  //   저절로 무효가 되므로 `useEffect` 로 비우지 않아도 된다 — effect 안 setState 는
+  //   연쇄 렌더를 만들고, 이 저장소의 lint 래칫이 그것을 게이트로 잡는다(실제로 잡혔다).
+  const [picked, setPicked] = useState<{ tab: string; title: string } | null>(null);
+  const pickedTitle = picked?.tab === activeTab ? picked.title : null;
   const activeGroupTitle = groups.find((g) => g.items.some((t) => t.key === activeTab))?.title ?? null;
-  const openTitle = picked ?? activeGroupTitle ?? groups[0]?.title ?? null;
+  const openTitle = pickedTitle ?? activeGroupTitle ?? groups[0]?.title ?? null;
   const open = groups.find((g) => g.title === openTitle) ?? null;
 
   return (
@@ -280,7 +282,7 @@ export function FieldDesktopNav({
             <button
               key={g.title}
               type="button"
-              onClick={() => setPicked(g.title)}
+              onClick={() => setPicked({ tab: activeTab, title: g.title })}
               aria-expanded={isOpen}
               data-open={isOpen}
               data-holds-active={holdsActive}

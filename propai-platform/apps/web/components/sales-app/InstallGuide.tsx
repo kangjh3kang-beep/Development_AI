@@ -13,6 +13,7 @@
 import { useMemo, useState } from "react";
 import { Smartphone } from "lucide-react";
 import { usePwaRuntime } from "@/components/pwa/PwaRuntimeProvider";
+import { useFieldAppShell } from "@/lib/field-app-shell";
 
 function isIos(): boolean {
   if (typeof navigator === "undefined") return false;
@@ -24,15 +25,21 @@ function isIos(): boolean {
 }
 
 export default function InstallGuide() {
-  const { installState, standalone, requestInstall } = usePwaRuntime();
+  const { installState, requestInstall } = usePwaRuntime();
+  // ★가드를 자기 것으로 들지 않는다 — 셸 헤더 버튼과 **같은 판별자**를 쓴다(DESIGN.md B3.3).
+  //   종전엔 이 컴포넌트만 standalone 을 보고 헤더 버튼은 아무 조건도 없어, 앱 안에서
+  //   한쪽만 사라졌다.
+  const { standalone, inAppShell } = useFieldAppShell();
   const [iosOpen, setIosOpen] = useState(false);
   const ios = useMemo(() => isIos(), []);
 
-  // 이미 설치(앱 실행 중)면 안내 불필요.
-  if (standalone) {
+  // 이미 앱 안(설치 실행 또는 별도 창)이면 설치 안내 불필요.
+  if (inAppShell) {
     return (
       <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/5 px-4 py-3 text-sm font-bold text-emerald-300">
-        ✓ 앱으로 실행 중입니다. 홈 화면 아이콘으로 빠르게 접속할 수 있어요.
+        {standalone
+          ? "✓ 앱으로 실행 중입니다. 홈 화면 아이콘으로 빠르게 접속할 수 있어요."
+          : "✓ 별도 창으로 실행 중입니다. 홈 화면에 추가하면 주소창 없이 앱처럼 쓸 수 있어요."}
       </div>
     );
   }

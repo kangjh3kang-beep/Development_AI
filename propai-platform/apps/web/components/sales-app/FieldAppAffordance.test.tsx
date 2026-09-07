@@ -1,0 +1,105 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen } from "@testing-library/react";
+import FieldAppAffordance from "@/components/sales-app/FieldAppAffordance";
+import { FIELD_APP_WINDOW_NAME } from "@/lib/field-app-shell";
+
+/**
+ * ★L3·L4·L5 — 앱 어포던스 계약(2026-09-07 사용자 신고 봉합).
+ *
+ * 종전엔 이 단추에 **조건이 하나도 없어** 앱 안에서도 계속 떴고, 그것을 태우는 락이 **0건**이었다.
+ * 전부 **두 모집단**으로 건다 — "안 보인다"만 단언하면 아무것도 렌더하지 않는 구현이 만점을 받는다.
+ *
+ * ★`useFieldAppShell`(공용 판별자)은 **모킹하지 않는다**. 브라우저 런타임(usePwaRuntime)만
+ *   갈아 끼우고 판별 로직은 실물을 태운다 — 스텁이 검증 대상 층을 우회하지 않게.
+ */
+
+const runtime = {
+  installState: "unavailable" as "unavailable" | "available",
+  standalone: false,
+  requestInstall: vi.fn(),
+};
+
+vi.mock("@/components/pwa/PwaRuntimeProvider", () => ({
+  usePwaRuntime: () => runtime,
+}));
+
+beforeEach(() => {
+  runtime.installState = "unavailable";
+  runtime.standalone = false;
+  runtime.requestInstall = vi.fn();
+  window.name = "";
+});
+
+afterEach(() => {
+  window.name = "";
+  vi.restoreAllMocks();
+});
+
+describe("L3 — 설치 실행 중이면 사라진다(두 모집단)", () => {
+  it("standalone=false → 단추가 **보인다**", () => {
+    render(<FieldAppAffordance />);
+    expect(screen.getByRole("button")).toBeTruthy();
+  });
+
+  it("standalone=true → **아무것도 렌더하지 않는다**", () => {
+    runtime.standalone = true;
+    const { container } = render(<FieldAppAffordance />);
+    expect(container.firstChild).toBeNull();
+  });
+});
+
+describe("L4 — 별도 창 안에서도 사라진다(두 모집단)", () => {
+  it("window.name 미설정 → 단추가 **보인다**", () => {
+    render(<FieldAppAffordance />);
+    expect(screen.getByRole("button")).toBeTruthy();
+  });
+
+  it("window.name 이 앱 창 이름 → **아무것도 렌더하지 않는다**", () => {
+    window.name = FIELD_APP_WINDOW_NAME;
+    const { container } = render(<FieldAppAffordance />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("★다른 이름의 창은 앱 안이 **아니다** — 판별이 과하게 넓어지지 않는다", () => {
+    window.name = "some-other-window";
+    render(<FieldAppAffordance />);
+    expect(screen.getByRole("button")).toBeTruthy();
+  });
+});
+
+describe("L5 — 라벨이 실제 동작과 일치한다", () => {
+  it("설치 프롬프트 가능 → 「앱 설치」를 먼저 권한다", () => {
+    runtime.installState = "available";
+    render(<FieldAppAffordance />);
+    expect(screen.getByRole("button", { name: /앱 설치/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /별도 창/ })).toBeNull();
+  });
+
+  it("설치 불가 → 「별도 창으로 열기」", () => {
+    render(<FieldAppAffordance />);
+    expect(screen.getByRole("button", { name: /별도 창으로 열기/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /앱 설치/ })).toBeNull();
+  });
+
+  it("★「앱으로 열기」라고 부르지 않는다 — window.open 은 앱이 아니다(주소창이 남는다)", () => {
+    render(<FieldAppAffordance />);
+    // 두 모집단: 거짓 라벨은 없고(↓), 참인 라벨은 있다(↑ 위 케이스).
+    expect(screen.queryByText(/앱으로 열기/)).toBeNull();
+  });
+});
+
+describe("★여는 이름과 판별 이름이 같은 상수다(어긋나면 앱 안 판별이 조용히 죽는다)", () => {
+  it("window.open 의 창 이름 == FIELD_APP_WINDOW_NAME · 지키지 못할 location=no 를 넣지 않는다", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue({ focus: vi.fn() } as unknown as Window);
+    render(<FieldAppAffordance />);
+    screen.getByRole("button", { name: /별도 창으로 열기/ }).click();
+
+    expect(open).toHaveBeenCalled();
+    const [, name, features] = open.mock.calls[0];
+    expect(name).toBe(FIELD_APP_WINDOW_NAME);
+    // ★현대 브라우저가 무시하는 옵션을 약속하지 않는다(주석이 거짓이 된 원래 결함).
+    expect(String(features)).not.toContain("location=no");
+    // 대조군 — features 자체는 비어 있지 않다(단언이 공허하지 않다).
+    expect(String(features)).toContain("popup=yes");
+  });
+});

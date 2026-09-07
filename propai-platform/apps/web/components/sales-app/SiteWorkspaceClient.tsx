@@ -12,7 +12,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { AppWindow, Dices, Map, Radio, WifiOff, Wrench } from "lucide-react";
+import { Dices, Map, Radio, WifiOff, Wrench } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { getStoredSiteToken, clearSiteToken, salesApi } from "@/lib/salesApi";
 import SiteEnterModal from "@/components/sales-app/SiteEnterModal";
@@ -58,6 +58,7 @@ import InstallGuide from "@/components/sales-app/InstallGuide";
 import FieldHome from "@/components/sales-app/FieldHome";
 // 모바일 하단 5탭+전체메뉴 시트(디자인 핸드오프 P0#2) — 데스크톱은 기존 상단 탭바.
 import { FieldBottomNav, FieldDesktopNav, FieldMenuSheet } from "@/components/sales-app/FieldNav";
+import FieldAppAffordance from "@/components/sales-app/FieldAppAffordance";
 import { captureLandingRef } from "@/lib/referralRef";
 
 interface RoleResponse {
@@ -234,7 +235,7 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
             </div>
           </div>
 
-          {/* 액션 그룹 — 우측 정렬. 주요(동·호표/비번설정)와 보조(앱으로 열기) 구분. */}
+          {/* 액션 그룹 — 우측 정렬. 주요(동·호표/비번설정)와 보조(앱 어포던스) 구분. */}
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {!loading && role && tab === "units" && (
               <button
@@ -252,25 +253,10 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
                 <Wrench className="size-4" aria-hidden /> 현장 비밀번호 설정
               </button>
             )}
-            {/* 앱으로 열기 — 진짜 '별도 창(앱 모드)'. 새 탭이 아니라 브라우저 크롬 없는 팝업
-                윈도우로 띄워(메뉴/툴바/주소창 숨김) 독립 앱처럼 사용. 화면 중앙 배치. */}
-            <button
-              onClick={() => {
-                if (typeof window === "undefined") return;
-                const w = Math.min(1440, window.screen.availWidth - 40);
-                const h = Math.min(960, window.screen.availHeight - 40);
-                const left = Math.max(0, Math.round((window.screen.availWidth - w) / 2));
-                const top = Math.max(0, Math.round((window.screen.availHeight - h) / 2));
-                const feat = `popup=yes,width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
-                const win = window.open(window.location.href, "propai-field-app", feat);
-                // 팝업 차단되면 새 탭 폴백(기능 보존).
-                if (!win) window.open(window.location.href, "_blank", "noopener,noreferrer");
-                else win.focus();
-              }}
-              className="inline-flex min-h-[40px] items-center gap-1 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3.5 text-xs font-black text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)] active:scale-95"
-            >
-              <AppWindow className="size-4" aria-hidden /> 앱으로 열기
-            </button>
+            {/* 앱 어포던스 — 판정은 컴포넌트가 한다(셸은 배선만).
+                ★이미 앱 안이면 아무것도 내지 않는다 · 설치 가능하면 설치를 먼저 권한다
+                · 별도 창은 앱이 아니므로 그렇게 부르지 않는다(DESIGN.md B3.3). */}
+            <FieldAppAffordance />
           </div>
         </div>
       </header>
