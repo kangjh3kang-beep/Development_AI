@@ -41,6 +41,7 @@ import {
   type SatongMapLayerState,
   type VWorldBaseLayer,
   zoneColor,
+  satongParcelBaseVisible,
   satongSelectionLabelsVisible,
 } from "@/lib/satong-map-layers";
 import {
@@ -623,6 +624,49 @@ export function buildAgeGapDetail(counts: {
  * 켜져 있는 레이어는 자료가 0건이어도 반드시 '무자료'로 표기한다
  * (지적 포함 — 켰는데 아무 표기가 없으면 사용자가 자료 부재를 알 수 없다).
  */
+/**
+ * 오버레이 **판정**(무엇을 그릴지) — Leaflet effect 밖에서 잴 수 있도록 순수 함수로 둔다.
+ *
+ * ★★2026-09-07(적대 리뷰 MAJOR-1·MAJOR-3) — 이 함수가 생긴 이유는 두 가지다.
+ *
+ * ① **축이 틀렸다.** `showCadastre` 는 종전에 `hasSatongLayer(state,"cadastre")` 였는데,
+ *    여기서 그리는 것은 「지적 경계선」(= 전체 필지 그물망 · WMS 타일 · `showCadastreTile`)이
+ *    아니라 **사용자가 고른 필지의 폴리곤**이다. 지적이 **항상 켜져 있던 동안**엔 그 차이가
+ *    보이지 않았다. 기본을 끔으로 바꾸자 `needsOverlay === false` 가 되어 **조기반환**했고,
+ *    등록한 필지가 통째로 사라지며 안내문마저 빈 문자열이 됐다(**무음**).
+ *    ★그 자리를 대신 그려 주는 것이 없다 — 같은 파일이 staged 임시 레이어를 걷어내며
+ *      *"기등록 필지는 **경계 오버레이가 이미 그리므로**"* · *"(**경계 오버레이가 대신 그린다**)"*
+ *      라고 **두 번** 적어 뒀다. 그 «대신»이 바로 여기다.
+ *
+ * ② **effect 안의 판정은 잠글 수 없다.** 이 저장소엔 Leaflet 목이 없어 그 effect 가 테스트에서
+ *    한 번도 돌지 않는다 — 적대 리뷰가 그 자리에 `false` 변이를 넣었더니 **64파일 468건이
+ *    전부 초록**이었다(`::VERDICT=SURVIVED`). 판정을 밖으로 꺼내면 변이가 여기에 떨어진다.
+ */
+export function resolveSatongOverlayPlan(layerState: SatongMapLayerState | undefined): {
+  showCadastre: boolean;
+  showZoning: boolean;
+  showPrice: boolean;
+  showAge: boolean;
+  showCapacity: boolean;
+  needsOverlay: boolean;
+} {
+  const showCadastre = satongParcelBaseVisible(layerState);
+  const showZoning = hasSatongLayer(layerState, "zoning") && hasSatongLayerControl(layerState, "zoning", "land-use");
+  const showPrice =
+    hasSatongLayer(layerState, "official-price") && hasSatongLayerControl(layerState, "official-price", "unit-price");
+  const showAge = hasSatongLayer(layerState, "age") && hasSatongLayerControl(layerState, "age", "building-age");
+  const showCapacity =
+    hasSatongLayer(layerState, "capacity") && hasSatongLayerControl(layerState, "capacity", "far-headroom");
+  return {
+    showCadastre,
+    showZoning,
+    showPrice,
+    showAge,
+    showCapacity,
+    needsOverlay: showCadastre || showZoning || showPrice || showAge || showCapacity,
+  };
+}
+
 export function buildOverlayNotes(counts: OverlayNoteCounts): string {
   const notes: string[] = [];
   if (counts.showCadastre) notes.push(counts.cadastreCount ? `지적 ${counts.cadastreCount}건` : "지적 무자료");
@@ -2283,12 +2327,12 @@ export function SatongMultiMap({
       overlayLayerRef.current = null;
     }
 
-    const showCadastre = hasSatongLayer(layerState, "cadastre");
-    const showZoning = hasSatongLayer(layerState, "zoning") && hasSatongLayerControl(layerState, "zoning", "land-use");
-    const showPrice = hasSatongLayer(layerState, "official-price") && hasSatongLayerControl(layerState, "official-price", "unit-price");
-    const showAge = hasSatongLayer(layerState, "age") && hasSatongLayerControl(layerState, "age", "building-age");
-    const showCapacity = hasSatongLayer(layerState, "capacity") && hasSatongLayerControl(layerState, "capacity", "far-headroom");
-    const needsOverlay = showCadastre || showZoning || showPrice || showAge || showCapacity;
+    // ★★2026-09-07 — 판정을 **순수 함수로 뽑았다**(`resolveSatongOverlayPlan`). effect 안에
+    //   두면 Leaflet 없이는 태울 수 없어 **어떤 변이든 생존**한다(적대 리뷰가 실증: 이 자리의
+    //   `false` 변이가 64파일 468건 초록을 그대로 통과했다). 형제 `buildOverlayNotes` 가
+    //   이미 같은 이유로 export 된 순수 함수다.
+    const { showCadastre, showZoning, showPrice, showAge, showCapacity, needsOverlay } =
+      resolveSatongOverlayPlan(layerState);
 
     if (!needsOverlay || overlayFeatures.length === 0) {
       // ★레이어는 켜졌는데 그릴 필지가 0 → 침묵 blank 대신 명확 안내(활성배지-무반영 모순 해소).

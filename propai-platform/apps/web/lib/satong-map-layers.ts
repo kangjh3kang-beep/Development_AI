@@ -151,6 +151,62 @@ export function hasSatongLayerControl(
 export const SATONG_SELECTION_LABEL_CONTROL_IDS = ["selected", "selected-parcel"] as const;
 
 /**
+ * 선택·등록 필지의 **기본 폴리곤**을 그릴지.
+ *
+ * ★★2026-09-07 — 이 함수가 생긴 이유(적대 리뷰 MAJOR-1 · 실측):
+ *   `SatongMultiMap.tsx` 의 오버레이 effect 는 그 폴리곤을 **`hasSatongLayer(state,"cadastre")`
+ *   로 가드**하고 있었다. 지적이 **항상 켜져 있던 동안**에는 그것이 보이지 않았다.
+ *   지적 기본값을 끔으로 바꾸자 `needsOverlay === false` 가 되어 **조기반환**하고,
+ *   등록한 필지의 폴리곤이 **통째로 사라지며 안내문마저 빈 문자열**이 됐다.
+ *   ★그 자리를 대신 그려 주는 것도 없다 — 같은 파일이 staged 임시 레이어를 걷어내면서
+ *     *"기등록 필지는 **경계 오버레이가 이미 그리므로**"* · *"(**경계 오버레이가 대신 그린다**)"*
+ *     라고 **두 번** 적어 뒀다.
+ *
+ * ★축이 틀렸던 것이다: 그 폴리곤은 「지적 경계선」(전체 필지 그물망 = WMS 타일)이 아니라
+ *   **«사용자가 고른 것»의 렌더**다. 레이어 on/off 와 묶일 이유가 없다.
+ *
+ * ★형제 `satongSelectionLabelsVisible` 과 **같은 판정 구조**를 쓴다(§29 — 없는 것을 새로
+ *   만들지 말고 형제를 먼저 보라). 「선언했는가」를 먼저 묻는 이유도 같다: 호출부 일부는
+ *   cadastre 컨트롤을 **선언하지 않으며** 그 화면에는 되켤 UI 가 없다.
+ */
+/**
+ * 「필지 경계」 컨트롤 id — ★형제 `SATONG_SELECTION_LABEL_CONTROL_IDS` 와 **같은 두 벌 문제**다.
+ *   · `SatongMapShell`(정본 스토어 기본값)          : `"boundary"`
+ *   · `ZoningSignalMap` · `ParcelBoundaryMap`      : `"parcel-boundary"`
+ *
+ * ★★2026-09-07 — 이 상수가 없었으면 **내가 새 회귀를 만들 뻔했다.** `satongParcelBaseVisible`
+ *   초판이 `declared.includes("boundary")` 한 줄이었는데, 위 두 화면은 `"parcel-boundary"` 만
+ *   선언한다 → base 폴리곤이 **그 두 화면에서 사라진다**. 종전엔 그 화면들이 `cadastre` 를
+ *   `enabledLayerIds` 에 담고 있어 `hasSatongLayer` 로 참이었다.
+ *   ★형제 상수가 **이미 같은 함정을 기록해 두고 있었다**(§29 — 형제를 먼저 봐라).
+ *   어휘 통합은 별건이고, 여기서 닫힌 집합으로 못 박아 **세 번째 어휘**를 테스트가 막는다.
+ */
+export const SATONG_PARCEL_BOUNDARY_CONTROL_IDS = ["boundary", "parcel-boundary"] as const;
+
+/**
+ * cadastre 컨트롤 중 **레이어 on/off 와 독립으로 렌더되는** 것들.
+ *
+ * ★2026-09-07(적대 리뷰 MAJOR-2) — 이 목록이 필요한 이유: `handleLayerControlClick` 이
+ *   `mapEffect` 컨트롤을 누를 때마다 **무조건** `ensureLayerEnabled(layerId)` 를 부른다.
+ *   지적을 **끌 수 없던 동안**에는 그것이 무해했다. 이제 끌 수 있으므로, 방금 끈 사용자가
+ *   이 컨트롤을 누르면 **레이어가 도로 켜진다** — 「끌 수 없다」는 신고의 재생이다.
+ * ★**손으로 나열하지 않는다**(§«목록은 곧 상한») — 각 원소는 «그 컨트롤을 읽는 판정 함수»
+ *   에서 파생한다: `boundary` ← satongParcelBaseVisible · 라벨 ids ← satongSelectionLabelsVisible.
+ */
+export const SATONG_CADASTRE_LAYER_INDEPENDENT_CONTROL_IDS = [
+  ...SATONG_PARCEL_BOUNDARY_CONTROL_IDS,
+  ...SATONG_SELECTION_LABEL_CONTROL_IDS,
+] as const;
+
+export function satongParcelBaseVisible(state: SatongMapLayerState | undefined): boolean {
+  const declared = state?.controlsByLayer?.cadastre;
+  // 선언 없음 = 끄는 수단이 없는 화면 → 종전대로 항상 표시.
+  if (!declared) return true;
+  // ★어휘가 **두 벌**이다 — 한쪽만 보면 다른 벌을 쓰는 두 화면에서 폴리곤이 사라진다.
+  return SATONG_PARCEL_BOUNDARY_CONTROL_IDS.some((id) => declared.includes(id));
+}
+
+/**
  * 선택 필지 **라벨**을 표시할지 — ★기본은 표시, 끌 수 있는 것은 **컨트롤을 제공하는 화면뿐**.
  *
  * ★왜 `hasSatongLayerControl(state, "cadastre", "selected")` 한 줄이 아닌가:

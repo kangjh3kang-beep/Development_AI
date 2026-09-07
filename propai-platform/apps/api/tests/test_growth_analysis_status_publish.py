@@ -186,7 +186,8 @@ def test_analyze_window_calls_the_publisher(monkeypatch):
                  "_analyze_selection_contamination"):
         async def _empty(*a, **k): return []
         monkeypatch.setattr(A, name, _empty)
-    for name in ("_analyze_fallback_rate", "_analyze_quality_drop", "_analyze_latency_regression"):
+    for name in ("_analyze_fallback_rate", "_analyze_quality_drop", "_analyze_latency_regression",
+                 "_analyze_payment_funnel"):
         async def _empty_cov(db, w0, w1, cov, _n=name):
             cov[_n.replace("_analyze_", "")] = {"judged": 0, "total": 0, "floor": 5}
             return []

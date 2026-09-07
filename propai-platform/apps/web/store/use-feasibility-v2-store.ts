@@ -38,6 +38,13 @@ export interface FeasibilityInput {
   /** ★사용자 단위는 **평당**. ㎡ 변환은 `lib/construction-cost-params` 한 곳에서만. */
   unit_cost_per_pyeong?: number | null;
   construction_cost_override_won?: number | null;
+  // ★기타경비 항목별 직접입력. **비우면 표준분이 그 항목 몫만큼 살아남는다** —
+  //   종전엔 하나만 입력해도 표준 7% 가 통째로 죽어 −98.7% 였다(백엔드 실측).
+  marketing_cost_won?: number | null;
+  management_cost_won?: number | null;
+  reserve_cost_won?: number | null;
+  /** ★토지비 직접입력(총액·원). 주면 공시지가×배율 산출을 **대체**한다. */
+  land_cost_override_won?: number | null;
   params: Record<string, unknown>;
 }
 
@@ -258,6 +265,10 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
           structure_type: base.structure_type,
           unit_cost_per_pyeong: base.unit_cost_per_pyeong,
           construction_cost_override_won: base.construction_cost_override_won,
+          marketing_cost_won: base.marketing_cost_won,
+          management_cost_won: base.management_cost_won,
+          reserve_cost_won: base.reserve_cost_won,
+          land_cost_override_won: base.land_cost_override_won,
         });
         const params = {
           ...(base.params ?? {}),

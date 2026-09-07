@@ -120,7 +120,14 @@ async def test_trade_per_pyeong_기본은_기존_shape_불변(monkeypatch):
     rows = [_row(dong="역삼동", price=50000, area=84.0)]
     monkeypatch.setattr(MolitClient, "get_transactions", _StubMolitRows(rows))
     result = await _trade_per_pyeong("11680", "역삼동", "apt")
-    assert set(result.keys()) == {"dong", "sigungu"}  # collect_cases=False → cases 키 없음
+    # ★★락의 **의도**는 «`collect_cases=False` 면 `cases` 키가 안 생긴다»인데(옆 주석이 그렇게
+    #   적고 있다), 집합 **동등**으로 써서 **모든 키 추가**를 막았다. 그래서 신축(최근
+    #   건축년도) 축을 더했을 때 **유일하게 실패**했다 — **결함이 아니라 성장**이다.
+    #   ★`test_6개_유형` 과 같은 형태(개수/집합 동등이 정당한 추가를 막는다).
+    #   → **의도한 것만** 잠근다: ①`cases` 는 없다 ②기존 두 키는 **살아 있다**.
+    assert "cases" not in result, "collect_cases=False 인데 사례가 실렸다"
+    for k in ("dong", "sigungu"):
+        assert k in result, f"기존 키 `{k}` 가 사라졌다 — 소비처가 깨진다"
     assert result["dong"]["n"] == 1
 
 
@@ -352,9 +359,19 @@ async def test_precision_경로_molit_수집_8회_재수집없음(monkeypatch):
     )
     assert res["data_source"] == "live"
     assert "trade_cases" in res
-    assert stub.call_count == 8  # suggest_base_price 내부 1회 수집분(8개월)
+    # ★★락의 **의도**는 «같은 데이터를 두 번 긁지 않는다»(재수집 0)이지 «총량이 8» 이 아니다.
+    #   2026-09-06 에 **분양권 전매**(다른 엔드포인트)를 앵커 계단에 넣어 8 → 16 이 됐다 —
+    #   **재수집이 아니라 새 데이터원**이다. ★그래도 호출이 배로 는 것은 실해(쿼터·지연)라
+    #   뭉개지 않고 **상한**으로 잠근다. 그리고 진짜 계약(아래 «assemble 이후 불변»)은 그대로다.
+    after_suggest = stub.call_count
+    assert after_suggest <= 16, (
+        f"MOLIT 호출이 {after_suggest}회 — 앵커 계단이 조용히 늘었는지 확인하라"
+        " (매매 8 + 분양권 8 이 상한이다)")
 
     bundle = await assemble_market_precision(res)
 
-    assert stub.call_count == 8  # ★핵심: assemble_market_precision 이후에도 그대로 8(재수집 없음)
+    # ★★진짜 계약 — **assemble 이 한 번도 더 안 긁는다**(재수집 0). 이것이 이 테스트의 본체다.
+    assert stub.call_count == after_suggest, (
+        f"assemble_market_precision 이 MOLIT 를 **재수집**했다: "
+        f"{after_suggest} → {stub.call_count}")
     assert bundle["comparable_set"]["included_count"] >= 1
