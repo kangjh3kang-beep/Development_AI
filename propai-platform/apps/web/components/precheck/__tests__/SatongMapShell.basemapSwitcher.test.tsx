@@ -8,7 +8,16 @@ import type { ReactNode } from "react";
 import { fireEvent, render, screen, act } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SatongMapShell } from "@/components/precheck/SatongMapShell";
+import {
+  SatongMapShell,
+  SATONG_MAP_SHELL_LAYERS,
+  SATONG_BASEMAP_SWITCHES as BASEMAP_SWITCHES,
+} from "@/components/precheck/SatongMapShell";
+import {
+  isRenderableSatongMapLayer,
+  resolveVWorldBaseLayer,
+  type SatongMapLayerState,
+} from "@/lib/satong-map-layers";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import {
@@ -279,11 +288,17 @@ describe("SatongMapShell 레일 — 팝오버 배타·닫힘 계약", () => {
     expect(screen.queryByRole("heading", { level: 3, name: "용도지역" })).toBeNull();
   });
 
-  it("★terrain(지형도·항공뷰)은 on/off를 노출하지 않는다 — 끄면 베이스맵이 조용히 롤백되고 라벨이 거짓이 된다", () => {
+  // ★★2026-09-07(사용자 신고②) — 종전 계약은 *"terrain 은 on/off 를 노출하지 않는다"* 였고
+  //   사유는 *"끄면 베이스맵이 조용히 롤백되고 라벨이 거짓이 된다"* 였다. **사유는 여전히 참**이다.
+  //   달라진 것은 처방이다 — 토글을 **숨기는 대신** 레일 항목 자체를 없앴다(그 항목이 베이스맵
+  //   스위처의 **복제본**이었다). 끌 수 있는 UI 가 존재하지 않으므로 롤백도 도달 불가다.
+  //   ⇒ 명제를 **더 강한 형태로 교체**한다: 「토글이 없다」 → 「레일에 없다」.
+  it("★terrain 은 레일 레이어가 **아니다** — 끄는 UI 자체가 없어 베이스맵 롤백이 도달 불가다", () => {
+    expect(SATONG_MAP_SHELL_LAYERS.some((l) => l.id === "terrain")).toBe(false);
     render(<SatongMapShell locale="ko" />);
-    hoverClick(screen.getByRole("button", { name: /지형도·항공뷰/ }));
-    expect(screen.getByRole("heading", { level: 3, name: "지형도·항공뷰" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /지도에 표시|지도 표시 중/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /지형도·항공뷰/ })).toBeNull();
+    // ★대조군 — 레일 자체는 살아 있다(조회기 생존). 이게 없으면 «전부 사라짐»도 통과한다.
+    expect(screen.getByRole("button", { name: /지적도/ })).toBeTruthy();
   });
 });
 
@@ -537,4 +552,177 @@ describe("SatongMapShell 레일 — 전환 vs 완전닫힘(HIGH-3·Q2-c)", () =>
       expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
     } finally { vi.useRealTimers(); }
   });
+});
+
+/**
+ * ★★사용자 신고②(2026-09-07) — 「베이스맵」과 「지형도·항공뷰」가 **같은 컨트롤**이었다.
+ *
+ * 실측(계획서 §1): 컨트롤 id 4/5 동일 · 같은 `handleLayerControlClick("terrain", …)` ·
+ * 같은 `controlsByLayer.terrain` · 같은 `resolveVWorldBaseLayer()`. **라벨만 둘이었다.**
+ * ★목은 이 파일이 이미 갖고 있다 — 새 파일에 복제하지 않고 형제에 합친다(§29).
+ */
+describe("★신고② — 베이스맵의 단일 소유자", () => {
+  beforeEach(() => { window.sessionStorage.clear(); resetStores(); });
+  afterEach(() => { window.sessionStorage.clear(); resetStores(); });
+
+  const layerState = (): SatongMapLayerState => {
+    const st = useSatongMapPrefs.getState();
+    return { enabledLayerIds: st.enabledLayerIds, controlsByLayer: st.controlsByLayer };
+  };
+
+  it("★★두 모집단 — `terrain` 은 레일에서 사라졌고, 베이스맵 스위처는 **그대로 4종**이다", () => {
+    // ① 지워져야 할 것
+    expect(SATONG_MAP_SHELL_LAYERS.some((l) => l.id === "terrain")).toBe(false);
+    render(<SatongMapShell locale="ko" />);
+    expect(screen.queryByRole("button", { name: /지형도·항공뷰/ })).toBeNull();
+
+    // ② 남아야 할 것 — ①만 재면 «레일을 통째로 비우는» 구현도 초록이다.
+    hoverClick(screen.getByRole("button", { name: /베이스맵/ }));
+    for (const label of ["일반", "위성", "하이브리드", "회색"]) {
+      expect(screen.getByRole("button", { name: `베이스맵: ${label}` }), label).toBeTruthy();
+    }
+  });
+
+  it("★기능이 안 죽었다 — 스위처 클릭이 `resolveVWorldBaseLayer` 의 **값**을 바꾼다(라벨 아님)", () => {
+    render(<SatongMapShell locale="ko" />);
+    // ★공허 진리 가드 — 시작 값이 「위성」이면 아래 전이가 아무것도 증명하지 않는다.
+    expect(resolveVWorldBaseLayer(layerState())).not.toBe("Satellite");
+
+    hoverClick(screen.getByRole("button", { name: /베이스맵/ }));
+    fireEvent.click(screen.getByRole("button", { name: "베이스맵: 위성" }));
+    expect(resolveVWorldBaseLayer(layerState())).toBe("Satellite");
+
+    // ★대칭 — 되돌아온다(한쪽만 재면 「항상 위성」도 만점이다).
+    fireEvent.click(screen.getByRole("button", { name: "베이스맵: 일반" }));
+    expect(resolveVWorldBaseLayer(layerState())).toBe("Base");
+  });
+
+  it("★배타 전환 — 배경을 바꾸면 **이전 선택이 지워진다**(둘이 동시에 남지 않는다)", () => {
+    render(<SatongMapShell locale="ko" />);
+    hoverClick(screen.getByRole("button", { name: /베이스맵/ }));
+    fireEvent.click(screen.getByRole("button", { name: "베이스맵: 위성" }));
+    fireEvent.click(screen.getByRole("button", { name: "베이스맵: 하이브리드" }));
+
+    const ids = useSatongMapPrefs.getState().controlsByLayer.terrain ?? [];
+    expect(ids).toContain("hybrid");
+    expect(ids).not.toContain("satellite"); // ★이게 없으면 두 배경이 동시에 선택된다
+  });
+
+  it("★배경 축과 표고 축은 **저장소에서 공존한다** — 서로를 지우지 않는다", () => {
+    // ★★정직 표기: 이것은 **저장소 계약 락이지 핸들러 행위 락이 아니다.**
+    //   `setControlsByLayer` 를 직접 불러 상태만 본다. `handleLayerControlClick` 의
+    //   `&& TERRAIN_BASEMAP_CONTROL_IDS.has(control.id)` 조건은 **변이에서 SURVIVED** 이고,
+    //   그 생존은 설명 가능하다 — terrain 이 레일에서 빠져 그 분기를 태울 **UI 경로가 없다**
+    //   (스위처는 베이스맵 id 만 보낸다). 사유는 `SatongMapShell.tsx` 해당 줄에 적었다.
+    //   ⇒ 여기서 잠그는 것은 «두 축이 공존 가능한 형태인가» 까지다. 과장하지 않는다.
+    // ★`enabledLayerIds` 에 terrain 을 넣는다 — `resolveVWorldBaseLayer` 의 첫 줄이
+    //   `if (!hasSatongLayer(state,"terrain")) return "Base"` 라, 안 넣으면 이 단언이
+    //   **배타와 무관한 이유로** 통과/실패한다(내 초판이 그렇게 틀렸다).
+    act(() => {
+      useSatongMapPrefs.setState({ enabledLayerIds: ["terrain"] });
+      useSatongMapPrefs.getState().setControlsByLayer((prev) => ({
+        ...prev,
+        terrain: ["satellite", "elevation"],
+      }));
+    });
+    const ids = useSatongMapPrefs.getState().controlsByLayer.terrain ?? [];
+    // 두 축이 **공존 가능**하다 = 배경 축과 표고 축이 서로를 지우지 않는다.
+    expect(ids).toContain("satellite");
+    expect(ids).toContain("elevation");
+    expect(resolveVWorldBaseLayer(layerState())).toBe("Satellite");
+  });
+
+  it("★죽은 면제가 없다 — 레일의 모든 **렌더러블** 레이어가 on/off 토글을 노출한다", () => {
+    const renderable = SATONG_MAP_SHELL_LAYERS.filter((l) => isRenderableSatongMapLayer(l.id));
+    // ★공허 진리 가드 — 대상이 0개면 아래 루프가 아무것도 안 본다.
+    expect(renderable.length).toBeGreaterThan(3);
+
+    render(<SatongMapShell locale="ko" />);
+    for (const layer of renderable) {
+      hoverClick(screen.getByRole("button", { name: new RegExp(layer.label) }));
+      expect(
+        screen.queryByRole("button", { name: /지도에 표시|지도 표시 중/ }),
+        `${layer.id}: on/off 토글이 없다 — 죽은 면제가 되살아났는가?`,
+      ).toBeTruthy();
+    }
+  });
+
+  it("★★M3 — **스위처 4종 전수**가 각자의 배경으로 귀결한다(파생 · 어휘 불일치를 잡는다)", () => {
+    // ★★적대 리뷰 M3: 종전엔 위성·일반·하이브리드 **3종만 손으로** 태웠다. 그래서
+    //   `{ id: "gray" }` 를 `"grey"` 로 바꾸는 변이가 **SURVIVED** 였다 — 사용자는 「회색」을
+    //   눌러도 배경이 안 바뀌고 「일반」이 활성으로 표시된다(`resolveVWorldBaseLayer` 는
+    //   `"gray"` 를 찾는다). ★«목록은 곧 상한»을 **아래 목록**에만 걸었고 **한 단계 위**
+    //   (`resolveVWorldBaseLayer` 의 if-사슬)는 손 목록으로 남아 있었다.
+    //   ⇒ **스위처에서 파생**해 전수를 태운다. 스위처에 항목이 늘면 자동으로 따라온다.
+    render(<SatongMapShell locale="ko" />);
+    hoverClick(screen.getByRole("button", { name: /베이스맵/ }));
+
+    // ★공허 진리 가드 — 파생 모집단이 비면 아래 루프가 아무것도 안 본다.
+    expect(BASEMAP_SWITCHES.length).toBeGreaterThanOrEqual(4);
+
+    for (const opt of BASEMAP_SWITCHES) {
+      fireEvent.click(screen.getByRole("button", { name: `베이스맵: ${opt.label}` }));
+      expect(resolveVWorldBaseLayer(layerState()), `${opt.id} → ${opt.base}`).toBe(opt.base);
+    }
+  });
+
+  it("★★M2 — `aerial` 레거시 저장분이 **항공뷰에 갇히지 않는다**(행위 락)", () => {
+    // ★★적대 리뷰 M2: `TERRAIN_BASEMAP_CONTROL_IDS` 에서 `"aerial"` 한 줄을 지우는 변이가
+    //   **SURVIVED** 였다. 계획서는 *"가를 수 없으므로 남긴다"* 고 **판단만** 했고 락이 없었다.
+    //   그런데 막고 있던 것이 실재한다 — 그 id 가 배타 해제 집합에 없으면:
+    //     저장분 ["aerial"] → 「일반」 클릭 → ["aerial","base"] → resolveVWorldBaseLayer = "Hybrid"
+    //   즉 **항공뷰에서 영영 못 나온다.** 상수를 단언하면 장식이므로 **행위로** 태운다.
+    act(() => {
+      useSatongMapPrefs.setState({ enabledLayerIds: ["terrain"], enabledLayersCustomized: true });
+      useSatongMapPrefs.getState().setControlsByLayer((prev) => ({ ...prev, terrain: ["aerial"] }));
+    });
+    // ★공허 진리 가드 — 출발점이 정말 「항공뷰」여야 아래 탈출이 의미를 갖는다.
+    expect(resolveVWorldBaseLayer(layerState())).toBe("Hybrid");
+
+    render(<SatongMapShell locale="ko" />);
+    hoverClick(screen.getByRole("button", { name: /베이스맵/ }));
+    fireEvent.click(screen.getByRole("button", { name: "베이스맵: 일반" }));
+
+    expect(useSatongMapPrefs.getState().controlsByLayer.terrain).not.toContain("aerial");
+    expect(resolveVWorldBaseLayer(layerState())).toBe("Base");
+  });
+
+  it("★★M4 — 레일의 **모든 팝오버 트리거**가 펼침에서 캡션을 노출한다(발견성 · 파생)", () => {
+    // ★★적대 리뷰 M4: 이 PR 이 「지형」 캡션이 달린 버튼을 없앴는데, 그것이 배경 전환의
+    //   **글자 있는 유일한 진입점**이었다. 남은 것은 무라벨 아이콘 하나이고 `title` 은
+    //   **터치에서 뜨지 않는다**. 이 저장소는 그 축을 이미 결함으로 판정하고 고친 적이 있다.
+    //   ★종전 캡션 락은 `getByTitle(/지적도 — 미리보기 열기/)` 로 **손으로 하나** 골랐다 →
+    //   **파생**으로 바꿔 비대칭이 다시 생기지 않게 한다.
+    render(<SatongMapShell locale="ko" />);
+    // ★캡션은 **펼침에서만** 노출된다. `railPinned` 기본값이 `true`(UX 트랙 C1)라 이미 펼쳐져 있다 —
+    //   ★내 초판은 여기서 토글을 클릭했다가 **오히려 접어** 버렸다. 기본 상태를 대조군으로 단언한다.
+    expect(screen.getByTitle(/레이어 목록 고정 해제/), "레일이 펼쳐져 있지 않다 — 아래가 공허해진다").toBeTruthy();
+
+    const expected = [...SATONG_MAP_SHELL_LAYERS.map((l) => l.shortLabel), "배경"];
+    // ★공허 진리 가드 — 모집단이 비면 루프가 아무것도 안 본다.
+    expect(expected.length).toBeGreaterThan(5);
+    for (const caption of expected) {
+      expect(screen.getAllByText(caption).length, `캡션 없음: ${caption}`).toBeGreaterThan(0);
+    }
+  });
+
+  // ★부채를 초록 안에 남긴다(§C-13) — 커밋 메시지에만 적으면 드러나지 않는다.
+  // ★★정정(적대 리뷰 M1) — 초판 todo 는 *"원천 미연동이라 뺐다"* 였는데 **거짓**이다.
+  //   경사·고저차는 **이미 구현돼 있다**: `ParcelSlopeSection` + `POST /terrain/analyze`
+  //   (DEM 격자 중앙차분). 없는 것은 **레이어 오버레이 표면**이고, 그 사유는 표고 원천의
+  //   **1 req/s 공개 제한**이라 버튼 온디맨드로 설계한 것이다(`ParcelSlopeSection.tsx:11-15`).
+  //   ⇒ 부채는 「구현」이 아니라 **「승격」**이다. 이렇게 안 적으면 다음 사람이 **있는 것을 다시 만든다**(§29).
+  it.todo(
+    "표고·경사를 레이어 표면으로 **승격** — 기능(ParcelSlopeSection·/terrain/analyze)은 이미 있다. " +
+      "막고 있는 것은 원천 1req/s 제한이라, 승격하려면 서버 캐시나 전역 리미터가 먼저다",
+  );
+  it.todo(
+    "랜딩 「지도 데이터 레이어 11종」의 축이 **레일 엔트리 수**다(`roadview` 는 needs-source · " +
+      "컨트롤 전부 mapEffect:false 라 아무것도 안 그린다). 실제 렌더 기준이면 10 — 대리 변수를 정직한 축으로",
+  );
+  it.todo(
+    "★그때 `handleLayerControlClick` 의 비-베이스맵 가드를 **행위로** 잠근다 — 지금은 terrain 이 " +
+      "레일에 없어 그 분기를 태울 UI 경로가 없고, 변이가 SURVIVED 로 그것을 드러냈다",
+  );
+  it.todo("`aerial` 레거시 컨트롤 id 를 쓰는 저장분이 실재하는지 측정 — 없으면 배타 집합에서 뺀다");
 });

@@ -21,7 +21,6 @@ import {
   Loader2,
   MapIcon,
   MapPin,
-  Mountain,
   Route,
   Search,
   Sparkles,
@@ -322,12 +321,13 @@ type OutputAction = {
  * '연동 필요'가 아니라 실제 연동된 원천을 기술해야 한다.
  * (테스트 검증용으로 export — components/precheck/__tests__/SatongMapShell.layers.test.ts)
  */
-// ★팝오버 헤더 on/off 미노출 레이어(R1 M-3/M-4/M-D — 단발 예외 대신 패턴 상수화).
-//   terrain : on/off 소유자가 베이스맵 스위처(끄면 배경지도가 조용히 롤백·라벨도 거짓)
-// ★2026-09-07 — `cadastre` 를 **뺐다**. 종전엔 「끌 수 없으니 토글도 숨긴다」였는데,
-//   그 제약의 사유가 실재하지 않아 스토어에서 제거했다(사용자 신고 ①).
-//   이제 지적도는 **기본 꺼짐 + 레일에서 켬**이라 토글이 **살아 있어야** 한다.
-const LAYERS_WITHOUT_POPOVER_TOGGLE = new Set<SatongMapLayerId>(["terrain"]);
+// ★★2026-09-07 — `LAYERS_WITHOUT_POPOVER_TOGGLE` 을 **삭제했다.** 원소가 둘 다 사라졌다:
+//   · `cadastre` — 신고①(#1012). 「끌 수 없으니 토글도 숨긴다」의 그 사유가 실재하지 않았다.
+//   · `terrain`  — 신고②(이 PR). 사유가 *"끄면 배경지도가 조용히 롤백·라벨도 거짓"* 이었는데,
+//     레일 항목 자체를 없애 **끌 수 있는 UI 가 존재하지 않게** 했다. 사유가 구조로 해소됐다.
+// ★빈 Set 을 남기지 않는다 — **죽은 면제는 「고쳤는데 안 잠긴」 상태를 초록으로 보이게 한다.**
+//   대신 반대 방향을 계약으로 세운다: **레일의 모든 렌더러블 레이어는 on/off 토글을 노출한다.**
+//   잠금: `SatongMapShell.basemapSingleOwner.test.tsx`.
 
 const LAYERS: SatongLayer[] = [
   {
@@ -499,23 +499,41 @@ const LAYERS: SatongLayer[] = [
       { id: "facilities", label: "도시계획시설", mapEffect: true },
     ],
   },
-  {
-    id: "terrain",
-    label: "지형도·항공뷰",
-    shortLabel: "지형",
-    description: "경사, 고저차, 항공사진을 사업 리스크와 설계 제약에 반영합니다.",
-    icon: Mountain,
-    status: "ready",
-    tone: "bg-stone-100 text-stone-950 border-stone-200",
-    source: "VWorld WMTS 프록시 연동(기본·위성·항공뷰)",
-    controls: [
-      { id: "base", label: "기본지도", mapEffect: true },
-      { id: "satellite", label: "위성", mapEffect: true },
-      { id: "hybrid", label: "항공뷰", mapEffect: true },
-      { id: "elevation", label: "표고", mapEffect: false, description: "표고/경사도 격자 원천 연결 후 활성화" },
-      { id: "gray", label: "회색지도", mapEffect: true, description: "저채도 배경 — 데이터 대비 강조" },
-    ],
-  },
+  // ★★2026-09-07 사용자 신고②: *"베이스맵과 지형도·항공뷰는 같은 기능 아닌가?"* — **맞다.**
+  //   같은 기능 정도가 아니라 **문자 그대로 같은 컨트롤**이었다(실측):
+  //     · 컨트롤 id 가 4/5 동일(`base`·`satellite`·`hybrid`·`gray`) — 「하이브리드」와 「항공뷰」는
+  //       **같은 `hybrid` 에 붙은 다른 라벨**
+  //     · 베이스맵 스위처 버튼이 `handleLayerControlClick("terrain", …)` 를 **그대로** 부른다
+  //     · 같은 `controlsByLayer.terrain` 에 써서 같은 `resolveVWorldBaseLayer()` 가 읽는다
+  //   ⇒ 라벨만 둘이었다. **`terrain` 레일 항목을 없앤다** — 베이스맵 스위처가 단일 소유자다.
+  //
+  // ★없앨 쪽이 베이스맵이 **아닌** 이유(볼트 조회 · `2026-07-23_사통맵_베이스맵_레일통합`, PR#460):
+  //   그 팝오버는 **사용자가 직접 요청해서** 생겼고(*"오른쪽 하단 아이콘을 오른쪽 상단에"*),
+  //   접힌 레일에서도 **1탭에 보이도록 `h-28` 로 발견성까지 조정한** 표면이다.
+  //
+  // ★★왜 「컨트롤만 걷어내고 레이어는 남기기」가 아닌가 — **그 판을 실제로 만들었다가 락이 잡았다.**
+  //   남기면 이 레이어에 `mapEffect` 컨트롤이 하나도 없어 팝오버가 아무것도 안 한다. 그렇다고
+  //   `status: "needs-source"`(«연동 필요») 로 적으면 **거짓**이다 — `resolveVWorldBaseLayer()` 는
+  //   여전히 `controlsByLayer.terrain` 을 읽으므로 이 레이어의 상태가 **실제 배경지도를 좌우한다.**
+  //   `SatongMapShell.status.test.ts` 가 정확히 그 위장을 잡았다(*"렌더되는 레이어를 미연동으로
+  //   표기하면 반대 방향 위장"*). ⇒ **라벨을 고치는 게 아니라 라벨을 없앤다.**
+  //
+  // ★남는 것들(의도적):
+  //   · `"terrain"` 은 `SatongMapLayerId` 와 `SATONG_RENDERABLE_LAYER_IDS` 에 **그대로 둔다** —
+  //     여전히 렌더 경로다(스위처가 그 상태를 통해 배경을 바꾼다). 지우면 스위처가 죽는다.
+  //   · `defaultSatongMapControls().terrain = ["base"]` 도 그대로 — 저장 위치가 안 바뀌므로
+  //     **persist 마이그레이션이 필요 없고** 기존 사용자의 베이스맵 선택이 그대로 산다.
+  //   · 「표고·경사」(`elevation`) 컨트롤도 함께 사라진다.
+  //     ★★**정정(적대 리뷰 M1)**: 초판은 이것을 *"미구현이라 함께 사라진다"* 라고 적었다.
+  //     **거짓이었다.** 경사·고저차는 **이미 구현돼 있다** — 같은 파일이 그것을 임포트한다:
+  //       `ParcelSlopeSection`(:53) · `POST /terrain/analyze`(:1064) · `SATONG_PARCEL_SLOPE_KEY`(:106)
+  //     그리고 그 컴포넌트가 스스로 적는다 — *"값은 전부 서버 산정(DEM 격자 중앙차분)"*.
+  //     ★없는 것은 **기능이 아니라 「레이어 오버레이 표면」**이고, 그것이 없는 데는 **측정된 사유**가
+  //     있다: 표고 원천 OpenTopoData 가 **1 req/s 공개 제한**이라 필지를 훑을 때 동시 요청이
+  //     제한을 넘긴다 ⇒ **명시적 버튼 온디맨드**로 설계했다(`ParcelSlopeSection.tsx:11-15`).
+  //     ⇒ 그래서 `mapEffect:false` 인 이 컨트롤은 **죽은 자리**였고, 없애는 것이 옳다.
+  //     ★「없는 것을 새로 만드는 것과 있는 것을 안 쓴 것은 처방이 다르다」(§29) — 부채는
+  //     「구현」이 아니라 **「기존 W2 배선을 레이어 표면으로 승격」**이다(`it.todo` 에 그렇게 적었다).
   {
     id: "roadview",
     label: "로드뷰",
@@ -535,6 +553,10 @@ const LAYERS: SatongLayer[] = [
 ];
 
 export { LAYERS as SATONG_MAP_SHELL_LAYERS };
+// ★2026-09-07(적대 리뷰 M3) — 락이 **스위처에서 파생**할 수 있도록 내보낸다.
+//   종전엔 테스트가 위성·일반·하이브리드 **3종만 손으로** 태워, 「회색」의 id 어휘가 깨져도
+//   초록이었다(변이 `gray → grey` SURVIVED). 「목록은 곧 상한」을 닫으려면 모집단이 필요하다.
+export { BASEMAP_SWITCHES as SATONG_BASEMAP_SWITCHES };
 
 // 항공뷰 썸네일 베이스맵 스위처(jootek 패리티) — terrain 컨트롤 재사용.
 // ★스와치=실물 타일 미리보기(2026-07-17 직관력 보강): 스와치의 본질은 "이 버튼을 누르면
@@ -560,6 +582,23 @@ const BASEMAP_SWITCHES = [
   { id: "gray", label: "회색", base: "white", swatch: "bg-gradient-to-br from-slate-200 to-slate-400",
     tiles: [`${SWATCH_TILE_BASE}/white/${SWATCH_TILE_ZYX}.png`] },
 ] as const;
+
+/**
+ * 베이스맵 **배타 전환** 대상 컨트롤 id — ★손 목록이 아니라 `BASEMAP_SWITCHES` 에서 **파생**한다.
+ *
+ * ★2026-09-07(사용자 신고②) 이전에는 `["base","satellite","hybrid","aerial","gray"]` 손 목록이
+ *   `setLayerControls` 안에 박혀 있었다. 목록은 곧 상한이다 — 스위처에 항목이 늘면 그 항목만
+ *   배타 해제에서 빠져 **두 배경이 동시에 선택된 상태**가 된다. 파생으로 바꿔 그 자리를 막는다.
+ *
+ * ★`"aerial"` 은 스위처에도 레이어 컨트롤에도 **없는 레거시 id** 인데 **남긴다**:
+ *   `resolveVWorldBaseLayer()` 가 아직 `hybrid || aerial` 로 받으므로 그 id 를 담은 **저장분이
+ *   실재하는지 미측정**이다. 가를 수 없으면 가르지 않는다 — 지우면 그 사용자의 항공뷰 선택이
+ *   배타 해제 대상에서 빠져 위와 같은 «두 배경 동시 선택»이 된다.
+ */
+const TERRAIN_BASEMAP_CONTROL_IDS: ReadonlySet<string> = new Set<string>([
+  ...BASEMAP_SWITCHES.map((o) => o.id),
+  "aerial",
+]);
 
 const sourceLabel: Record<SatongParcel["source"], string> = {
   search: "검색",
@@ -2340,7 +2379,7 @@ export function SatongMapShell({
    * @param open 실제 열기 동작(openLayerPanel/openBasemapPanel 바인딩)
    * @param alreadyShown 지금 보이는 팝오버가 바로 이 항목인가(같은 항목 재진입은 무동작)
    *
-   * ★열기 경로를 **여기 하나로** 모은다 — 레일 항목이 12개+베이스맵이라 각 핸들러에서
+   * ★열기 경로를 **여기 하나로** 모은다 — 레일 항목이 11개+베이스맵이라(★2026-09-07 신고②로 12 → 11) 각 핸들러에서
    *   따로 지연을 걸면 새 항목이 추가될 때 또 샌다(이 레일에서 반복된 결함 패턴).
    */
   const requestHoverOpen = useCallback(
@@ -2452,8 +2491,21 @@ export function SatongMapShell({
     if (!layerIndependent) ensureLayerEnabled(layerId);
     setLayerControls((prev) => {
       const current = new Set(prev[layerId] ?? []);
-      if (layerId === "terrain") {
-        ["base", "satellite", "hybrid", "aerial", "gray"].forEach((id) => current.delete(id));
+      if (layerId === "terrain" && TERRAIN_BASEMAP_CONTROL_IDS.has(control.id)) {
+        // ★2026-09-07 — 종전엔 **손 목록**이었고 **terrain 의 아무 컨트롤에나** 발동했다.
+        //   ①목록은 곧 상한이다 → `BASEMAP_SWITCHES` 에서 **파생**한다(스위처에 항목이 늘면 따라온다).
+        //     변이 실증: 파생을 손 목록 하나로 줄이면 **CAUGHT** · 삭제 루프를 지우면 **CAUGHT**.
+        //   ②`&& TERRAIN_BASEMAP_CONTROL_IDS.has(...)` 는 `elevation` 이 나중에 `mapEffect:true` 로
+        //     구현될 때 그 클릭이 **사용자의 배경 선택을 지우는 것**을 막는다.
+        //     ★★**이 조건은 변이에서 SURVIVED 다 — 그리고 그 생존은 설명 가능하다**(§변이 규율:
+        //     «설명할 수 없는 생존만 진짜 구멍»). 이 PR 이 `terrain` 을 레일에서 뺐으므로
+        //     `handleLayerControlClick("terrain", …)` 를 부르는 곳은 **베이스맵 스위처뿐**이고
+        //     그것은 베이스맵 id 만 보낸다 ⇒ 오늘 이 조건은 **항상 참**이고 가르는 입력이 없다.
+        //     ★도달 조건을 명시한다: **`elevation`(또는 다른 비-베이스맵 컨트롤)이 `mapEffect:true`
+        //     가 되고 terrain 이 레일로 돌아오는 순간** 이 조건이 유일한 방어가 된다.
+        //     그때 락을 함께 만들 수 있도록 `basemapSwitcher.test.tsx` 에 `it.todo` 로 남겼다.
+        //     ★점수용 단언을 지어내지 않는다 — 사유를 여기 적는 것이 규율이 지시하는 처리다.
+        TERRAIN_BASEMAP_CONTROL_IDS.forEach((id) => current.delete(id));
         current.add(control.id);
       } else if (layerId === "transactions" && (control.id === "kind-trade" || control.id === "kind-rent")) {
         // 매매/전월세는 배타 전환 — kind 자체가 백엔드 카테고리 키(`${type}_${kind}`)의 축이라
@@ -3201,6 +3253,17 @@ export function SatongMapShell({
           }`}
         >
           <ImageIcon className="size-5" aria-hidden />
+          {/* ★★2026-09-07(적대 리뷰 M4) — **형제와 같은 캡션**을 붙인다.
+              이 PR 이 「지형」 캡션이 달린 레일 버튼을 없앴는데, 그것이 배경 전환의 **글자 있는
+              유일한 진입점**이었다. 그대로 두면 배경 전환이 **무라벨 아이콘 하나**로만 도달한다 —
+              `title` 은 **터치 기기에서 뜨지 않는다**.
+              ★이 저장소는 그 축을 **이미 결함으로 판정하고 고쳤다**(바로 아래 형제 주석:
+              *"무라벨 아이콘 … 터치 기기에서 기능을 알 방법이 '하나씩 탭'뿐"*), 그리고 계획서 §0 이
+              인용한 볼트 노트가 *"제어 통합은 발견성과 트레이드오프"* 라고 적고 있다.
+              ★**인용해 놓고 이번 변경분에 적용하지 않았다** — 그것이 이 두 줄이 필요한 이유다. */}
+          {railPinned && (
+            <span className="mt-0.5 text-[10px] font-bold leading-none">배경</span>
+          )}
         </button>
 
         {/* 내부 레이어 버튼 리스트 (세로 전개) */}
@@ -3255,7 +3318,7 @@ export function SatongMapShell({
               aria-label={layer.label}
             >
               {/* 펼침(w-32)에서는 아이콘 밑에 2글자 캡션을 노출한다.
-                  ★무라벨 아이콘 12개는 hover가 없는 터치 기기에서 기능을 알 방법이
+                  ★무라벨 아이콘(당시 12개·현재 11개)은 hover가 없는 터치 기기에서 기능을 알 방법이
                     '하나씩 탭'뿐이었다. shortLabel은 이미 12개 전부 정의돼 있는데
                     소비처가 0이라 방치돼 있던 자산 — 새 카피 없이 발견성을 회복한다. */}
               <Icon className="size-5" aria-hidden />
@@ -3332,7 +3395,7 @@ export function SatongMapShell({
               {/* ★확정(commit) 지점 — 레일에서 강제 토글을 걷어낸 대신, 레이어 자체
                   on/off를 여기에 둔다(끄기 수단 보존). 렌더 불가 레이어는 노출하지
                   않는다(지도에 반영되지 않으므로 켜기 약속이 거짓이 된다). */}
-              {isRenderableSatongMapLayer(activeLayer.id) && !LAYERS_WITHOUT_POPOVER_TOGGLE.has(activeLayer.id) && (
+              {isRenderableSatongMapLayer(activeLayer.id) && (
                 <button
                   type="button"
                   onClick={() => toggleLayerEnabled(activeLayer.id)}

@@ -176,7 +176,7 @@ describe("좁은 화면 확정 경로", () => {
 describe("레이어 아이콘 유일성", () => {
   it("★아이콘-기능 1:1 — 같은 글리프를 두 레이어가 쓰면 안 된다", () => {
     const icons = SATONG_MAP_SHELL_LAYERS.map((l) => l.icon);
-    // 개발계획·로드뷰가 같은 Route 글리프였던 실결함의 재발 방지(12개 전부 고정).
+    // 개발계획·로드뷰가 같은 Route 글리프였던 실결함의 재발 방지(레일 전수 고정 — ★수를 문장에 박지 않는다. 2026-09-07 신고②로 12 → 11 이 됐고 그때 이 주석이 스테일이 됐다).
     expect(new Set(icons).size).toBe(icons.length);
   });
 });
