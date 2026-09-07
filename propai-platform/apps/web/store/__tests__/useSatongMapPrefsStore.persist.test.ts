@@ -270,21 +270,31 @@ describe("★★하이드레이션 identity — 저장분이 없으면 **참조�
 describe("★★레이어 활성 상태 — 사용자 신고의 **남은 절반**", () => {
   const ids = () => useSatongMapPrefs.getState().enabledLayerIds;
 
-  it("기본은 지적도 하나(첫 방문 = 종전과 동일 · 회귀 아님)", () => {
-    expect(ids()).toEqual(["cadastre"]);
+  /**
+   * ★★2026-09-07 계약 변경 — 아래 셋은 **옛 계약을 잠그고 있었다**(기본 ON · 못 끔).
+   *   사용자 신고로 뒤집혔다: *"기본은 경계선이 없고 오른쪽 메뉴에서 선택 시 나타나야"*.
+   *   그리고 「못 끈다」의 **사유가 실재하지 않았다**(선택은 지적 타일과 독립 — `SatongMultiMap`).
+   *   ★**명제는 보존한다** — identity 계약(«변화가 없으면 같은 참조»)과 «골랐다» 계약은 그대로이고,
+   *     그것을 재는 **입력만** 새 계약에 맞게 바꾼다.
+   */
+  it("★기본은 **비어 있다** — 지적 경계선이 배경을 덮지 않는다(사용자 신고 2026-09-07)", () => {
+    expect(ids()).toEqual([]);
   });
 
-  it("★계약 ① — `cadastre` 는 꺼지지 않는다(기반 레이어)", () => {
+  it("★계약 ① — `cadastre` 를 **켜고 끌 수 있다**(죽은 버튼이 살아났다)", () => {
     useSatongMapPrefs.getState().toggleLayerEnabled("cadastre");
     expect(ids()).toContain("cadastre");
+    // ★두 모집단 — 끄기도 같은 실행에서 본다(한 방향만 보면 「항상 켬」도 통과한다).
+    useSatongMapPrefs.getState().toggleLayerEnabled("cadastre");
+    expect(ids()).not.toContain("cadastre");
   });
 
   it("★★계약 ② identity — **변화가 없으면 같은 참조**(«깜빡임의 근원» 방어 이식)", () => {
+    // ★전제를 만들어서 잰다 — 종전엔 «cadastre 가 기본 ON» 이라는 **기본값에 얹혀** 있었다.
+    useSatongMapPrefs.getState().ensureLayerEnabled("cadastre");
     const before = ids();
-    useSatongMapPrefs.getState().ensureLayerEnabled("cadastre"); // 이미 켜져 있다
+    useSatongMapPrefs.getState().ensureLayerEnabled("cadastre"); // 이미 켜져 있다 = 변화 없음
     expect(ids()).toBe(before); // ★같은 참조
-    useSatongMapPrefs.getState().toggleLayerEnabled("cadastre"); // 못 끈다 = 변화 없음
-    expect(ids()).toBe(before);
   });
 
   it("★대칭 — **변화가 있으면 다른 참조**(한쪽만 재면 「항상 같은 참조」가 만점)", () => {
@@ -304,7 +314,10 @@ describe("★★레이어 활성 상태 — 사용자 신고의 **남은 절반*
   it("★★영속 — 켠 레이어가 재수화 후에도 살아 있다", async () => {
     window.localStorage.setItem(
       KEY,
-      JSON.stringify({ state: { enabledLayerIds: ["cadastre", "zoning"], enabledLayersCustomized: true }, version: 1 }),
+      // ★2026-09-07 — 픽스처를 **현재 스키마 v2** 로 올렸다. 명제(«켠 것이 살아 있다»)는
+      //   그대로다. v1 로 두면 이 픽스처가 **일회성 v1→v2 정리**(옛 기본값 `"cadastre"` 제거)와
+      //   겹쳐, 이 테스트가 재는 것이 «영속» 인지 «마이그레이션» 인지 갈리지 않는다.
+      JSON.stringify({ state: { enabledLayerIds: ["cadastre", "zoning"], enabledLayersCustomized: true }, version: 2 }),
     );
     await useSatongMapPrefs.persist.rehydrate();
     expect(ids()).toEqual(["cadastre", "zoning"]);
@@ -314,7 +327,8 @@ describe("★★레이어 활성 상태 — 사용자 신고의 **남은 절반*
     // 종전에는 새로고침하면 무조건 기본으로 돌아갔다.
     window.localStorage.setItem(
       KEY,
-      JSON.stringify({ state: { enabledLayerIds: ["cadastre"], enabledLayersCustomized: true }, version: 1 }),
+      // ★v2 = 현재 스키마(위 「영속」 케이스와 같은 이유).
+      JSON.stringify({ state: { enabledLayerIds: ["cadastre"], enabledLayersCustomized: true }, version: 2 }),
     );
     await useSatongMapPrefs.persist.rehydrate();
     expect(ids()).toEqual(["cadastre"]);
@@ -366,10 +380,22 @@ describe("★★레이어 활성 상태 — 사용자 신고의 **남은 절반*
     expect(useSatongMapPrefs.getState().enabledLayersCustomized).toBe(true);
   });
 
-  it("★변화가 없으면 «골랐다» 도 안 켜진다(cadastre 는 못 끈다)", () => {
-    useSatongMapPrefs.getState().toggleLayerEnabled("cadastre");
+  it("★변화가 없으면 «골랐다» 도 안 켜진다(ensure 가 무동작일 때)", () => {
+    // ★종전엔 «cadastre 는 못 끈다» 로 이 명제를 쟀다. 이제 끌 수 있으므로
+    //   **변화 없음**을 만드는 다른 입력(이미 켜진 레이어에 ensure)으로 같은 명제를 잠근다.
+    useSatongMapPrefs.getState().ensureLayerEnabled("cadastre");
+    useSatongMapPrefs.setState({ enabledLayersCustomized: false }); // 대조군 리셋
+    useSatongMapPrefs.getState().ensureLayerEnabled("cadastre");    // 이미 켜져 있다 = 변화 없음
     expect(useSatongMapPrefs.getState().enabledLayersCustomized).toBe(false);
   });
+
+  // ★★설명 가능한 생존(적대 리뷰 MINOR-3 · §변이 규율 «설명할 수 없는 생존만 진짜 구멍»):
+  //   아래 `toEqual(defaultEnabledLayerIds())` 는 **지금은 판별력이 0** 이다 —
+  //   SSOT 가 `[]` 를 돌려주므로 구현이 `[]` 를 하드코딩해도 값이 같다(변이 SURVIVED).
+  //   ★이것은 이 PR 이 **만든** 결함이 아니라 이 PR 이 **드러낸** 것이다(종전엔 `["cadastre"]`
+  //     라 판별력이 있었다). SSOT 가 다시 비지 않게 되는 순간 축이 되살아난다.
+  //   ★값으로는 가를 수 없다 — 두 구현이 같은 배열을 만든다. 그래서 **부채로 남긴다.**
+  it.todo("resetEnabledLayers ↔ defaultEnabledLayerIds 결속 — 기본값이 빈 동안은 값으로 못 가른다");
 
   it("resetEnabledLayers 가 기본으로 되돌리고 «골랐다» 도 끈다", () => {
     useSatongMapPrefs.getState().ensureLayerEnabled("poi");
@@ -378,6 +404,64 @@ describe("★★레이어 활성 상태 — 사용자 신고의 **남은 절반*
     expect(ids()).toEqual(defaultEnabledLayerIds());
     // ★«한 번도 안 고름» 으로 돌아가야 이후 추가되는 레이어의 기본값이 다시 닿는다.
     expect(useSatongMapPrefs.getState().enabledLayersCustomized).toBe(false);
+  });
+});
+
+describe("★★v1 → v2 마이그레이션 — **기본값만 바꿔서는 기존 사용자에게 닿지 않는다**", () => {
+  // ★이 describe 가 존재하는 이유(2026-09-07 · 사용자 신고 «지적 경계선이 항상 나타난다»):
+  //   `defaultEnabledLayerIds()` 를 `[]` 로 바꾼 것만으로는 **신고한 사용자가 안 고쳐진다.**
+  //   `merge` 가 `enabledLayersCustomized === true` 이면 저장분을 **그대로 존중**하는데,
+  //   변경 전 `toggleLayerEnabled` 는 **다른 레이어**를 켤 때도 그 플래그를 켜면서
+  //   `[...s.enabledLayerIds, id]` 로 옛 기본값 `"cadastre"` 를 **함께 저장**했다.
+  //   → 지형도를 한 번이라도 켠 사용자 = 영구히 지적 ON.
+  //
+  //   ★전제(변경 전 원문으로 실측): 저장분의 `"cadastre"` 는 **선택이 아니다** —
+  //     `if (has && id === "cadastre") return s;` 로 **끌 수 없었고**
+  //     `LAYERS_WITHOUT_POPOVER_TOGGLE` 에 들어 있어 **토글이 보이지도 않았다.**
+
+  it("★★두 모집단 — 옛 기본값 흔적은 **지워지고**, 진짜 선택은 **남는다**", async () => {
+    window.localStorage.setItem(
+      KEY,
+      JSON.stringify({
+        state: {
+          // 「지형도를 켠 적 있는 기존 사용자」의 실제 저장 형태.
+          enabledLayerIds: ["cadastre", "terrain"],
+          enabledLayersCustomized: true,
+        },
+        version: 1,
+      }),
+    );
+    await useSatongMapPrefs.persist.rehydrate();
+    const ids = useSatongMapPrefs.getState().enabledLayerIds;
+    // 모집단 A — 지워져야 할 것(신고 본체).
+    expect(ids).not.toContain("cadastre");
+    // 모집단 B — 남아야 할 것. ★A 만 재면 «전부 비우는» 구현도 초록이다.
+    expect(ids).toContain("terrain");
+    // ★«골랐다» 는 **끄지 않는다** — false 로 돌리면 merge 가 저장분을 통째로 무시해
+    //   사용자가 직접 켠 terrain 까지 기본값으로 덮인다.
+    expect(useSatongMapPrefs.getState().enabledLayersCustomized).toBe(true);
+  });
+
+  it("★반대 경계 — **v2 이상 저장분은 정리하지 않는다**(직접 켠 지적을 끄지 않는다)", async () => {
+    // ★★초판은 이 픽스처를 `version: 2` 로 썼는데 **공허했다** — 변이(`version >= 99`)가
+    //   **SURVIVED** 로 그것을 드러냈다. 원인은 zustand 원문에 있다
+    //   (`zustand/esm/middleware.js:376` · v5 판 `:498` 동일):
+    //     `if (… .version !== options.version) { if (options.migrate) …`
+    //   → **저장 버전이 현재 버전과 같으면 `migrate` 를 아예 부르지 않는다.** 그래서
+    //     v2 픽스처는 이 가드를 **한 번도 태우지 않았고**, 어떤 구현이든 초록이었다.
+    // ★그러므로 이 가드가 실제로 도달하는 「2 이상」은 **v3 이상**이다 — 새 릴리스를 쓰다
+    //   구판으로 되돌아온 사용자의 저장분. 그 경우를 태운다.
+    window.localStorage.setItem(
+      KEY,
+      JSON.stringify({
+        state: { enabledLayerIds: ["cadastre"], enabledLayersCustomized: true },
+        version: 3,
+      }),
+    );
+    await useSatongMapPrefs.persist.rehydrate();
+    // ★이 PR 이 토글을 노출했으므로 v2 이후의 `"cadastre"` 는 **진짜 선택**이다.
+    //   경계를 한쪽만 걸면(전부 제거) 사용자가 켠 것을 매 새로고침마다 끄게 된다(§D-19).
+    expect(useSatongMapPrefs.getState().enabledLayerIds).toContain("cadastre");
   });
 });
 
