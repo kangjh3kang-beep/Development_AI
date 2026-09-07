@@ -173,8 +173,8 @@ def _subject_consistency(subject: dict[str, Any] | None) -> dict[str, Any]:
         conflicts.append({
             "field_a": f"지목 {jimok}", "field_b": f"용도지역 {zone}",
             "note": ("지목이 「대」가 아닌데 도시지역 용도가 지정돼 있습니다. "
-                     "지목 미변경 상태일 수 있으며(정상), 그때 평가는 **현황과 공부 중 "
-                     "무엇을 기준으로 했는지**를 밝혀야 합니다."),
+                     "지목 미변경 상태일 수 있으며(정상), 그때 평가는 현황과 공부 중 "
+                     "무엇을 기준으로 했는지를 밝혀야 합니다."),
         })
     # ★독립 리뷰 적발(MEDIUM-10) — 화이트리스트가 5개뿐이라 `도로 ↔ 도로` 처럼
     #   **자기 자신과 충돌**했다("공부상 지목과 현황 이용이 다릅니다" — 같은데도).
@@ -182,14 +182,14 @@ def _subject_consistency(subject: dict[str, Any] | None) -> dict[str, Any]:
     if jimok and usage and jimok not in _DAE_JIMOK and usage != jimok:
         conflicts.append({
             "field_a": f"지목 {jimok}", "field_b": f"이용상황 {usage}",
-            "note": ("공부상 지목과 현황 이용이 다릅니다. 감정평가는 **현황 기준**이 "
+            "note": ("공부상 지목과 현황 이용이 다릅니다. 감정평가는 현황 기준이 "
                      "원칙이므로 이 차이가 가액에 반영됐는지 확인이 필요합니다."),
         })
     return {
         "ok": not conflicts,
         "conflicts": conflicts,
         # ★검증하지 못한 것을 값 안에 적는다 — 이 판정을 결론으로 쓰지 않게.
-        "basis": ("지목·용도지역·이용상황 조합 점검(실무 관례 기준 · **법적 근거 미확인** — "
+        "basis": ("지목·용도지역·이용상황 조합 점검(실무 관례 기준 · 법적 근거 미확인 — "
                   "틀렸다는 판정이 아니라 확인 요청입니다)."),
     }
 
@@ -230,7 +230,7 @@ def _assemble_methods(
             # ★참고값이 **있으면** 함께 싣는다 — 없는 척하지 않는다. 다만 채택 아님을 명시.
             "reference_unit_price": (land_stats or {}).get("unit_price_per_sqm"),
             "reference_note": (
-                "법정동·지목 층화 실거래(참고) — **개별 필지 위치가 반영되지 않았습니다.** "
+                "법정동·지목 층화 실거래(참고) — 개별 필지 위치가 반영되지 않았습니다. "
                 "지역요인까지만 반영된 값이라 개별요인 보정 전이며, 채택 단가에 쓰지 않습니다."
             ) if (land_stats or {}).get("unit_price_per_sqm") else None,
         })
@@ -622,7 +622,7 @@ async def desk_appraisal(
             "독립된 평가 주체의 교차검증이 아니라 같은 산식의 가정 변동입니다."
             if cmp_unit_price > 0 else
             "가정 민감도 — 그밖의요인 ±5% 를 편 결정적 범위입니다. 거래사례를 확보하지 못해 "
-            "공시지가 기준 경로 하나만 계산했으며, 이는 **교차검증이 아닙니다**."
+            "공시지가 기준 경로 하나만 계산했으며, 이는 교차검증이 아닙니다."
         ),
     }
 

@@ -939,3 +939,138 @@ async def test_whole_payload_has_no_markdown_and_no_cross_validation_claim() -> 
     assert "**" in bad and _CLAIMS_CROSS_VALIDATION.search(bad), "검사기 사망"
     # 판별력 — 현재 note(부정 구문 포함)는 안 걸려야 한다.
     assert not _CLAIMS_CROSS_VALIDATION.search("교차검증은 별도 경로를 활용하세요"), "위양성"
+
+
+# ─────────────────────────────────────────────────────────────
+# ★★락의 축을 **생산자 전수**로 파생시킨다 (R5 HIGH-1)
+#
+#   R5 판정: *"축이 전수인가 — **아니다**. 리뷰어가 지목한 생산자를 하나씩 손으로 승격시켰을 뿐"*.
+#   AST 로 4모듈의 사용자 노출 문자열 생산자를 뽑아 «거짓 출처 첨가» 변이를 넣으니
+#   **10 SURVIVED / 5 CAUGHT** 였고, ★**CAUGHT 5건은 정확히 앞선 리뷰가 이름을 부른 5곳**이었다.
+#     "개별 생산자를 또 승격시키는 방식으로 고치면 여섯 번째 리뷰가 여섯 번째 생산자를 찾는다."
+#
+#   ⇒ 모집단을 **세 생산자의 산출물 전부**로 올린다(하나씩 지정하지 않는다):
+#       `estimate_land_price` · `desk_appraisal` · `_calc_land_prices`
+#     새 필드가 생기면 자동으로 감시망에 들어온다.
+#
+#   ★★술어의 경계를 **명시**한다 — 이 락은 «모든 거짓» 을 잡지 않는다:
+#     (가) **주제 스코프**(화이트리스트) — 계수의 출처를 말하는 문자열은 한정어를 담아야 한다.
+#          거짓 출처를 그 계수에 대해 주장하려면 **그 계수를 언급해야** 하므로 어휘 우회가 구조적으로 어렵다.
+#     (나) **보편 모양 규칙** — 마크다운 금지(렌더러가 파싱하지 않는다) · 기계 사실과의 모순 금지.
+#     (다) ★**남는 것**: 주제 밖 문자열의 «다른 종류의 거짓»은 여전히 무잠금이다.
+#          76개 문자열을 전부 리터럴로 얼리는 것은 과잉이라 하지 않았다(§A-6 — 정상 편집을 막는
+#          가드는 곧 꺼진다). 이 잔여를 **아래 xfail 로 초록 안에 드러낸다.**
+# ─────────────────────────────────────────────────────────────
+
+_SUBJECT_TOKENS = ("보정계수", "그밖의요인", "지역보정")
+
+
+async def _ALL_PRODUCERS() -> list[tuple[str, object]]:
+    """★세 생산자의 **산출물**을 모집단으로 — 필드를 손으로 지정하지 않는다."""
+    from app.services.land_intelligence.comprehensive_analysis_service import (
+        ComprehensiveAnalysisService,
+    )
+    from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
+
+    est = await estimate_land_price(
+        address=_ADDR_DISTRICT, area_sqm=500.0, official_price_per_sqm=1_000_000.0
+    )
+    desk = await desk_appraisal(
+        address=_ADDR_DISTRICT, area_sqm=500.0, official_price_per_sqm=1_000_000.0
+    )
+    svc = ComprehensiveAnalysisService.__new__(ComprehensiveAnalysisService)
+    land = svc._calc_land_prices(
+        {"address": _ADDR_DISTRICT, "official_prices": [{"price_per_sqm": 2_500_000, "year": 2026}]},
+        500.0,
+    )
+    return [("estimate_land_price", est), ("desk_appraisal", desk), ("_calc_land_prices", land)]
+
+
+@pytest.mark.asyncio
+async def test_producer_population_is_not_empty() -> None:
+    """★공허 방지 — 세 생산자가 실제로 문자열을 내는가(먼저 단언한다)."""
+    per = {name: len(_collect_user_facing_strings(pl)) for name, pl in await _ALL_PRODUCERS()}
+    assert all(v >= 3 for v in per.values()), f"수집기가 죽었거나 생산자가 비었다: {per}"
+    assert sum(per.values()) >= 40, per
+
+
+@pytest.mark.asyncio
+async def test_no_markdown_emphasis_in_any_producer() -> None:
+    """(나-1) 마크다운 금지 — **세 생산자 전부**. 소비 렌더러는 파싱하지 않는다.
+
+    ★확증(추론 아님): `DeskAppraisalReportClient.tsx` 는 `MarkdownLite` 를 **0회** 쓰고
+      `<p>{res.cross_check.note}</p>`(:542) · `<p>{...subject_consistency.basis}</p>`(:437) 로
+      **평문 렌더**한다. 그리고 같은 문자열이 제출 DOCX(`word/document.xml`)에도 실린다.
+    """
+    offenders = []
+    for name, payload in await _ALL_PRODUCERS():
+        offenders += [f"[{name}] {t}" for t in _collect_user_facing_strings(payload) if "**" in t or "__" in t]
+    assert not offenders, "사용자 노출 문자열에 마크다운(화면·제출문서에 그대로 찍힌다):\n  " + "\n  ".join(offenders)
+    assert "**" in "이는 **교차검증이 아닙니다**.", "검사기 사망"
+
+
+# ★(가) 주제 스코프 캐비엇 요구는 **시도했다가 걷어냈다** — 위양성이 셋 났다(§A-6).
+#   «계수를 언급하면 한정어를 담아야 한다» 로 걸었더니 정상 문자열을 막았다:
+#     · `"지역 시세보정계수"`                        ← EvidencePanel **라벨**(주장이 아니다)
+#     · `"개별공시지가 × 보정계수 = 1,000,000 × 1.2"`  ← **산술식**(출처를 주장하지 않는다)
+#     · `"… 이는 교차검증이 아닙니다."`                ← 오히려 **정직한 부인문**
+#   ⇒ 정상 코드를 막는 가드는 곧 꺼진다. 계수의 출처를 «말하는» 문자열은 이미
+#     템플릿 동일성(`test_every_short/sentence_form_equals_its_template_exactly`)으로 잠겨 있고,
+#     나머지 자리의 허위 출처는 아래 (나-2) 기계사실 모순 가드가 잡는다
+#     (R5 의 H 변이 `"국토교통부 실거래가 통계로 검증된 보정계수 = "` → CAUGHT 로 확인).
+#   ★기각한 접근을 지운 자리에 **왜 기각했는지**를 남긴다 — 다음 사람이 같은 길을 다시 가지 않게.
+
+
+
+# 기계 사실과 모순되는 **긍정 주장**. 부정어는 **인접**으로만 본다(담요 억제 금지 · R3 교훈).
+#   ★위양성 둘을 봉합했다(실측):
+#     ① `확인` 을 뺐다 — `"개별공시지가 … 이 **확인되었습니다**"` 는 조회 성공을 말하는 **정직한**
+#        문장인데 걸렸다. 이 가드가 막으려는 것은 «실거래로 검증됐다» 는 **출처 주장**이다.
+#     ② ★부정어 목록에 **`아닌`·`아님`** 을 넣었다 — 한글은 **음절 단위**라 `아니` 가 `아닌` 을
+#        매칭하지 못한다(`닌 ≠ 니`). 그래서 우리 한정어
+#        `"검증된 현실화율이 **아닌** 사전 설정 참고 계수"` 가 위반으로 신고됐다.
+#        ★라틴 문자 감각으로 부정어 목록을 짜면 한글에서 이 형태로 샌다.
+_NEGATORS = r"(?:않|아니|아닌|아님|없|미검|불가)"
+_ASSERTS_VERIFIED = re.compile(
+    r"(?:검증|교차검증|상호검증|실증)(?:된|됨|되었|했)(?![^.]{0,14}" + _NEGATORS + r")"
+)
+
+
+@pytest.mark.asyncio
+async def test_prose_never_contradicts_machine_honesty_facts() -> None:
+    """(나-2) 기계 축이 «미검증/단일출처» 라 말할 때 산문이 «검증됐다» 고 하면 안 된다."""
+    producers = dict(await _ALL_PRODUCERS())
+    est, desk = producers["estimate_land_price"], producers["desk_appraisal"]
+    # 전제 — 기계 축이 실제로 그렇게 말하고 있는가(아니면 아래 대조가 무의미).
+    assert (est.get("trust") or {}).get("method") == "single_source"
+    assert (est.get("trust") or {}).get("cross_validation") is None
+    assert desk.get("confidence") is None, f"신뢰도 보류 상태여야 한다: {desk.get('confidence')}"
+
+    offenders = []
+    for name, payload in await _ALL_PRODUCERS():
+        offenders += [f"[{name}] {t}" for t in _collect_user_facing_strings(payload)
+                      if _ASSERTS_VERIFIED.search(t)]
+    assert not offenders, "기계 축은 미검증인데 산문이 검증을 주장한다:\n  " + "\n  ".join(offenders)
+
+    # ★양성 대조 — R5·저자가 실제로 생존시킨 문자열들을 잡는가.
+    for bad in (
+        "국토교통부 실거래가 통계로 검증된 보정계수 = ",
+        "국토교통부 실거래가로 검증된 확정 추정입니다",
+        "국토교통부 실거래가로 검증된 개별공시지가 ㎡당 1,000원 ",
+    ):
+        assert _ASSERTS_VERIFIED.search(bad), f"검사기 사망 — 통과시킨다: {bad}"
+    # 판별력 — 부정 구문·정당한 안내는 안 걸려야 한다(위양성도 결함이다).
+    assert not _ASSERTS_VERIFIED.search("실거래로 검증된 현실화율이 아닌 사전 설정 참고 계수입니다")
+    assert not _ASSERTS_VERIFIED.search("주변 토지 실거래와의 교차검증은 별도 경로를 활용하세요")
+    assert not _ASSERTS_VERIFIED.search("확인이 필요합니다")
+    # ★위양성으로 실제로 걸렸던 정상 문자열 둘(회귀 방지 — 다시 넣으면 이 줄이 깨진다).
+    assert not _ASSERTS_VERIFIED.search("개별공시지가 ㎡당 2,500,000원 (평당 8,264,462원)이 확인되었습니다.")
+    assert not _ASSERTS_VERIFIED.search("이는 교차검증이 아닙니다.")
+
+
+# ★잔여 부채 — 주제 밖 문자열의 «다른 종류의 거짓» 은 여전히 무잠금이다(위 (다)).
+#   커밋 메시지에만 적으면 안 보이므로 초록 안에 드러낸다.
+@pytest.mark.xfail(strict=True, reason="★부채(R5 HIGH-1 잔여): 주제 밖 문자열의 임의 허위주장은 무잠금 — 전수 동결은 과잉이라 하지 않았다")
+def test_all_user_facing_strings_are_pinned() -> None:
+    """언젠가 모든 사용자 노출 문자열이 템플릿 상수에서 나와야 이 축이 닫힌다(현재 미구현)."""
+    raise AssertionError("미구현 — 생산자 문자열의 상당수가 여전히 자유 리터럴이다")
