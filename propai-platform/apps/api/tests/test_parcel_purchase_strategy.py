@@ -1178,6 +1178,11 @@ def test_성장루프_payload가_실제_판정값을_싣는다(monkeypatch: pyte
     assert props["geometry_unknown"] == summary["geometry_unknown_count"] == 1
     assert props["secured_ratio_available"] is True
     assert props["scheme_provided"] is True
+    # ★★2026-09-05 — `scheme_resolved` 는 **단언 0건**이었고 원리적으로 늘 False 였다
+    #   (`strategy["legal"]` 에는 `governing_act` 가 없다 — 최상위에 있다).
+    #   그 계기가 죽어 있으면 성장루프가 판정보류 원인을 「사용자 미입력」으로 **오귀속**한다.
+    #   여기는 **등록 방식**(HOUSING_SCHEME)이므로 True 여야 한다 — 아래 음성 짝과 대조.
+    assert props["scheme_resolved"] is True, props
     assert props["undecided_rows"] == 0
 
     # ★식별자 유출 금지 — 필지 식별자·주소는 payload 에 들어가면 안 된다.
@@ -1634,3 +1639,37 @@ def test_형제_상한이_같은_상수를_공유한다() -> None:
 
     assert reg.MAX_STRATEGY_PARCELS == reg.MAX_BULK_ITEMS
     assert reg.MIN_STRATEGY_PARCELS == reg.MIN_BULK_ITEMS
+
+
+def test_scheme_resolved_gates_registered_vs_unregistered(monkeypatch):
+    """★두 모집단 — 계기가 **등록/미등록을 실제로 가르는가**.
+
+    한쪽만 보면 «항상 True» 도 «항상 False» 도 통과한다. 실제로 이 필드는
+    **원리적으로 늘 False** 였는데(정본이 아닌 블록을 봤다) 단언이 0건이라 조용했다.
+
+    ★사유가 다른 두 축을 섞지 않는다 — 여기서 재는 것은 ①정책표 미등록(개발자가 고칠 것)이고,
+      ②트랙 미입력(사용자가 채울 것)은 `requires_track_input` 축이라 별개다.
+    """
+    # ★형제 헬퍼를 쓴다 — `record_event` 를 **스텁하지 않는다.**
+    #   스텁하면 «호출부가 넘긴 dict» 만 보게 되어, `capture_service._EVENT_COLS` 화이트리스트가
+    #   키를 버리는 사실을 **원리적으로 못 본다**(그 파일이 실측으로 적어 둔 함정이고,
+    #   내 초판이 정확히 그것을 밟아 KeyError 로 죽었다). 실제 적재된 row 의 payload 를 본다.
+    events = _capture_growth(monkeypatch)
+
+    # ① 양성 — 정책표에 **등록된** 방식
+    _post_strategy(monkeypatch, _ring_endpoint_parcels(True), scheme=HOUSING_SCHEME,
+                   district_plan_decision_date="2024-01-01", housing_site_area_sqm=1100)
+    # ② 음성 — 정책표에 **없는** 방식(문자열은 있으므로 scheme_provided 는 True)
+    _post_strategy(monkeypatch, _ring_endpoint_parcels(True), scheme="존재하지않는사업방식XYZ",
+                   district_plan_decision_date="2024-01-01", housing_site_area_sqm=1100)
+
+    # ★공허 진리 가드 — 두 이벤트가 실제로 적재됐는가(대상 부재면 아래 대조가 공허하다).
+    got = [p for n, p in events if n == "parcel_purchase_strategy"]
+    assert len(got) == 2, f"성장루프 이벤트 2건이 아니다: {list(events)}"
+
+    registered, unregistered = got[0], got[1]
+    # ★핵심 — 두 모집단이 **실제로 갈린다**. 늘 True/늘 False 면 여기서 죽는다.
+    assert registered["scheme_resolved"] is True, registered
+    assert unregistered["scheme_resolved"] is False, unregistered
+    # ★그리고 `scheme_provided` 와 **다른 것을 잰다** — 둘 다 True 면 구별이 없다.
+    assert unregistered["scheme_provided"] is True, unregistered
