@@ -78,17 +78,24 @@ describe("FieldAppLaunchLink — 두 모집단이 반대 결과를 낸다", () =
     expect(el.getAttribute("href")).toBe("/ko/sales/sites");
   });
 
-  it("★수식키 클릭은 가로채지 않는다 — 사용자가 스스로 새 컨텍스트를 요구한 것이다", () => {
-    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);
-    window.open = open as unknown as typeof window.open;
-    const { el, seen } = renderLink();
+  // ★수식키는 **4종을 각각** 태운다(적대 리뷰 M-3 봉합).
+  //   종전엔 metaKey 하나만 봐서, 공용 판정을 손으로 «metaKey || ctrlKey» 로 되돌리는 변이가
+  //   **생존**했다 — shift·alt 모집단이 한 번도 안 태워졌기 때문이다.
+  //   ★«파일이 그 함수 이름을 담는가» 를 보는 소스 락으로는 이것을 못 잡는다(임포트가 남는다).
+  //     **존재를 잠그면 행위는 안 잠긴다** — 그래서 네 모집단을 실제로 누른다.
+  for (const key of ["metaKey", "ctrlKey", "shiftKey", "altKey"] as const) {
+    it(`★${key} 클릭은 가로채지 않는다 — 사용자가 스스로 새 컨텍스트를 요구한 것이다`, () => {
+      const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);
+      window.open = open as unknown as typeof window.open;
+      const { el, seen } = renderLink();
 
-    const notPrevented = fireEvent.click(el, { metaKey: true });
+      const notPrevented = fireEvent.click(el, { [key]: true });
 
-    expect(open).not.toHaveBeenCalled();
-    expect(seen).toEqual([]);
-    expect(notPrevented).toBe(true); // 브라우저에 맡긴다
-  });
+      expect(open).not.toHaveBeenCalled();
+      expect(seen).toEqual([]);
+      expect(notPrevented).toBe(true); // 브라우저에 맡긴다
+    });
+  }
 
   it("★열 때 쓰는 창 이름이 현장앱 정본 상수다(정체성 판별자와 결속)", () => {
     const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);

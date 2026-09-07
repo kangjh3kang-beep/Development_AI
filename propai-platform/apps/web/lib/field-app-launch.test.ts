@@ -85,3 +85,44 @@ describe("launchFieldApp — 3분기가 서로 갈린다", () => {
     expect(feat).toContain("popup=yes"); // 양성 대조 — features 자체는 살아 있다
   });
 });
+
+describe("★팝업 크기 — 주석이 선언한 불변식을 태운다(적대 리뷰 M-4)", () => {
+  // `popupFeatures` 주석: "화면보다 크게 요청하지 않는다 — 일부 브라우저는 화면을 넘는 요청을
+  // 통째로 무시해 크기 지정이 전부 날아간다". ★그 문장이 참인지 **재서** 확인한다.
+  // 종전 판은 `Math.max(360, …)` 하한이 바깥에 있어 availWidth=320 에서 스스로 그 주석을 깼다.
+  const setScreen = (w: number, h: number) =>
+    Object.defineProperty(window, "screen", {
+      value: { availWidth: w, availHeight: h },
+      configurable: true,
+    });
+  const dims = (feat: string) => ({
+    w: Number(/width=(\d+)/.exec(feat)?.[1]),
+    h: Number(/height=(\d+)/.exec(feat)?.[1]),
+  });
+
+  it("초소형 화면(320×480)에서도 요청 치수가 화면을 넘지 않는다", () => {
+    setScreen(320, 480);
+    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);
+    window.open = open as unknown as typeof window.open;
+
+    launchFieldApp("/ko/sales/sites");
+    const { w, h } = dims(String(open.mock.calls[0]![2]));
+
+    expect(w).toBeLessThanOrEqual(320);
+    expect(h).toBeLessThanOrEqual(480);
+  });
+
+  it("두 모집단 — 큰 화면(2560×1440)에서는 상한에서 멈춘다(무제한 확대 금지)", () => {
+    setScreen(2560, 1440);
+    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);
+    window.open = open as unknown as typeof window.open;
+
+    launchFieldApp("/ko/sales/sites");
+    const { w, h } = dims(String(open.mock.calls[0]![2]));
+
+    // 상한·하한을 **양방향으로** 건다 — 한쪽만 걸면 반대쪽이 무제한이 된다.
+    expect(w).toBeLessThanOrEqual(1180);
+    expect(w).toBeGreaterThan(320);
+    expect(h).toBeLessThanOrEqual(900);
+  });
+});
