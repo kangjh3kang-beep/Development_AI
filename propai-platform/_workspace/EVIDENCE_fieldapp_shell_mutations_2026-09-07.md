@@ -26,6 +26,8 @@ r5     CAUGHT    기준선 41건
 r6     SURVIVED  기준선 41건
 r7     CAUGHT    기준선 41건
 r8     CAUGHT    기준선 41건
+r9     CAUGHT    기준선 41건
+r10    CAUGHT    기준선 42건
 ```
 
 ★기준선 수열(15 → 27 → 33 → 41)이 커밋 타임라인과 일치한다:
@@ -58,15 +60,18 @@ r8     CAUGHT    기준선 41건
 | `r6` | `FieldNav.tsx` | `groups.find(g => g.title === activeGroupTitle) ??` → `null ??` | 폴백 사슬 |
 | `r7` | `FieldNav.tsx` | `aria-current={holdsActive ? "true" : undefined}` → `undefined` | 활성 그룹 표기 |
 | `r8` | `FieldNav.tsx` | `r6` 과 **동일** | 락 강화 후 재확인 |
+| `r9` | `SiteWorkspaceClient.tsx` | `<FieldAppAffordance />` 뒤에 `<FieldExtraRail tabs={[]} …/>` 삽입 | ★**적대 리뷰 2차가 SURVIVED 로 실증한 「네 번째 표면」** |
+| `r10` | `FieldNav.tsx` | `className="sa-tabbar"` → `"sa-tab-bar"` | ★**적대 리뷰 3차가 SURVIVED 로 실증** — 셸 W2 표지의 닻 |
 
 ## ③ 판독
 
-- **19회 · 최종 전부 CAUGHT.**
+- **21회 · 최종 전부 CAUGHT.**
 - ★**중간의 SURVIVED 1건(`r6`)을 지우지 않는다** — M2 락이 `activeGroupTitle` 폴백이 아니라
   `groups[0]` 폴백으로도 만족됐다(활성 탭을 첫 그룹에 뒀기 때문). 활성 탭을 첫 그룹 **밖**으로
   옮겨 고친 뒤 `r8` 에서 CAUGHT 를 받았다.
   **락을 추가한 것만으로는 그것이 무엇을 보는지 모른다** — 이 줄이 그 증거다.
-- `r1`·`r2`·`r3` 은 **적대 리뷰가 `::VERDICT=SURVIVED` 로 실증한 바로 그 변이**이고,
+- `r1`·`r2`·`r3`·`r9`·`r10` 은 **적대 리뷰가 세 라운드에 걸쳐 `::VERDICT=SURVIVED` 로
+  실증한 바로 그 변이들**이고,
   봉합 후 CAUGHT 로 뒤집혔다(리뷰어가 자기 변이로 독립 재확인했다).
 
 ## ④ 재현

@@ -38,7 +38,14 @@ const code = __stripCommentsForScan(readFileSync(resolve(process.cwd(), SHELL), 
 const selfClosing = code.match(/<[A-Z][A-Za-z0-9_]*\b[\s\S]*?\/>/g) ?? [];
 /** 다른 컴포넌트를 품은 매치는 버린다(비-자기닫힘 요소를 가로질러 잡힌 것). */
 const elements = selfClosing.filter((el) => !/<[A-Z][A-Za-z0-9_]*\b/.test(el.slice(1)));
-/** ★`tabs=` 를 받는 **모든** 요소 — 새 표면이 생기면 **여기 자동으로 들어온다.** */
+/**
+ * ★`tabs=` 를 받는 **모든** 요소 — 새 표면이 생기면 여기 자동으로 들어온다.
+ *   **단 조건이 있다: prop 이름이 `tabs` 일 때만이다.** IA 목록을 `items=` 같은 다른 이름으로
+ *   받는 표면은 여전히 감시망 밖이다(적대 리뷰가 `<FieldExtraRail items={[]} …/>` 로 실증).
+ *   그것까지 덮으려면 축을 「prop 이름」이 아니라 **「FieldNav 가 export 하는 컴포넌트」**로
+ *   옮겨야 하는데, 그러면 다른 모듈의 표면을 놓친다 — **어느 축도 전부를 덮지 못한다.**
+ *   지금 축이 덮는 범위를 정확히 적어 둔다.
+ */
 const tabsConsumers = elements.filter((el) => /\btabs=/.test(el));
 
 describe("현장앱 셸 배선(W1) — `tabs` 를 받는 **모든** 요소가 같은 SSOT 를 먹는다", () => {

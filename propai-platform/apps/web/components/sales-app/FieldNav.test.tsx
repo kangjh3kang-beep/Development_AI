@@ -224,6 +224,19 @@ describe("FieldDesktopNav 계약(L1) — 활성 그룹만 펼친다", () => {
     expect(cls).toContain("sm:block"); // sm+ 에서만 보인다
     expect(cls).not.toContain("sm:hidden");
   });
+
+  it("★R1 패널은 `sa-tabbar` 를 쓴다 — 셸의 W2 음성 단언이 이 이름을 표지로 삼는다", () => {
+    // ★적대 리뷰가 이 자리를 반증했다: `sa-tabbar` → `sa-tab-bar` 로 바꿔도 초록이었다.
+    //   그러면 셸의 `expect(code).not.toContain("sa-tabbar")` 가 **닻을 잃고**,
+    //   셸이 새 이름으로 탭바를 다시 인라인해도 W2 가 탐지하지 못한다.
+    //   ⇒ 표지가 사는 자리를 여기서 못 박는다(두 파일이 같은 문자열에 묶인다).
+    const { container } = render(
+      <FieldDesktopNav tabs={DEV_TABS} activeTab="home" onNavigate={() => {}} />,
+    );
+    const panel = container.querySelector('[role="tabpanel"]');
+    expect(panel).toBeTruthy(); // 공허 방지
+    expect((panel as HTMLElement).className).toContain("sa-tabbar");
+  });
 });
 
 describe("★M2·M3 — 상태가 어긋나도 화면이 무너지지 않는다", () => {
