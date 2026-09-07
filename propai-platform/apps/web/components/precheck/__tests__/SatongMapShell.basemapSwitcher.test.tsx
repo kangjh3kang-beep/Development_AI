@@ -8,7 +8,11 @@ import type { ReactNode } from "react";
 import { fireEvent, render, screen, act } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SatongMapShell, SATONG_MAP_SHELL_LAYERS } from "@/components/precheck/SatongMapShell";
+import {
+  SatongMapShell,
+  SATONG_MAP_SHELL_LAYERS,
+  SATONG_BASEMAP_SWITCHES as BASEMAP_SWITCHES,
+} from "@/components/precheck/SatongMapShell";
 import {
   isRenderableSatongMapLayer,
   resolveVWorldBaseLayer,
@@ -643,8 +647,79 @@ describe("★신고② — 베이스맵의 단일 소유자", () => {
     }
   });
 
+  it("★★M3 — **스위처 4종 전수**가 각자의 배경으로 귀결한다(파생 · 어휘 불일치를 잡는다)", () => {
+    // ★★적대 리뷰 M3: 종전엔 위성·일반·하이브리드 **3종만 손으로** 태웠다. 그래서
+    //   `{ id: "gray" }` 를 `"grey"` 로 바꾸는 변이가 **SURVIVED** 였다 — 사용자는 「회색」을
+    //   눌러도 배경이 안 바뀌고 「일반」이 활성으로 표시된다(`resolveVWorldBaseLayer` 는
+    //   `"gray"` 를 찾는다). ★«목록은 곧 상한»을 **아래 목록**에만 걸었고 **한 단계 위**
+    //   (`resolveVWorldBaseLayer` 의 if-사슬)는 손 목록으로 남아 있었다.
+    //   ⇒ **스위처에서 파생**해 전수를 태운다. 스위처에 항목이 늘면 자동으로 따라온다.
+    render(<SatongMapShell locale="ko" />);
+    hoverClick(screen.getByRole("button", { name: /베이스맵/ }));
+
+    // ★공허 진리 가드 — 파생 모집단이 비면 아래 루프가 아무것도 안 본다.
+    expect(BASEMAP_SWITCHES.length).toBeGreaterThanOrEqual(4);
+
+    for (const opt of BASEMAP_SWITCHES) {
+      fireEvent.click(screen.getByRole("button", { name: `베이스맵: ${opt.label}` }));
+      expect(resolveVWorldBaseLayer(layerState()), `${opt.id} → ${opt.base}`).toBe(opt.base);
+    }
+  });
+
+  it("★★M2 — `aerial` 레거시 저장분이 **항공뷰에 갇히지 않는다**(행위 락)", () => {
+    // ★★적대 리뷰 M2: `TERRAIN_BASEMAP_CONTROL_IDS` 에서 `"aerial"` 한 줄을 지우는 변이가
+    //   **SURVIVED** 였다. 계획서는 *"가를 수 없으므로 남긴다"* 고 **판단만** 했고 락이 없었다.
+    //   그런데 막고 있던 것이 실재한다 — 그 id 가 배타 해제 집합에 없으면:
+    //     저장분 ["aerial"] → 「일반」 클릭 → ["aerial","base"] → resolveVWorldBaseLayer = "Hybrid"
+    //   즉 **항공뷰에서 영영 못 나온다.** 상수를 단언하면 장식이므로 **행위로** 태운다.
+    act(() => {
+      useSatongMapPrefs.setState({ enabledLayerIds: ["terrain"], enabledLayersCustomized: true });
+      useSatongMapPrefs.getState().setControlsByLayer((prev) => ({ ...prev, terrain: ["aerial"] }));
+    });
+    // ★공허 진리 가드 — 출발점이 정말 「항공뷰」여야 아래 탈출이 의미를 갖는다.
+    expect(resolveVWorldBaseLayer(layerState())).toBe("Hybrid");
+
+    render(<SatongMapShell locale="ko" />);
+    hoverClick(screen.getByRole("button", { name: /베이스맵/ }));
+    fireEvent.click(screen.getByRole("button", { name: "베이스맵: 일반" }));
+
+    expect(useSatongMapPrefs.getState().controlsByLayer.terrain).not.toContain("aerial");
+    expect(resolveVWorldBaseLayer(layerState())).toBe("Base");
+  });
+
+  it("★★M4 — 레일의 **모든 팝오버 트리거**가 펼침에서 캡션을 노출한다(발견성 · 파생)", () => {
+    // ★★적대 리뷰 M4: 이 PR 이 「지형」 캡션이 달린 버튼을 없앴는데, 그것이 배경 전환의
+    //   **글자 있는 유일한 진입점**이었다. 남은 것은 무라벨 아이콘 하나이고 `title` 은
+    //   **터치에서 뜨지 않는다**. 이 저장소는 그 축을 이미 결함으로 판정하고 고친 적이 있다.
+    //   ★종전 캡션 락은 `getByTitle(/지적도 — 미리보기 열기/)` 로 **손으로 하나** 골랐다 →
+    //   **파생**으로 바꿔 비대칭이 다시 생기지 않게 한다.
+    render(<SatongMapShell locale="ko" />);
+    // ★캡션은 **펼침에서만** 노출된다. `railPinned` 기본값이 `true`(UX 트랙 C1)라 이미 펼쳐져 있다 —
+    //   ★내 초판은 여기서 토글을 클릭했다가 **오히려 접어** 버렸다. 기본 상태를 대조군으로 단언한다.
+    expect(screen.getByTitle(/레이어 목록 고정 해제/), "레일이 펼쳐져 있지 않다 — 아래가 공허해진다").toBeTruthy();
+
+    const expected = [...SATONG_MAP_SHELL_LAYERS.map((l) => l.shortLabel), "배경"];
+    // ★공허 진리 가드 — 모집단이 비면 루프가 아무것도 안 본다.
+    expect(expected.length).toBeGreaterThan(5);
+    for (const caption of expected) {
+      expect(screen.getAllByText(caption).length, `캡션 없음: ${caption}`).toBeGreaterThan(0);
+    }
+  });
+
   // ★부채를 초록 안에 남긴다(§C-13) — 커밋 메시지에만 적으면 드러나지 않는다.
-  it.todo("표고·경사(elevation) 구현 시 자기 레이어로 되살린다 — 지금은 원천 미연동이라 레일에서 뺐다");
+  // ★★정정(적대 리뷰 M1) — 초판 todo 는 *"원천 미연동이라 뺐다"* 였는데 **거짓**이다.
+  //   경사·고저차는 **이미 구현돼 있다**: `ParcelSlopeSection` + `POST /terrain/analyze`
+  //   (DEM 격자 중앙차분). 없는 것은 **레이어 오버레이 표면**이고, 그 사유는 표고 원천의
+  //   **1 req/s 공개 제한**이라 버튼 온디맨드로 설계한 것이다(`ParcelSlopeSection.tsx:11-15`).
+  //   ⇒ 부채는 「구현」이 아니라 **「승격」**이다. 이렇게 안 적으면 다음 사람이 **있는 것을 다시 만든다**(§29).
+  it.todo(
+    "표고·경사를 레이어 표면으로 **승격** — 기능(ParcelSlopeSection·/terrain/analyze)은 이미 있다. " +
+      "막고 있는 것은 원천 1req/s 제한이라, 승격하려면 서버 캐시나 전역 리미터가 먼저다",
+  );
+  it.todo(
+    "랜딩 「지도 데이터 레이어 11종」의 축이 **레일 엔트리 수**다(`roadview` 는 needs-source · " +
+      "컨트롤 전부 mapEffect:false 라 아무것도 안 그린다). 실제 렌더 기준이면 10 — 대리 변수를 정직한 축으로",
+  );
   it.todo(
     "★그때 `handleLayerControlClick` 의 비-베이스맵 가드를 **행위로** 잠근다 — 지금은 terrain 이 " +
       "레일에 없어 그 분기를 태울 UI 경로가 없고, 변이가 SURVIVED 로 그것을 드러냈다",

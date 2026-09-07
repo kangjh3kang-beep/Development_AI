@@ -523,8 +523,17 @@ const LAYERS: SatongLayer[] = [
   //     여전히 렌더 경로다(스위처가 그 상태를 통해 배경을 바꾼다). 지우면 스위처가 죽는다.
   //   · `defaultSatongMapControls().terrain = ["base"]` 도 그대로 — 저장 위치가 안 바뀌므로
   //     **persist 마이그레이션이 필요 없고** 기존 사용자의 베이스맵 선택이 그대로 산다.
-  //   · 「표고·경사」(`elevation`)는 **미구현**이라 함께 사라진다 — 구현 시 자기 레이어로 되살린다.
-  //     부채를 초록 안에 남긴다(`SatongMapShell.basemapSingleOwner.test.tsx` 의 `it.todo`).
+  //   · 「표고·경사」(`elevation`) 컨트롤도 함께 사라진다.
+  //     ★★**정정(적대 리뷰 M1)**: 초판은 이것을 *"미구현이라 함께 사라진다"* 라고 적었다.
+  //     **거짓이었다.** 경사·고저차는 **이미 구현돼 있다** — 같은 파일이 그것을 임포트한다:
+  //       `ParcelSlopeSection`(:53) · `POST /terrain/analyze`(:1064) · `SATONG_PARCEL_SLOPE_KEY`(:106)
+  //     그리고 그 컴포넌트가 스스로 적는다 — *"값은 전부 서버 산정(DEM 격자 중앙차분)"*.
+  //     ★없는 것은 **기능이 아니라 「레이어 오버레이 표면」**이고, 그것이 없는 데는 **측정된 사유**가
+  //     있다: 표고 원천 OpenTopoData 가 **1 req/s 공개 제한**이라 필지를 훑을 때 동시 요청이
+  //     제한을 넘긴다 ⇒ **명시적 버튼 온디맨드**로 설계했다(`ParcelSlopeSection.tsx:11-15`).
+  //     ⇒ 그래서 `mapEffect:false` 인 이 컨트롤은 **죽은 자리**였고, 없애는 것이 옳다.
+  //     ★「없는 것을 새로 만드는 것과 있는 것을 안 쓴 것은 처방이 다르다」(§29) — 부채는
+  //     「구현」이 아니라 **「기존 W2 배선을 레이어 표면으로 승격」**이다(`it.todo` 에 그렇게 적었다).
   {
     id: "roadview",
     label: "로드뷰",
@@ -544,6 +553,10 @@ const LAYERS: SatongLayer[] = [
 ];
 
 export { LAYERS as SATONG_MAP_SHELL_LAYERS };
+// ★2026-09-07(적대 리뷰 M3) — 락이 **스위처에서 파생**할 수 있도록 내보낸다.
+//   종전엔 테스트가 위성·일반·하이브리드 **3종만 손으로** 태워, 「회색」의 id 어휘가 깨져도
+//   초록이었다(변이 `gray → grey` SURVIVED). 「목록은 곧 상한」을 닫으려면 모집단이 필요하다.
+export { BASEMAP_SWITCHES as SATONG_BASEMAP_SWITCHES };
 
 // 항공뷰 썸네일 베이스맵 스위처(jootek 패리티) — terrain 컨트롤 재사용.
 // ★스와치=실물 타일 미리보기(2026-07-17 직관력 보강): 스와치의 본질은 "이 버튼을 누르면
@@ -2366,7 +2379,7 @@ export function SatongMapShell({
    * @param open 실제 열기 동작(openLayerPanel/openBasemapPanel 바인딩)
    * @param alreadyShown 지금 보이는 팝오버가 바로 이 항목인가(같은 항목 재진입은 무동작)
    *
-   * ★열기 경로를 **여기 하나로** 모은다 — 레일 항목이 12개+베이스맵이라 각 핸들러에서
+   * ★열기 경로를 **여기 하나로** 모은다 — 레일 항목이 11개+베이스맵이라(★2026-09-07 신고②로 12 → 11) 각 핸들러에서
    *   따로 지연을 걸면 새 항목이 추가될 때 또 샌다(이 레일에서 반복된 결함 패턴).
    */
   const requestHoverOpen = useCallback(
@@ -3240,6 +3253,17 @@ export function SatongMapShell({
           }`}
         >
           <ImageIcon className="size-5" aria-hidden />
+          {/* ★★2026-09-07(적대 리뷰 M4) — **형제와 같은 캡션**을 붙인다.
+              이 PR 이 「지형」 캡션이 달린 레일 버튼을 없앴는데, 그것이 배경 전환의 **글자 있는
+              유일한 진입점**이었다. 그대로 두면 배경 전환이 **무라벨 아이콘 하나**로만 도달한다 —
+              `title` 은 **터치 기기에서 뜨지 않는다**.
+              ★이 저장소는 그 축을 **이미 결함으로 판정하고 고쳤다**(바로 아래 형제 주석:
+              *"무라벨 아이콘 … 터치 기기에서 기능을 알 방법이 '하나씩 탭'뿐"*), 그리고 계획서 §0 이
+              인용한 볼트 노트가 *"제어 통합은 발견성과 트레이드오프"* 라고 적고 있다.
+              ★**인용해 놓고 이번 변경분에 적용하지 않았다** — 그것이 이 두 줄이 필요한 이유다. */}
+          {railPinned && (
+            <span className="mt-0.5 text-[10px] font-bold leading-none">배경</span>
+          )}
         </button>
 
         {/* 내부 레이어 버튼 리스트 (세로 전개) */}
@@ -3294,7 +3318,7 @@ export function SatongMapShell({
               aria-label={layer.label}
             >
               {/* 펼침(w-32)에서는 아이콘 밑에 2글자 캡션을 노출한다.
-                  ★무라벨 아이콘 12개는 hover가 없는 터치 기기에서 기능을 알 방법이
+                  ★무라벨 아이콘(당시 12개·현재 11개)은 hover가 없는 터치 기기에서 기능을 알 방법이
                     '하나씩 탭'뿐이었다. shortLabel은 이미 12개 전부 정의돼 있는데
                     소비처가 0이라 방치돼 있던 자산 — 새 카피 없이 발견성을 회복한다. */}
               <Icon className="size-5" aria-hidden />
