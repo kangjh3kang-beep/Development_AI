@@ -1,26 +1,29 @@
 """토지 적정 매입가 추정 — 공시지가 × 지역 시세보정계수 (+ 주변 토지 실거래 블렌딩).
 
-토지조서 '매입예정가' 자동 산정용. 개별공시지가(NED/VWorld)에 지역별 공시지가 현실화율
-역수(MARKET_MULTIPLIER)를 곱해 적정 시세를 추정한다. 사용자가 수정 가능(참고값).
+토지조서 '매입예정가' 자동 산정용. 개별공시지가(NED/VWorld)에 **사전 설정된 지역별
+보정계수**(market_multiplier SSOT)를 곱해 적정 시세를 추정한다. 사용자가 수정 가능(참고값).
+
+★그 계수는 «공시지가 현실화율의 역수» 가 **아니다**(종전 서술 정정 · 2026-09-07). 현실화율은
+  표준지공시지가↔실거래 대조로만 잴 수 있고 그 데이터원이 이 저장소에 없다 — **미측정**이다.
+  계수는 근거가 문서화되지 않은 휴리스틱 상수이므로 그렇게 부른다.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-# 지역 시세보정계수는 comprehensive_analysis_service의 검증된 맵을 재사용(인스턴스화 없이).
-from app.services.land_intelligence.comprehensive_analysis_service import ComprehensiveAnalysisService as _CAS
+# 지역 시세보정계수는 market_multiplier 모듈이 SSOT 다(2026-09-07).
+# ★종전에는 이 모듈이 자체 사본을 두고 comprehensive 의 맵만 빌려 썼는데, **사유 문구를 따로
+#   조립**하는 바람에 같은 거짓("현실화율 약 N%" = 100/계수)이 두 곳에 복제돼 있었다.
+#   맵만 공유하고 «말하는 방식» 을 복제하면 한 곳을 고쳐도 나머지가 남는다 — 그래서 계수와
+#   사유를 **함께** SSOT 로 옮기고 여기서는 위임만 한다.
+from app.services.land_intelligence import market_multiplier as _mm
 
 
 def _market_multiplier(address: str) -> tuple[float, str]:
-    addr = address or ""
-    for district, mult in _CAS.MARKET_MULTIPLIER_MAP.items():
-        if district in addr:
-            return mult, f"{district} 공시지가 현실화율(약 {100/mult:.0f}%) 반영 보정 {mult}배"
-    for region, mult in _CAS.MARKET_MULTIPLIER_REGION.items():
-        if region in addr:
-            return mult, f"{region} 평균 공시지가 현실화율 반영 보정 {mult}배"
-    return 1.2, "전국 평균 보정 1.2배(지역 미등록)"
+    """주소 → (보정계수, 사유). SSOT 위임 — 계수로부터 통계를 역산하지 않는다."""
+    mult, rationale, _scope = _mm.resolve_market_multiplier(address)
+    return mult, rationale
 
 
 def _price_evidence(
@@ -134,7 +137,7 @@ async def estimate_land_price(
         # (가짜 cross_validation 신호를 만들지 않고, 단일출처 한계를 정직하게 고지)
         "trust": {
             "method": "single_source",
-            "basis": "개별공시지가 × 지역 시세보정(현실화율 역수)",
+            "basis": "개별공시지가 × 사전 설정 지역 보정계수(실거래 미검증)",
             "confidence": 0.7,
             "recheck_recommended": True,
             "cross_validation": None,

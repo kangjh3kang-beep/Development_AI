@@ -21,6 +21,7 @@ from app.services.feasibility.permit_validator import (
     permitted_types_known,
 )
 from app.services.land_intelligence import far_tier_service
+from app.services.land_intelligence import market_multiplier as _market_multiplier_mod
 from app.services.land_intelligence.land_info_service import LandInfoService
 from app.services.zoning.development_feasibility_validator import MAX_FLOORS
 
@@ -1402,65 +1403,23 @@ class ComprehensiveAnalysisService:
     # Section 3: 토지 주변시세
     # ────────────────────────────────────────────
 
-    # 지역별 공시지가 대비 시세 보정계수
-    # 공시지가 현실화율(2025 기준)의 역수 + 지역 프리미엄 반영
-    # - 서울 강남권: 공시지가 현실화율 약 50~65% → 보정계수 1.5~2.0배
-    # - 서울 비강남권: 공시지가 현실화율 약 65~80% → 보정계수 1.2~1.5배
-    # - 경기 주요시(성남/용인/화성 등): 현실화율 약 70~85% → 보정계수 1.1~1.4배
-    # - 기타 지방: 현실화율 약 80~90% → 보정계수 1.0~1.2배
-    MARKET_MULTIPLIER_MAP: dict[str, float] = {
-        # 서울 강남권 (공시지가 대비 시세 괴리가 큰 지역)
-        "강남구": 1.8, "서초구": 1.7, "송파구": 1.6, "용산구": 1.6,
-        # 서울 주요 주거·상업지역
-        "마포구": 1.5, "성동구": 1.5, "광진구": 1.4, "영등포구": 1.4,
-        "동작구": 1.4, "강동구": 1.4,
-        # 서울 기타
-        "관악구": 1.3, "구로구": 1.3, "금천구": 1.2,
-        "노원구": 1.3, "도봉구": 1.2, "중랑구": 1.2, "강북구": 1.2,
-        "성북구": 1.3, "은평구": 1.2, "서대문구": 1.3,
-        "종로구": 1.5, "중구": 1.5, "양천구": 1.3, "강서구": 1.3,
-        # 경기 주요시
-        "성남시": 1.4, "분당": 1.5, "판교": 1.6,
-        "수원시": 1.3, "용인시": 1.3, "화성시": 1.2,
-        "고양시": 1.3, "일산": 1.3,
-        "의정부시": 1.2, "남양주시": 1.2, "구리시": 1.3,
-        "파주시": 1.1, "양주시": 1.1,
-        "안양시": 1.3, "안산시": 1.2, "시흥시": 1.2,
-        "김포시": 1.2, "광명시": 1.4, "하남시": 1.4,
-        "부천시": 1.2, "광주시": 1.2,
-        # 광역시
-        "해운대구": 1.4, "수영구": 1.3,
-        "연수구": 1.3, "송도": 1.4,
-    }
-    MARKET_MULTIPLIER_REGION: dict[str, float] = {
-        "서울특별시": 1.4, "서울": 1.4,
-        "경기도": 1.2, "경기": 1.2,
-        "인천광역시": 1.2, "인천": 1.2,
-        "부산광역시": 1.2, "부산": 1.2,
-        "대구광역시": 1.15, "대전광역시": 1.15,
-        "광주광역시": 1.1, "울산광역시": 1.15,
-        "세종특별자치시": 1.2, "제주특별자치도": 1.15,
-    }
+    # 지역별 공시지가→시세 보정계수는 market_multiplier 모듈이 SSOT 다(2026-09-07).
+    # ★종전에는 이 클래스와 land_price_estimator 가 같은 로직을 복제했고, **둘 다** 사유 문구에
+    #   `100/계수` 를 「현실화율 약 N%」로 인쇄했다 — 고른 값을 고른 이유처럼 말한 것이다.
+    #   두 곳을 각각 고치면 반드시 하나가 남으므로 계수와 «말하는 방식» 을 함께 SSOT 로 옮겼다.
+    # 아래 두 속성은 기존 참조(`ComprehensiveAnalysisService.MARKET_MULTIPLIER_MAP`)를 깨지 않기
+    # 위한 **별칭**이다 — 같은 객체를 가리키므로 SSOT 가 갈라지지 않는다.
+    MARKET_MULTIPLIER_MAP: dict[str, float] = _market_multiplier_mod.MARKET_MULTIPLIER_MAP
+    MARKET_MULTIPLIER_REGION: dict[str, float] = _market_multiplier_mod.MARKET_MULTIPLIER_REGION
 
     def _get_market_multiplier(self, address: str) -> tuple[float, str]:
-        """주소 기반 공시지가→시세 보정계수 산정.
+        """주소 기반 공시지가→시세 보정계수 산정(SSOT 위임).
 
         Returns:
-            (보정계수, 산정 근거 설명)
+            (보정계수, 산정 근거 설명) — 근거 문구는 계수로부터 어떤 통계도 **역산하지 않는다**.
         """
-        for district, mult in self.MARKET_MULTIPLIER_MAP.items():
-            if district in address:
-                return mult, (
-                    f"{district} 지역의 공시지가 현실화율(약 {100/mult:.0f}%)을 반영한 "
-                    f"보정계수 {mult}배를 적용하였습니다."
-                )
-        for region, mult in self.MARKET_MULTIPLIER_REGION.items():
-            if region in address:
-                return mult, (
-                    f"{region} 평균 공시지가 현실화율을 기반으로 "
-                    f"보정계수 {mult}배를 적용하였습니다."
-                )
-        return 1.2, "지역별 세부 보정계수가 미등록되어 전국 평균 보정계수 1.2배를 적용하였습니다."
+        mult, rationale, _scope = _market_multiplier_mod.resolve_market_multiplier(address)
+        return mult, rationale
 
     def _calc_land_prices(self, base: dict, land_area: float) -> dict[str, Any]:
         prices = base.get("official_prices", [])
