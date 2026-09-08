@@ -97,6 +97,20 @@ async def create_node(db: AsyncSession, site_id, node_type, parent_id=None, **kw
             SalesOrgNode.deleted_at.is_(None)))).scalar_one_or_none()
         if parent is None:
             raise ValueError("상위(부모) 조직 노드를 찾을 수 없습니다(현장 소속 노드만 상위로 지정 가능)")
+    # ★★**루트는 AGENCY 만**(2026-09-08). 종전엔 이 함수가 부모 없는 노드를 **아무 타입으로나**
+    #   만들 수 있었고, 라우터(`actions.py:113-116`)만 그것을 400 으로 막고 있었다.
+    #   그래서 **라우터를 안 거치는 생산자**(`market._link_membership_on_accept` 의 raw INSERT)가
+    #   루트 `MEMBER` 를 만들었고, 정산이 `chain[0]` 을 대행사로 보므로
+    #   **수수료 RESIDUAL 전액이 그 신입에게 귀속**됐다(`commission/engine.py:163-182`).
+    #
+    #   ⇒ 규칙을 **라우터가 아니라 생성 함수**에 둔다. 그러면 어느 경로로 들어와도 따라온다.
+    #   ★저장소가 이미 그 사유를 적어 뒀다 — `actions.py:43-48`:
+    #     *"상위가 말단을 건너뛰어 직접 등록하면 중간 계층의 승인·책임 체계가 무너진다
+    #       (수수료 2단 배분 기준 붕괴)."* 이 가드는 그 문장을 **기계로** 만든 것이다.
+    if parent is None and str(node_type) != "AGENCY":
+        raise ValueError(
+            "부모 없이 만들 수 있는 것은 대행사(AGENCY) 노드뿐입니다 — "
+            f"'{node_type}' 는 상위 노드를 지정해야 합니다(수수료 배분 체인이 대행사에서 시작한다)")
     node = SalesOrgNode(site_id=site_id, node_type=node_type, parent_id=parent_id, path="tmp", **kw)
     db.add(node)
     await db.flush()

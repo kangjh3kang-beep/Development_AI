@@ -38,6 +38,16 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+# ★노드 생성은 **공용 함수 하나**를 경유한다(2026-09-08) — 종전 raw INSERT 가 루트 고아를
+#   만들어 수수료 RESIDUAL 전액이 신입에게 귀속됐다. create_node 가 루트 규칙을 강제한다.
+from app.services.sales.org.service import create_node
+from apps.api.database.models.sales.site_org import SalesOrgMembershipHistory
+
+# ★멤버십 판정은 **`active = true AND deleted_at IS NULL`** 두 조건을 함께 본다(2026-09-08).
+#   형제 3곳(`deps_sales.py:186-190` · `site_auth.py:233-235` · `crm_enhance.py:148-149`)은
+#   이미 둘 다 보는데 이 파일만 `active` 만 봤다. 범용 소프트삭제(`crud/base.py:62`)는
+#   `deleted_at` 만 세우고 `active` 를 안 내리므로 **«삭제됐는데 active=true»** 상태가 실재할 수
+#   있고, 그러면 해촉된 사람이 옛 현장 집계를 계속 보게 된다.
 from apps.api.database.sales_market_ddl import INDEX_DDLS, TABLE_DDLS  # DDL/인덱스 SSOT(036 과 공유)
 
 logger = logging.getLogger(__name__)
@@ -665,7 +675,7 @@ async def _link_membership_on_accept(db: AsyncSession, site_id, applicant_user_i
         if not is_admin:
             mgr = (await db.execute(text(
                 "SELECT node_type FROM sales_org_nodes"
-                " WHERE site_id = :sid AND user_id = :uid AND active = true"),
+                " WHERE site_id = :sid AND user_id = :uid AND active = true AND deleted_at IS NULL"),
                 {"sid": str(site_id), "uid": str(decider.id)})).first()
             is_admin = bool(mgr and str(mgr[0]) in {
                 "AGENCY", "SUBAGENCY", "GM_DIRECTOR", "DIRECTOR", "TEAM_LEADER"})
@@ -674,23 +684,53 @@ async def _link_membership_on_accept(db: AsyncSession, site_id, applicant_user_i
 
         # 이미 멤버면 noop(멱등)
         existing = (await db.execute(text(
-            "SELECT id FROM sales_org_nodes WHERE site_id = :sid AND user_id = :uid AND active = true"),
+            "SELECT id FROM sales_org_nodes WHERE site_id = :sid AND user_id = :uid"
+            " AND active = true AND deleted_at IS NULL"),
             {"sid": str(site_id), "uid": str(applicant_user_id)})).first()
         if existing:
             return True
 
-        # 신규 MEMBER 노드 생성 — ltree path 는 현장 루트 하위 단순경로(고유 라벨).
-        # ★라벨은 영문 'm' 접두(영숫자) — 숫자 시작 라벨은 text2ltree 캐스트가 거부하므로 접두로 방지.
-        node_id = uuid.uuid4()
-        label = f"m{str(node_id).replace('-', '')[:16]}"
+        # ★★신규 MEMBER 노드는 **공용 생성 함수를 경유한다**(2026-09-08).
+        #
+        # 종전엔 여기서 raw INSERT 로 `path = 라벨 1개` · `parent_id` 미지정 =  **루트 고아 노드**를
+        # 만들었다. 그런데 정산(`commission/engine.py:163-182`)은 `chain[0]` 을 대행사로 보므로
+        # 루트 노드로 계약이 체결되면 `chain=[자기자신]` → `allocated=0` → **`residual = total`**
+        # 이 그 신입에게 `basis="RESIDUAL"` 로 꽂힌다 — **대행사·본부장·팀장 배분 0원.**
+        #
+        # ★같은 테이블의 다른 생산자(`actions.add_node`)는 **루트 생성 시 AGENCY 아니면 400** 이었다.
+        #   두 생산자가 정반대 규칙을 갖고 있었고 **규칙 없는 쪽이 라이브 배선돼 있었다.**
+        #   ⇒ 이제 `create_node` 자신이 그 규칙을 강제하므로 이 경로도 자동으로 따라온다.
+        #
+        # ★**부모는 승인자의 노드**다. 위에서 이미 «결정자가 이 현장 관리자인가» 를 확인했으므로
+        #   그 노드가 곧 sponsor 이고, 그러면 수수료 체인이 **처음부터 대행사를 루트로** 갖는다.
+        #   승인자가 플랫폼 역할(SUPERADMIN 등)이라 조직도 노드가 없으면 **현장의 AGENCY 루트**에 붙인다.
+        parent_row = (await db.execute(text(
+            "SELECT id FROM sales_org_nodes"
+            " WHERE site_id = :sid AND user_id = :uid AND active = true AND deleted_at IS NULL"
+            " ORDER BY nlevel(path) ASC LIMIT 1"),
+            {"sid": str(site_id), "uid": str(decider.id)})).first()
+        if parent_row is None:
+            # 승인자가 조직도에 없다(플랫폼 관리자) → 현장의 대행사 루트를 부모로.
+            parent_row = (await db.execute(text(
+                "SELECT id FROM sales_org_nodes"
+                " WHERE site_id = :sid AND node_type = 'AGENCY' AND active = true"
+                " AND deleted_at IS NULL ORDER BY nlevel(path) ASC LIMIT 1"),
+                {"sid": str(site_id)})).first()
+        if parent_row is None:
+            # ★붙일 자리가 없다 — 조직도가 아직 없는 현장이다. **고아를 만들지 않는다.**
+            #   조용히 루트를 만드는 것이 바로 이 결함이었다(§돈).
+            logger.warning(
+                "채용연계: 현장 %s 에 상위 노드가 없어 멤버십 연결을 보류한다"
+                " (조직도 시드 후 재시도 필요) — 고아 루트 노드를 만들지 않는다", site_id)
+            return False
+
         name_row = (await db.execute(text("SELECT name FROM users WHERE id = :uid"),
                                      {"uid": str(applicant_user_id)})).first()
         display = name_row[0] if name_row else None
-        await db.execute(text(
-            "INSERT INTO sales_org_nodes (id, site_id, node_type, path, user_id, display_name, active)"
-            " VALUES (:id, :sid, 'MEMBER', :path::ltree, :uid, :nm, true)"),
-            {"id": str(node_id), "sid": str(site_id), "path": label,
-             "uid": str(applicant_user_id), "nm": display})
+        node = await create_node(db, site_id, "MEMBER", parent_id=parent_row[0],
+                                 user_id=applicant_user_id, display_name=display)
+        db.add(SalesOrgMembershipHistory(node_id=node.id, action="ASSIGN",
+                                         to_path=str(node.path), by=decider.id))
         # MGM 추천코드 귀속은 Phase1-C referral 모듈로 구현됨(고객 방문/계약 경로에서 귀속).
         # 채용(B2B)은 고객귀속과 별개 흐름이므로 여기서는 멤버십 연결만 수행한다.
         return True
@@ -774,7 +814,8 @@ async def _managed_site_ids(db: AsyncSession, user) -> list[str]:
     """내가 관리(또는 멤버)하는 현장 목록 — 조직도 노드 + 소유 현장(테넌트) union."""
     sids: set[str] = set()
     rows = (await db.execute(text(
-        "SELECT DISTINCT site_id FROM sales_org_nodes WHERE user_id = :uid AND active = true"),
+        "SELECT DISTINCT site_id FROM sales_org_nodes WHERE user_id = :uid"
+        " AND active = true AND deleted_at IS NULL"),
         {"uid": str(user.id)})).all()
     for r in rows:
         if r[0]:
@@ -801,7 +842,8 @@ async def _site_staff_summary(db: AsyncSession, site_id: str) -> SiteStaffSummar
       42703 까지 흡수하면 '있어야 할 컬럼이 사라진' 진짜 결함이 '계약/매출 0' 으로 은폐된다.
     """
     member_cnt = (await db.execute(text(
-        "SELECT count(*) FROM sales_org_nodes WHERE site_id = :sid AND active = true"),
+        "SELECT count(*) FROM sales_org_nodes WHERE site_id = :sid"
+        " AND active = true AND deleted_at IS NULL"),
         {"sid": site_id})).scalar() or 0
     site_name = (await db.execute(text(
         "SELECT site_name FROM sales_sites WHERE id = :sid"), {"sid": site_id})).scalar()

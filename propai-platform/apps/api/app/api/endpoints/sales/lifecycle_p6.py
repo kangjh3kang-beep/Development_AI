@@ -96,7 +96,8 @@ async def comm_holdback(body: dict, db: AsyncSession = Depends(get_db),
 @r6.post("/commission/holdback/{holdback_id}/release")
 async def comm_release(holdback_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                        ctx: SalesCtx = Depends(require_role("AGENCY", "DEVELOPER"))):
-    await release_holdback(db, holdback_id)
+    # ★현장을 넘긴다 — 안 넘기면 A현장 운영자가 B현장 보류금을 해제할 수 있다(2026-09-08).
+    await release_holdback(db, holdback_id, site_id=ctx.site_id)
     await db.commit()
     return {"ok": True}
 

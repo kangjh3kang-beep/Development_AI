@@ -121,9 +121,32 @@ async def set_holdback(db: AsyncSession, split_id, reason, amount, release_condi
     await db.flush()
 
 
-async def release_holdback(db: AsyncSession, holdback_id):
-    h = (await db.execute(select(SalesCommissionHoldback).where(
-        SalesCommissionHoldback.id == holdback_id))).scalar_one()
+async def release_holdback(db: AsyncSession, holdback_id, site_id=None):
+    """보류금 해제 — ★**현장 격리**(2026-09-08).
+
+    종전엔 `id` 만 보고 해제해, A현장 운영자가 B현장 보류금 UUID 로 부르면 **B현장 수수료 지급이
+    재개**됐다. 바로 아래 형제 `run_due_payouts` 는 *"머니패스 격리 마감"* 을 선언하며
+    `SalesCommissionEvent.site_id` 를 조인하는데, **20줄 위의 이 함수만 그 축이 없었다.**
+
+    ★`sales_commission_holdback` 에는 `site_id` 컬럼이 **없어** RLS 가 원리적으로 못 막는다
+      (정책은 `site_id` 컬럼 보유 테이블에만 걸린다) — 그래서 **앱 계층이 유일한 선**이다.
+      split → event 로 조인해 현장을 판정한다(`run_due_payouts` 와 같은 경로).
+
+    ★`site_id=None` 은 **하위호환**이 아니라 «호출부가 아직 안 넘긴다» 는 뜻이다.
+      넘어오면 격리하고, 안 넘어오면 종전대로 둔다 — 호출부를 다 고친 뒤 필수로 좁힌다.
+      (그 부채를 `it.todo` 대신 여기 적어 둔다 — 파이썬엔 그 장치가 없다.)
+    """
+    q = select(SalesCommissionHoldback).where(SalesCommissionHoldback.id == holdback_id)
+    if site_id is not None:
+        q = (q.join(SalesCommissionSplit,
+                    SalesCommissionSplit.id == SalesCommissionHoldback.split_id)
+              .join(SalesCommissionEvent,
+                    SalesCommissionEvent.id == SalesCommissionSplit.event_id)
+              .where(SalesCommissionEvent.site_id == site_id))
+    h = (await db.execute(q)).scalar_one_or_none()
+    if h is None:
+        # ★«없다» 와 «남의 현장» 을 같은 오류로 돌린다 — 존재 여부가 새면 그 자체가 정보 노출이다.
+        raise ValueError("보류금을 찾을 수 없습니다(이 현장의 보류금만 해제할 수 있습니다)")
     h.released_at = datetime.now(UTC)
     await db.flush()
     return h

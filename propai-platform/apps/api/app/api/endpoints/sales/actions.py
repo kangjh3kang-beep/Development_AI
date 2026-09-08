@@ -24,6 +24,7 @@ from app.services.sales.org.service import (
     create_node,
     move_subtree,
     seed_default_org,
+    ancestors_path,
 )
 from app.services.sales.pricing.engine import (
     apply_group_pricing,
@@ -598,12 +599,35 @@ async def contract_create(body: dict, db: AsyncSession = Depends(get_db),
     rnd = body.get("round_id")
     mnode = body.get("member_node_id")  # 담당 영업사원 노드(있으면 계약 체결 시 수수료가 배분됨)
     htok = body.get("hold_token")       # FCFS 임시선점 토큰(있으면 선점 소유권 증명에 사용)
+
+    # ★★`member_node_id` 를 **검증한다**(2026-09-08). 종전엔 body 값을 그대로 UUID 로 캐스트해
+    #   넘겼고, 그 노드가 이 현장 것인지·살아 있는지·수수료 체인이 성립하는지 **아무도 안 봤다.**
+    #   그래서 부모 없는 노드가 넘어오면 정산이 `chain=[자기자신]` 이 되어
+    #   **RESIDUAL 전액이 그 노드에 귀속**됐다(`commission/engine.py`).
+    #   ★세 조건을 **한 번에** 본다 — 하나라도 빠지면 그 축이 무잠금이 된다:
+    #     ①이 현장 소속 ②삭제 안 됨 ③**조상 체인의 최상위가 AGENCY**(=배분이 성립한다)
+    if mnode:
+        try:
+            mnode_uuid = uuid.UUID(str(mnode))
+        except (ValueError, TypeError) as e:
+            raise HTTPException(400, "member_node_id 형식이 올바르지 않습니다(UUID 필요)") from e
+        chain = await ancestors_path(db, ctx.site_id, mnode_uuid)
+        if not chain:
+            # 현장 밖·미존재·삭제됨을 **같은 오류**로 돌린다(존재 여부가 새면 그 자체가 IDOR 단서다).
+            raise HTTPException(404, "담당 노드를 찾을 수 없습니다(이 현장의 조직 노드만 지정 가능)")
+        if str(chain[0].node_type) != "AGENCY":
+            raise HTTPException(
+                409,
+                "담당 노드의 조직 체인 최상위가 대행사(AGENCY)가 아닙니다 — "
+                "부모 없는 노드로는 수수료가 배분되지 않습니다. 조직도에서 상위를 지정하세요.")
+        mnode = mnode_uuid
+
     try:
         c = await create_contract(
             db, ctx.site_id, unit_id,
             customer_id=uuid.UUID(str(cust)) if cust else None,
             round_id=uuid.UUID(str(rnd)) if rnd else None,
-            member_node_id=uuid.UUID(str(mnode)) if mnode else None,
+            member_node_id=mnode,  # ★위에서 검증·정규화됐다(UUID or None)
             total_price=body.get("total_price"), by=ctx.user.id,
             hold_token=str(htok) if htok else None)
     except NotFoundError as e:
