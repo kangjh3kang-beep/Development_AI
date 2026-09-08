@@ -140,8 +140,109 @@ async def test_create_node_allows_child_member(monkeypatch) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 정산 층 — 체인 최상위가 AGENCY 가 아니면 배분하지 않는다
+# 정산 층 — ★**원문 `split_commission` 을 직접 태운다**(대역 폐기)
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# ★★2026-09-08 적대 리뷰 B1 — 종전엔 판정을 **재구현한 대역**(`_engine_guard`)을 태웠다.
+#   그래서 «가드를 죽은 줄로 만드는» 변이가 **SURVIVED** 했다:
+#
+#       if not chain:  →  if not chain or str(chain[0].node_type) != "AGENCY":
+#           ::VERDICT=SURVIVED
+#
+#   그 변이는 고아 루트를 만나면 `ev.status="SPLIT"` 로 **배분 0건인 채 조용히 반환**한다.
+#   가드 줄은 **도달 불가능한 죽은 줄**이 되지만 문자열은 남아 문자열 락도 초록이었다.
+#   ⇒ 락이 **판정문의 존재**만 잠그고 **그 판정이 실행되는지**는 안 잠갔다.
+#   ★이 PR 이 주석에 두 번 적은 *"무언 실패 금지"* 가 정확히 그 변이로 복원되는데 아무것도
+#     빨개지지 않았다. 저장소 메모리 «대리 변수를 잠그면 속성은 안 잠긴다» 의 재발이다.
+#
+#   ⇒ 이제 **원문 함수를 부른다.** 의존(`resolve_total`·`_active_master`·`_rules`·
+#     `ancestors_path`·`_assert_pool_not_exceeded`)이 전부 모듈 전역이라 monkeypatch 로 잡힌다.
+
+
+class _Ev:
+    # ★멱등 조회가 클래스 속성으로 비교식을 만든다(`_Ev.contract_ext_id == cid`).
+    #   `select` 는 무해화했지만 비교식 자체는 평가되므로 속성이 있어야 한다.
+    contract_ext_id = None
+    status = None
+
+    def __init__(self, **kw):
+        self.id = uuid.uuid4()
+        self.status = None
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+class _Master:
+    id = uuid.uuid4()
+
+
+class _Contract:
+    """★`id` 를 주지 않는다 — 그래야 `cid` 가 None 이 되어 멱등 조회 분기를 안 탄다.
+
+    (그 분기는 이 락의 대상이 아니고, 태우려면 진짜 DB 가 필요하다.)
+    """
+
+    def __init__(self, member_node_id=None):
+        # ★`id` 는 필요하다(원문이 `contract_ext_id=contract.id` 로 쓴다).
+        #   멱등 조회는 `cid` 가 무엇을 보고 정해지는지에 달렸다 — 아래 주석 참조.
+        self.id = uuid.uuid4()
+        self.member_node_id = member_node_id
+
+
+class _NoopSelect:
+    """`select(...)` 자리를 대신하는 무해한 객체 — `.where(...)` 체인만 받는다."""
+
+    def where(self, *_a, **_k):
+        return self
+
+
+class _RecordingDB:
+    """`db.add` 된 것을 모아 둔다 — «배분이 실제로 생겼는가» 를 태우기 위해."""
+
+    def __init__(self):
+        self.added: list[object] = []
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def flush(self):
+        pass
+
+    async def execute(self, *_a, **_k):
+        class _R:
+            def scalar_one_or_none(self_inner): return None
+            def scalars(self_inner): return self_inner
+            def all(self_inner): return []
+            def first(self_inner): return None
+        return _R()
+
+
+def _patch_engine(monkeypatch, chain: list, total=1000):
+    """`split_commission` 의 모듈 전역 의존만 갈아 끼운다 — 판정 자체는 **원문**이 한다."""
+    from app.services.sales.commission import engine as eng
+
+    async def _total(*_a, **_k): return total
+    async def _master(*_a, **_k): return _Master()
+    async def _pool(*_a, **_k): return None
+    async def _anc(*_a, **_k): return chain
+    async def _rules(*_a, **_k): return ({}, {})
+
+    monkeypatch.setattr(eng, "resolve_total", _total, raising=True)
+    monkeypatch.setattr(eng, "_active_master", _master, raising=True)
+    monkeypatch.setattr(eng, "_assert_pool_not_exceeded", _pool, raising=True)
+    monkeypatch.setattr(eng, "ancestors_path", _anc, raising=True)
+    monkeypatch.setattr(eng, "_rules", _rules, raising=True)
+    # ★`SalesCommissionEvent` 를 통째로 대체하면 멱등 조회의 `select(...)` 가 ArgumentError 를 낸다
+    #   (SQLAlchemy 가 실제 매핑 클래스를 요구한다). **생성만** 가로챈다 —
+    #   조회 경로는 원본 클래스로 가고, `cid=None` 이라 그 분기는 애초에 실행되지 않는다.
+    #   ★클래스를 **상속**하면 SQLAlchemy 선언 베이스가 오염된다(SAWarning + 이름 충돌).
+    #     원문은 `SalesCommissionEvent(...)` 를 **호출**만 하므로 팩토리 함수로 충분하다.
+    #   ★단 멱등 조회가 `select(SalesCommissionEvent)` 를 부르므로, 그 조회가 실제 클래스를
+    #     쓰도록 `select` 를 무해화한다(이 락의 대상은 **체인 판정**이지 멱등이 아니다).
+    monkeypatch.setattr(eng, "SalesCommissionEvent", _Ev, raising=True)
+    monkeypatch.setattr(eng, "select", lambda *_a, **_k: _NoopSelect(), raising=True)
+    return eng
+
 
 class _Node:
     def __init__(self, node_type: str, path: str):
@@ -150,45 +251,39 @@ class _Node:
         self.path = path
 
 
-def _engine_guard(chain: list[_Node]) -> None:
-    """`split_commission` 이 체인에 대해 하는 판정만 떼어 태운다.
+async def test_split_commission_rejects_orphan_root(monkeypatch) -> None:
+    """★고아 루트(체인이 자기 자신 하나) → **원문이 거부한다.**
 
-    ★함수 전체를 태우려면 DB·계약·규칙이 필요하다. 그러면 픽스처가 무거워지고
-      **판정이 아니라 픽스처를 시험**하게 된다. 판정식은 원문과 **같은 문자열**을 쓴다 —
-      원문이 바뀌면 `test_engine_guard_matches_source` 가 빨개진다.
+    ★이것이 «조용히 건너뛰기» 로 되살아나는 변이를 잡는 유일한 단언이다 —
+      대역을 태우면 그 변이가 SURVIVED 한다(실증).
     """
-    agency = chain[0]
-    if str(agency.node_type) != "AGENCY":
-        raise ValueError("수수료 배분 체인의 최상위가 대행사(AGENCY)가 아닙니다")
+    eng = _patch_engine(monkeypatch, [_Node("MEMBER", "mabc123")])
+    db = _RecordingDB()
 
-
-async def test_orphan_root_chain_is_rejected() -> None:
-    """★고아 루트(체인이 자기 자신 하나) → **거부**."""
     with pytest.raises(ValueError) as ei:
-        _engine_guard([_Node("MEMBER", "mabc123")])
+        await eng.split_commission(db, uuid.uuid4(), _Contract(member_node_id=uuid.uuid4()))
     assert "AGENCY" in str(ei.value)
 
 
-async def test_normal_chain_is_allowed() -> None:
-    """★두 모집단 — 정상 체인(AGENCY 루트)은 **통과**한다.
+async def test_split_commission_allows_normal_chain(monkeypatch) -> None:
+    """★★**반대편 모집단** — 정상 체인은 배분이 **실제로 생긴다.**
 
-    ★이 케이스가 없으면 위 단언이 «모든 체인을 거부한다» 와 구별되지 않는다.
+    「거부된다」만 단언하면 «모든 체인을 거부한다» 와 구별되지 않는다.
+    ⇒ `RESIDUAL` Split 이 만들어지고 그 `node_id` 가 **대행사**인지까지 본다.
     """
-    chain = [_Node("AGENCY", "a1"), _Node("TEAM_LEADER", "a1.t1"), _Node("MEMBER", "a1.t1.m1")]
-    _engine_guard(chain)  # 예외가 나면 실패
+    agency = _Node("AGENCY", "a1")
+    chain = [agency, _Node("TEAM_LEADER", "a1.t1"), _Node("MEMBER", "a1.t1.m1")]
+    eng = _patch_engine(monkeypatch, chain, total=1000)
+    db = _RecordingDB()
+
+    ev = await eng.split_commission(db, uuid.uuid4(), _Contract(member_node_id=uuid.uuid4()))
+
+    assert ev is not None and ev.status == "SPLIT"
+    splits = [o for o in db.added if getattr(o, "basis", None) == "RESIDUAL"]
+    assert len(splits) == 1, "잔여 배분이 만들어지지 않았다"
+    # ★잔여는 **대행사**에게 간다 — 이 결함이 깨뜨렸던 바로 그 성질.
+    assert splits[0].node_id == agency.id
+    assert splits[0].node_type == "AGENCY"
+    assert int(splits[0].amount) == 1000
 
 
-def test_engine_guard_matches_source() -> None:
-    """★위 대역이 **원문과 같은 판정**인지 잠근다 — 대역만 고치고 원문을 안 고치면 무의미하다.
-
-    (저장소 규율: 대리 변수를 잠그면 속성은 안 잠긴다. 대역을 쓰되 **원문과 결속**시킨다.)
-    """
-    from pathlib import Path
-
-    src = (Path(__file__).resolve().parents[1]
-           / "app" / "services" / "sales" / "commission" / "engine.py").read_text(encoding="utf-8")
-    # 실행 줄에 그 판정이 있어야 한다(주석이 아니라).
-    code = "\n".join(l for l in src.splitlines() if not l.strip().startswith("#"))
-    assert 'if str(agency.node_type) != "AGENCY":' in code, "원문의 판정식이 바뀌었다 — 대역을 맞춰라"
-    # 대조군: 그 판정이 쓰는 변수가 실제로 chain[0] 이다.
-    assert "agency = chain[0]" in code
