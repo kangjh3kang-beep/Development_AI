@@ -68,18 +68,47 @@ const rel = (f: string) => f.slice(WEB_ROOT.length + 1);
 const isIntraApp = (f: string) => INTRA_APP.some((p) => rel(f).startsWith(p));
 
 /**
- * `href=` 와 `(fieldapp)` 라우트가 **같은 줄**에 있는 렌더 줄.
+ * ★**(fieldapp) 라우트 집합을 디렉토리에서 파생시킨다** (2026-09-08 적대 리뷰 NM-2(d)).
  *
- * ★처음엔 `href=\{[^}]*\/sales\/sites` 로 썼다가 **조회기가 죽었다** — 템플릿 리터럴
- *   `` href={`/${locale}/sales/sites`} `` 의 `${locale}` 안에 `}` 가 있어 `[^}]*` 가 넘지 못한다.
- *   **공허 진리 가드가 그것을 잡았다**(매칭 0건 → 빨강). 가드가 없었으면 "위반 0" 으로 초록이었다.
+ * 종전엔 독스트링이 *"축은 「(fieldapp) 라우트를 가리키는 링크」"* 라 **선언**해 놓고
+ * 구현은 문자열 `/sales/sites` **하나**였다 — **선언은 파생형, 구현은 목록형**이었다.
+ * `(fieldapp)` 아래 새 `page.tsx` 가 생기면 그 라우트로 가는 링크가 전부 감시망 밖이었다.
  */
-const FIELDAPP_HREF = /href=[\s\S]*\/sales\/sites/;
+function fieldAppRouteSegments(): string[] {
+  const base = join(WEB_ROOT, "app", "[locale]", "(fieldapp)");
+  const segs = new Set<string>();
+  const walk = (dir: string, parts: string[]) => {
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) {
+        // 동적 세그먼트([siteId])와 라우트 그룹((...))은 경로 리터럴에 안 나타난다.
+        walk(full, name.startsWith("[") || name.startsWith("(") ? parts : [...parts, name]);
+      } else if (name === "page.tsx" && parts.length) {
+        segs.add("/" + parts.join("/"));
+      }
+    }
+  };
+  walk(base, []);
+  return [...segs];
+}
+
+/** 라우트 세그먼트 중 **가장 짧은 접두**들 — 하위 경로까지 한 번에 덮는다. */
+const FIELDAPP_ROUTES = (() => {
+  const all = fieldAppRouteSegments().sort((a, b) => a.length - b.length);
+  return all.filter((r) => !all.some((o) => o !== r && r.startsWith(o + "/")));
+})();
+
+/** `href=` 와 (fieldapp) 라우트가 **같은 줄**에 있는 렌더 줄. */
+function isFieldAppHrefLine(line: string): boolean {
+  return line.includes("href=") && FIELDAPP_ROUTES.some((r) => line.includes(r));
+}
 
 describe("현장앱 진입 — 플랫폼 쪽 링크는 전부 진입 정책을 거친다(파생형)", () => {
   it("★공허 진리 가드 — 모집단이 비어 있지 않다", () => {
     expect(files.length).toBeGreaterThan(200);
-    const anyHref = files.filter((f) => FIELDAPP_HREF.test(codeOnly(readFileSync(f, "utf8"), f)));
+    const anyHref = files.filter((f) =>
+      codeOnly(readFileSync(f, "utf8"), f).split("\n").some(isFieldAppHrefLine),
+    );
     // 하나도 없으면 아래 판정 전체가 공허하다.
     expect(anyHref.length).toBeGreaterThan(0);
   });
@@ -90,7 +119,7 @@ describe("현장앱 진입 — 플랫폼 쪽 링크는 전부 진입 정책을 �
       if (isIntraApp(f)) continue; // 앱 내 이동은 대상 아님
       const code = codeOnly(readFileSync(f, "utf8"), f);
       for (const line of code.split("\n")) {
-        if (!FIELDAPP_HREF.test(line)) continue;
+        if (!isFieldAppHrefLine(line)) continue;
         if (line.includes("FieldAppLaunchLink")) continue;
         offenders.push(`${rel(f)}: ${line.trim().slice(0, 100)}`);
       }
@@ -105,7 +134,7 @@ describe("현장앱 진입 — 플랫폼 쪽 링크는 전부 진입 정책을 �
     // 이게 없으면 ①의 "위반 0" 이 «그런 href 자체가 없어서» 인지 구별되지 않는다.
     const intra = files
       .filter(isIntraApp)
-      .filter((f) => FIELDAPP_HREF.test(codeOnly(readFileSync(f, "utf8"), f)));
+      .filter((f) => codeOnly(readFileSync(f, "utf8"), f).split("\n").some(isFieldAppHrefLine));
     expect(intra.length).toBeGreaterThan(0);
   });
 
@@ -117,10 +146,17 @@ describe("현장앱 진입 — 플랫폼 쪽 링크는 전부 진입 정책을 �
     });
 
     // 공허 진리 가드 — 렌더러가 0개면 아래가 무의미하다.
-    expect(renderers.length).toBeGreaterThan(1);
+    // ★실제 렌더러는 정확히 2개(SidebarNav·WorkspaceNavBar)다. `>1` 이면 하나가 사라져도
+    //   가드가 조용히 무력화된다 — 못 박고, 늘어나면 **의도적으로** 갱신하게 한다.
+    expect(renderers.map(rel).sort()).toEqual([
+      join("components", "layout", "SidebarNav.tsx"),
+      join("components", "layout", "WorkspaceNavBar.tsx"),
+    ]);
 
     const missing = renderers
-      .filter((f) => !codeOnly(readFileSync(f, "utf8"), f).includes("shouldInterceptFieldAppClick"))
+      // ★「이름이 있다」가 아니라 **호출 형태**를 요구한다(적대 리뷰 NM-2(b)).
+      //   프로브 실증: `const _x = shouldInterceptFieldAppClick;` 만 두고 **호출 0** 인데 통과했다.
+      .filter((f) => !codeOnly(readFileSync(f, "utf8"), f).includes("shouldInterceptFieldAppClick("))
       .map(rel);
 
     expect(
@@ -151,4 +187,24 @@ describe("현장앱 진입 — 플랫폼 쪽 링크는 전부 진입 정책을 �
       `클릭 가로채기 판정이 두 벌이다 — shouldInterceptFieldAppClick 을 쓰라:\n  ${handRolled.join("\n  ")}`,
     ).toEqual([]);
   });
+});
+
+/*
+ * ★이 락이 **못 보는 축**을 초록 안에 남긴다(§B-13 — 커밋 메시지에만 적으면 드러나지 않는다).
+ *   적대 리뷰가 프로브로 각각 실증했다.
+ */
+describe("남은 부채 — 이 축이 못 보는 것", () => {
+  it.todo(
+    "★렌더러 수집이 아직 **어휘 축**이다 — `NavNode` 라는 낱말을 안 쓰고 `NavSection` 만 임포트해 " +
+      "`sections.flatMap(s => s.items)` 로 링크를 그리면 렌더러로 안 세어진다(프로브 실증: 5 passed). " +
+      "처방은 렌더러마다 `*.appWindow.test.tsx` 형태의 **행위 락**을 두는 것 — 그러면 이 축이 필요 없어진다",
+  );
+  it.todo(
+    "★`href` 가 **변수**면 ①이 못 본다 — `const dest = `/${locale}/sales/sites`;` … `<Link href={dest}>` " +
+      "가 통과한다(프로브 실증). 축이 «같은 줄의 리터럴» 이기 때문",
+  );
+  it.todo(
+    "★**명령형 이동**(`router.push('/…/sales/sites…')`)은 축 밖이다. 오늘 플랫폼 쪽 0건이지만 " +
+      "(대조군: 현장앱 **내부**에 3건 실재 — 조회기는 살아 있다) 새로 생기면 감시망에 안 든다",
+  );
 });
