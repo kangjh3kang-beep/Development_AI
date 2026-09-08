@@ -148,16 +148,21 @@ async def time_adjust_factor_async(address: str = "", base_year: int = 2025) -> 
                             f"해당 지역 실데이터가 아닙니다)"
                         )
                         # ★`source` 는 **"R-ONE" 그대로** 둔다.
-                        #   ★★좌표 정정(독립 리뷰 R3 MEDIUM-1): 종전 주석은 이 생산자의 출력이
-                        #     `DeskAppraisalReportClient.tsx:571-573` 의 렌더 게이트라고 인용했는데
-                        #     **틀렸다.** 이 함수의 출력은 `market_stats.land_time_adjust` 이고
-                        #     **프론트 소비처가 0건**이다(저장소가 `reb_statistics_service.py` 에
-                        #     «land_time_adjust 는 아직 소비처가 없지만» 이라 적어 두었다).
-                        #     실제 효과는 반대다 — `source` 를 바꾸면 `rone_available` 이 False 로
-                        #     떨어져 정직 고지가 **오히려 뜬다**.
-                        #   ⇒ 그래도 `"R-ONE"` 을 유지하는 이유는 **형제와 계약을 맞추기 위함**이다
-                        #     (`reb_statistics_service` 의 같은 주석은 옳다 — 그쪽은 실제 렌더 게이트다).
-                        #     정직성은 표시 문구와 분리된 **`scope`** 와 `rationale` 이 나른다.
+                        #   ★★정정의 정정(독립 리뷰 R4 MEDIUM-1 · 2026-09-08): 바로 위 R3 정정문이
+                        #     **«프론트 소비처가 0건»** 이라고 단정했는데 그것이 **거짓이었다.**
+                        #     맞는 것은 좌표뿐이고 결론은 뒤집힌다 — 이 함수의 `rationale` 은
+                        #     `desk_appraisal_service.py:760` 이 **`time_adjust_basis`** 로 실어
+                        #     **세 표면**에 렌더한다(실측 `grep`):
+                        #       · `DeskAppraisalReportClient.tsx:570`
+                        #       · `DeskAppraisalModal.tsx:254`
+                        #       · `report/render/appraisal_adapter.py:185`(제출 PDF)
+                        #     소비처가 0인 것은 **필드명 `land_time_adjust`** 이지 이 함수의 출력이
+                        #     아니다 — 두 명제를 섞어 «0건» 이라 적었다.
+                        #     ★§27-c 그대로다: **짧고 최신인 정정문이 더 신뢰받는다.** 그래서
+                        #       정정에도 조건과 좌표를 원본만큼 붙인다.
+                        #   ⇒ `"R-ONE"` 을 유지하는 이유는 **형제와 계약을 맞추기 위함**이고
+                        #     (프론트가 `source === "R-ONE"` 으로 렌더를 가른다),
+                        #     정직성은 표시 문구와 분리된 **`scope`** 와 위 `rationale` 이 나른다.
                         source = "R-ONE"
                     return {"factor": f, "annual_rate": None, "elapsed_years": None,
                             "rationale": label, "source": source, "scope": scope}

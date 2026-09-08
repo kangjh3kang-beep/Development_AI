@@ -15,6 +15,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { buildMarketBasisLines } from "../../../lib/land/desk-appraisal-basis";
 
 const SRC = path.resolve(__dirname, "..", "DeskAppraisalReportClient.tsx");
 
@@ -113,33 +114,82 @@ describe("탁상감정 보고서 라벨", () => {
     expect(src).toMatch(/subject_consistency\.basis/);
   });
 
-  it("★위양성 축 — 형제 라벨(cap_rate 등)의 source 분기를 깨지 않는다", () => {
-    const src = code();
-    expect(src).toContain('cap_rate?.source === "R-ONE"');
-    expect(src).toContain("!ms.rone_available");
+  // ─────────────────────────────────────────────────────────────
+  // ★★독립 리뷰 R4 MEDIUM-2(2026-09-08) — **소스 grep 락을 행위 락으로 바꿨다**
+  //   종전 락은 문자열 검사라, 렌더를 죽여도 토큰이 남아 초록이었다(리뷰어 실증):
+  //       `{ms.housing_time_adjust.basis ?` → `{false && ms.housing_time_adjust.basis ?`
+  //       → 10 passed  ::VERDICT=SURVIVED
+  //   저장소 §A-3 이 *"소스 grep 대신 렌더 결과를 본다"* 라고 이미 적어 둔 자리다.
+  //   ⇒ 줄 조립을 순수 함수로 꺼내고(`buildMarketBasisLines`) **그 함수를 직접 태운다**.
+  // ─────────────────────────────────────────────────────────────
+  describe("§Ⅵ 근거 줄 조립(행위)", () => {
+    const base = { market_stats: { region: "서울", rone_available: true } } as never;
+
+    function build(ms: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+      return buildMarketBasisLines({
+        ...(base as object),
+        ...extra,
+        market_stats: { region: "서울", rone_available: true, ...ms },
+      } as never);
+    }
+
+    it("★R-ONE 출처가 아니면 줄을 **만들지 않는다**(지어낸 실측 라벨 금지)", () => {
+      const lines = build({ cap_rate: { source: "기본", pct: 4.5, basis: "문서화된 기본값" } });
+      expect(lines.join("\n")).not.toContain("자본환원율");
+    });
+
+    it("★세 형제가 **모두** basis 를 싣는다 — 비대칭이 구조적으로 불가능하다", () => {
+      const lines = build({
+        cap_rate: { source: "R-ONE", pct: 4.5, basis: "상업용 실측" },
+        jeonse_conversion_rate: { source: "R-ONE", pct: 5.4, basis: "전월세전환율 실측" },
+        housing_time_adjust: { source: "R-ONE", factor: 1.0243, basis: "주택지수 실측" },
+      });
+      // ★공허 방지 — 세 줄이 실제로 만들어졌는가.
+      expect(lines.filter((l) => l.startsWith("· 자본환원율")).length).toBe(1);
+      expect(lines.filter((l) => l.startsWith("· 전월세전환율")).length).toBe(1);
+      expect(lines.filter((l) => l.startsWith("· 주택가격지수")).length).toBe(1);
+      for (const head of ["· 자본환원율", "· 전월세전환율", "· 주택가격지수"]) {
+        const line = lines.find((l) => l.startsWith(head))!;
+        expect(line, `${head} 줄이 basis 를 안 싣는다`).toContain("실측");
+        expect(line).toContain(" — ");
+      }
+    });
+
+    it("★basis 가 없으면 빈 대시를 그리지 않는다(위양성 축)", () => {
+      const lines = build({ cap_rate: { source: "R-ONE", pct: 4.5 } });
+      const line = lines.find((l) => l.startsWith("· 자본환원율"))!;
+      expect(line).toBe("· 자본환원율(R-ONE 실측): 4.5%");
+    });
+
+    it("★scope 가 요청 지역과 다르면 **화면이 그렇게 말한다**(기계 판독 축의 실소비)", () => {
+      const substituted = build({
+        cap_rate: { source: "R-ONE", pct: 4.5, basis: "상업용 실측", scope: "전국" },
+      });
+      const line = substituted.find((l) => l.startsWith("· 자본환원율"))!;
+      expect(line).toContain("범위 전국");
+      expect(line).toContain("실데이터가 아닙니다");
+
+      // ★두 모집단을 가른다 — 같은 지역이면 그 경고가 **뜨면 안 된다**.
+      const own = build({
+        cap_rate: { source: "R-ONE", pct: 4.5, basis: "상업용 실측", scope: "서울" },
+      });
+      expect(own.find((l) => l.startsWith("· 자본환원율"))!).not.toContain("실데이터가 아닙니다");
+    });
+
+    it("★R-ONE 미가용이면 근사값 고지가 뜬다", () => {
+      const lines = build({ rone_available: false });
+      expect(lines.some((l) => l.startsWith("· 시장통계:"))).toBe(true);
+    });
+
+    it("★시점수정 사유는 그대로 첫 줄에 실린다", () => {
+      const lines = build({}, { time_adjust_basis: "R-ONE 지가변동률 서울 실데이터" });
+      expect(lines[0]).toBe("· 시점수정: R-ONE 지가변동률 서울 실데이터");
+    });
   });
 
-  // ★★독립 리뷰 R3 HIGH-3 회귀 락(2026-09-08)
-  //   백엔드가 「전국 대체」를 scope + basis 로 정직하게 말하도록 고쳤는데, 이 줄은 factor 만
-  //   렌더해 **정직성이 화면에 도달하지 않았다** — 요청 시·도가 아닌 계수가 아무 단서 없이
-  //   「주택가격지수 누적변동: 1.0243」으로 보였다.
-  //   ★바로 위 형제(cap_rate)는 이미 basis 를 렌더한다 — **같은 블록 안의 비대칭**이었다.
-  it("주택가격지수 줄이 basis(정직 고지)를 함께 렌더한다 — 형제와 대칭", () => {
-    const lines = code().split("\n");
-    const line = lines.find((l) => l.includes("housing_time_adjust?.source") && l.includes("<li>"));
-    expect(line, "housing_time_adjust 렌더 줄을 못 찾았다(수집기 사망)").toBeTruthy();
-    expect(line!).toContain("housing_time_adjust.basis");
-    // 대조군 — 형제가 실제로 basis 를 렌더하는가(이 락의 기준점).
-    const sibling = lines.find((l) => l.includes("cap_rate?.source") && l.includes("<li>"));
-    expect(sibling, "형제 줄을 못 찾았다").toBeTruthy();
-    expect(sibling!).toContain("cap_rate.basis");
+  it("★컴포넌트가 그 순수 함수를 **실제로 부른다**(배선 축은 따로 잠근다)", () => {
+    // ★함수가 옳아도 화면이 안 부르면 아무 일도 일어나지 않는다 — 축이 다르다.
+    expect(code()).toContain("buildMarketBasisLines(res)");
   });
 
-  it("Stat 타입이 scope 를 담는다 — 기계 판독 축이 프론트에 도달 가능해야 한다", () => {
-    const ts = fs.readFileSync(
-      path.resolve(__dirname, "..", "..", "..", "lib", "land", "desk-appraisal.ts"),
-      "utf8",
-    );
-    expect(ts).toMatch(/type Stat = \{[^}]*scope\?: string/);
-  });
 });

@@ -793,39 +793,351 @@ async def test_market_precision_demotes_only_on_contradiction(monkeypatch) -> No
 #   ★이것은 «불린다» 가 아니라 «무엇을 넘기는가» 를 본다 — 값이 죽으면 잡힌다.
 # ─────────────────────────────────────────────────────────────
 
-_ADDRESS_CONSUMERS = ("desk_appraisal", "time_adjust_factor_async", "housing_time_adjust")
+# ★★독립 리뷰 R4 HIGH-2 + R3 재측정(2026-09-08) — **한 락 안에 축이 셋인데 둘만 파생이었다**:
+#     · 스캔할 **파일**  = `rglob` 파생        ◎
+#     · **호출부** 탐지  = `ast.walk` 전수     ◎
+#     · **소비처 이름**  = 손 목록 3개         ✘ ← 여기가 상한이었다
+#   실측: 손 목록 3 → 임포트 그래프 파생 **11** · 감시 호출부 10 → **17**.
+#   빠져 있던 `get_market_stats` 는 **나머지 다섯 지표로 갈라지는 단일 팬아웃**이고 호출부가
+#   **단 1곳**이라, 그 한 줄을 `get_market_stats("")` 로 바꾸면 자본환원율·전월세전환율·
+#   주택지수·지가추이의 지역 해석이 **동시에** 죽는데 `68 passed` ::VERDICT=SURVIVED 였다.
+#   ★공허 방지 가드가 그것을 **가리고 있었다** — `seen >= 5` 가 **10 으로 넉넉히 만족**했다.
+#     하한을 여유 있게 넘는 것은 **모집단이 옳다는 증거가 아니다**.
+#
+# ★그리고 리뷰어가 **판정 축**도 뚫었다: 같은 자리에서
+#     `address=""`        → CAUGHT   (구문이 빈 리터럴)
+#     `address=address[:0]` → SURVIVED (런타임 효과는 **동일**)
+#   ⇒ 구문 검사는 **넓이**만 담당하고, **깊이**는 「도착한 값」을 보는 행위 락이 맡는다(아래 둘째).
+
+_ADDRESS_SSOT_MODULE = "app.services.external_api.reb_client"   # 지역해석의 단일 원천
+_ADDRESS_CONSUMER_DEPTH = 2
+# 공허 방지 하한 — 실측 소비처 11 · 호출부 17(2026-09-08). 손 목록 시절의 3·10 으로
+# 되돌아가면 반드시 걸리도록 그 위에 둔다.
+_ADDRESS_CONSUMER_FLOOR = 9
+_ADDRESS_CALLSITE_FLOOR = 14
+# ★팬아웃 앵커 — **모집단이 아니라 파생기의 생존 증명**이다(집합을 이것으로 제한하지 않는다).
+_ADDRESS_FANOUT_ANCHOR = "get_market_stats"
 
 
-def test_every_call_site_passes_a_real_address_not_a_literal() -> None:
-    """★전 호출부(AST 파생)가 `address=` 에 **빈 리터럴을 넘기지 않는다**."""
+def _parse_app_modules():
+    """app/ 전 모듈을 한 번만 파싱해 (점표기, tree, 임포트, public address 함수)를 낸다."""
     import ast
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1] / "app"
-    offenders: list[str] = []
-    seen = 0
+    out = []
     for py in root.rglob("*.py"):
         try:
             tree = ast.parse(py.read_text(encoding="utf-8"))
         except SyntaxError:  # pragma: no cover - 파싱 불가 파일은 건너뛴다
             continue
+        dotted = "app." + str(py.relative_to(root)).removesuffix(".py").replace("/", ".")
+        imports, addr_fns = set(), set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imports.add(node.module)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    imports.add(alias.name)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                a = node.args
+                names = [x.arg for x in list(a.posonlyargs) + list(a.args) + list(a.kwonlyargs)]
+                if "address" in names and not node.name.startswith("_"):
+                    addr_fns.add(node.name)
+        out.append((dotted, tree, imports, addr_fns))
+    return out
+
+
+def _derive_address_consumers(mods) -> set[str]:
+    """SSOT(`reb_client`)에서 깊이 ≤2 로 닿는 모듈의 public `address` 함수를 파생한다.
+
+    ★깊이 2 는 단정이 아니라 **실측으로 고른 경계**다(2026-09-08):
+        1촌 = 8개(지역해석 **생산자** 전부) · 2촌 = +3개(`desk_appraisal` ·
+        `resolve_time_adjustment` · 라우터 `price_trend`) · **3촌부터 지역해석과 무관한 함수**가
+        섞인다. `app/` 전체로 넓히면 `address` 를 받는 함수가 **190개**라 명백히 과대다.
+    """
+    layer = {_ADDRESS_SSOT_MODULE}
+    seen_mods = {_ADDRESS_SSOT_MODULE}
+    consumers: set[str] = set()
+    for _ in range(_ADDRESS_CONSUMER_DEPTH):
+        nxt = {d for d, _t, imps, _f in mods if d not in seen_mods and any(t in layer for t in imps)}
+        if not nxt:
+            break
+        for d, _t, _i, fns in mods:
+            if d in nxt:
+                consumers |= fns
+        seen_mods |= nxt
+        layer = nxt
+    return consumers
+
+
+def test_address_consumer_set_is_derived_not_enumerated() -> None:
+    """★파생기 자체가 살아 있는가 — 붕괴하면 아래 배선 락이 **조용히 공허**해진다.
+
+    (SSOT 이름이 바뀌어 집합이 비어도 `not offenders` 는 참이다 — 그래서 따로 단언한다.)
+    """
+    consumers = _derive_address_consumers(_parse_app_modules())
+    assert len(consumers) >= _ADDRESS_CONSUMER_FLOOR, (
+        f"주소 소비처를 {len(consumers)}개만 파생했다(하한 {_ADDRESS_CONSUMER_FLOOR}) — "
+        f"SSOT 이름이 바뀌었거나 임포트 경로가 끊겼다: {sorted(consumers)}"
+    )
+    assert _ADDRESS_FANOUT_ANCHOR in consumers, (
+        f"단일 팬아웃 `{_ADDRESS_FANOUT_ANCHOR}` 가 파생 집합에서 사라졌다: {sorted(consumers)}"
+    )
+
+
+def test_every_call_site_passes_a_real_address_not_a_literal() -> None:
+    """★전 호출부(AST 파생)가 `address=` 에 **빈 리터럴을 넘기지 않는다**(넓이 축).
+
+    ★이 락이 잡는 것은 «구문이 빈 리터럴인가» 뿐이다 — `address[:0]` 처럼 **런타임에만 비는**
+      형태는 원리적으로 못 잡는다(리뷰어 실증). 그 축은 아래 행위 락이 맡는다.
+    """
+    import ast
+
+    mods = _parse_app_modules()
+    consumers = _derive_address_consumers(mods)
+    offenders: list[str] = []
+    per_consumer: dict[str, int] = {}
+    for dotted, tree, _imports, _fns in mods:
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            fn = node.func
-            name = getattr(fn, "attr", None) or getattr(fn, "id", None)
-            if name not in _ADDRESS_CONSUMERS:
+            name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+            if name not in consumers:
                 continue
-            seen += 1
-            # 위치인자 첫 번째 또는 address= 키워드
+            per_consumer[name] = per_consumer.get(name, 0) + 1
             arg = next((k.value for k in node.keywords if k.arg == "address"), None)
             if arg is None and node.args:
                 arg = node.args[0]
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and not arg.value.strip():
-                offenders.append(f"{py.relative_to(root)}:{node.lineno} {name}(address='')")
-    # ★공허 방지 — 호출부를 실제로 찾았는가(0이면 이 락이 무의미하다).
-    assert seen >= 5, f"호출부를 {seen}건만 찾았다 — AST 수집기가 죽었거나 이름이 바뀌었다"
+                offenders.append(f"{dotted}:{node.lineno} {name}(address='')")
+    seen = sum(per_consumer.values())
+    assert seen >= _ADDRESS_CALLSITE_FLOOR, (
+        f"호출부를 {seen}건만 찾았다(하한 {_ADDRESS_CALLSITE_FLOOR}) — "
+        f"수집기가 죽었거나 소비처 파생이 좁아졌다: {per_consumer}"
+    )
+    # ★팬아웃 자리는 호출부가 **단 1곳**이라, 그 1건이 스캔에서 빠지면 집계 하한만으로는 묻힌다.
+    assert per_consumer.get(_ADDRESS_FANOUT_ANCHOR, 0) >= 1, (
+        f"`{_ADDRESS_FANOUT_ANCHOR}` 호출부를 한 건도 못 찾았다 — 팬아웃이 무감시다: {per_consumer}"
+    )
     assert not offenders, (
         "주소를 받는 진입점이 **빈 리터럴**을 넘긴다 — 모든 필지가 같은 값을 받게 된다:\n  "
         + "\n  ".join(offenders)
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# ★R4 HIGH-1 — 카디널리티 블록에 **락이 하나도 없었다**
+#
+#   R3 라운드에서 행동을 가장 많이 바꾼 자리인데, 나는 **손으로 고른 변이 6건**만 돌리고
+#   «전건 반영» 이라고 보고했다. 독립 리뷰가 전수로 돌리자 `75건·생존 10` 이
+#   **`82건·생존 15`** 가 됐고, 늘어난 5건이 **전부 이 블록**이었다. 재현(2026-09-08):
+#       `if len(tied) > 1:` → `if False:`      → 68 passed  ::VERDICT=SURVIVED
+#       `tied = {round(val, 6)}` → `pass`      → 68 passed  ::VERDICT=SURVIVED
+#       (대조군 `region_sido not in …` → `if False:` → 5 failed ::VERDICT=CAUGHT — 조회기 생존)
+#   ★이 파일의 모든 픽스처가 (지역,시점)당 **1행**이라 이 분기는 **도달조차 하지 않았다**.
+#     ⇒ 분기를 만들었으면 **그 분기를 태우는 행**을 같은 커밋에(§B-9).
+# ─────────────────────────────────────────────────────────────
+
+# 규모 구분 표의 실제 모양(라이브 실측 `A_2024_00615` — 지역은 GRP_NM, 규모는 CLS_NM).
+_SIZE_CLASSES = ("전체", "40㎡이하", "40㎡초과 60㎡이하", "60㎡초과 85㎡이하", "85㎡초과")
+
+
+def _size_rows(region: str, wrttime: str, values: tuple[float, ...]) -> list[dict]:
+    """한 (지역,시점)에 규모 구분 5행 — 라이브가 실제로 내는 모양."""
+    assert len(values) == len(_SIZE_CLASSES)
+    return [
+        {"GRP_NM": region, "CLS_NM": cls, "ITM_NM": "지수",
+         "DTA_VAL": val, "WRTTIME_IDTFR_ID": wrttime}
+        for cls, val in zip(_SIZE_CLASSES, values, strict=True)
+    ]
+
+
+def test_latest_value_picks_the_aggregate_row_when_present() -> None:
+    """★집계 행(`전체`)이 있으면 **그것을 고른다** — 거부가 아니라 해석한다.
+
+    라이브 실측값 그대로: `(서울, 202607)` 5행 · `전체`=100.656133…
+    ★(지역,시점) 조합 **442개 전부**에 `전체` 가 정확히 1행씩 있었다(예외 0) — 그래서 좁힌다.
+    """
+    from app.services.external_api.reb_client import latest_value_from_rows
+
+    rows = _size_rows("서울", "202607",
+                      (100.656133, 100.338932, 101.111603, 102.249849, 105.224865))
+    got = latest_value_from_rows(rows, "서울")
+    assert got is not None, "집계 행이 있는데 거부했다 — 좁히기가 안 걸렸다"
+    assert got == (100.6561, "202607"), got
+    # ★대조 모집단 — 규모 행 하나를 고르면 **다른 값**이 나온다(픽스처가 차를 만든다).
+    assert got[0] != 105.2249, "집계 행과 최대 규모 행이 같은 값이면 이 락은 아무것도 안 가른다"
+
+
+def test_latest_value_rejects_ambiguity_when_there_is_no_aggregate_row() -> None:
+    """★집계 표기가 없는 표에서 값이 갈리면 **여전히 거부**한다(최후 방어).
+
+    상업용수익률 표 모양(라이브 실측: `CLS_NM` 이 **상권명** — `강남`·`광복동`·`금호지구`).
+    """
+    from app.services.external_api.reb_client import latest_value_from_rows
+
+    rows = [
+        {"CLS_NM": "서울", "ITM_NM": "투자수익률", "DTA_VAL": 5.4, "WRTTIME_IDTFR_ID": "202607"},
+        {"CLS_NM": "서울", "ITM_NM": "투자수익률", "DTA_VAL": 7.9, "WRTTIME_IDTFR_ID": "202607"},
+    ]
+    assert latest_value_from_rows(rows, "서울") is None, (
+        "값이 갈리는데 하나를 골랐다 — 행 순서가 사용자 금액을 정하게 된다"
+    )
+
+
+def test_latest_value_accepts_when_same_period_rows_agree() -> None:
+    """★거부가 **담요가 아님**을 가른다 — 같은 시점 여러 행이 **같은 값**이면 채택한다."""
+    from app.services.external_api.reb_client import latest_value_from_rows
+
+    rows = [
+        {"CLS_NM": "서울", "ITM_NM": "투자수익률", "DTA_VAL": 5.4, "WRTTIME_IDTFR_ID": "202607"},
+        {"CLS_NM": "서울", "ITM_NM": "투자수익률", "DTA_VAL": 5.4, "WRTTIME_IDTFR_ID": "202607"},
+    ]
+    assert latest_value_from_rows(rows, "서울") == (5.4, "202607")
+
+
+def test_latest_value_resets_the_tie_set_when_a_newer_period_wins() -> None:
+    """★더 늦은 시점이 이기면 **동률 집합도 갱신**돼야 한다.
+
+    안 그러면 옛 시점의 갈린 값들이 남아 **최신 시점이 단일 행인데도 거부**된다
+    (과다 거부 = 조용한 기본값 폴백). 변이 `tied = {round(val, 6)}` → `pass` 가 이것을 만든다.
+    """
+    from app.services.external_api.reb_client import latest_value_from_rows
+
+    rows = [
+        {"CLS_NM": "서울", "ITM_NM": "투자수익률", "DTA_VAL": 5.4, "WRTTIME_IDTFR_ID": "202605"},
+        {"CLS_NM": "서울", "ITM_NM": "투자수익률", "DTA_VAL": 7.9, "WRTTIME_IDTFR_ID": "202605"},
+        {"CLS_NM": "서울", "ITM_NM": "투자수익률", "DTA_VAL": 6.1, "WRTTIME_IDTFR_ID": "202607"},
+    ]
+    assert latest_value_from_rows(rows, "서울") == (6.1, "202607"), (
+        "옛 시점의 동률이 최신 시점 판정에 남아 있다"
+    )
+
+
+def test_aggregate_narrowing_is_inert_without_the_marker() -> None:
+    """★특이도 — 집계 표기가 없는 표에서 좁히기는 **아무 행도 버리지 않는다**.
+
+    (좁히기가 무조건 걸리면 상업용수익률 표는 전 지역 0건이 된다.)
+    """
+    from app.services.external_api.reb_client import latest_value_from_rows
+
+    rows = [
+        {"CLS_NM": "서울", "ITM_NM": "투자수익률", "DTA_VAL": 6.96, "WRTTIME_IDTFR_ID": "2005"},
+    ]
+    assert latest_value_from_rows(rows, "서울") == (6.96, "2005")
+
+
+# ─────────────────────────────────────────────────────────────
+# ★R4 HIGH-2(깊이 축) — 판정을 **구문 모양**에서 **「도착한 값」**으로 올린다
+#
+#   위 넓이 축은 «호출부에 빈 리터럴이 적혀 있는가» 만 본다. 리뷰어가 같은 자리에서
+#       `address=""`          → CAUGHT
+#       `address=address[:0]` → **SURVIVED**   ← 런타임 효과는 동일
+#   을 실증했다. 구문으로는 원리적으로 못 가른다 ⇒ **소비처에 실제로 무엇이 도착했는지**를 본다.
+#   ★소비처 목록은 여기서도 **파생**이다(손으로 적으면 위 결함이 이 락에서 재발한다).
+# ─────────────────────────────────────────────────────────────
+
+_WIRED_ADDRESS = "서울특별시 강남구 역삼동 1"
+# 공허 방지 — desk_appraisal 한 번 호출로 실제 발화하는 소비처 수의 하한(실측 기반).
+_WIRED_CONSUMER_FLOOR = 2
+
+
+@pytest.mark.asyncio
+async def test_wired_consumers_receive_the_real_address_not_an_emptied_one(monkeypatch) -> None:
+    """★파생한 소비처 전부에 감시자를 달고 `desk_appraisal` 을 한 번 태운다.
+
+    발화한 소비처가 받은 `address` 는 **입력과 글자 그대로 같아야** 한다.
+    `""` · `address[:0]` · `address.strip()[:0]` 처럼 **무엇으로 비우든** 이 락이 잡는다.
+    """
+    import importlib
+    import inspect
+
+    mods = _parse_app_modules()
+    consumers = _derive_address_consumers(mods)
+    received: dict[str, list[object]] = {}
+
+    def _address_of(fn_obj, args, kwargs):
+        try:
+            bound = inspect.signature(fn_obj).bind_partial(*args, **kwargs)
+            return bound.arguments.get("address", "<미전달>")
+        except TypeError:  # pragma: no cover - 시그니처 불일치는 원본이 알아서 터진다
+            return "<바인딩실패>"
+
+    for dotted, _tree, _imports, fns in mods:
+        for fn in sorted(fns & consumers):
+            try:
+                mod = importlib.import_module(dotted)
+            except Exception:  # pragma: no cover - 임포트 불가 모듈은 이 락의 대상이 아니다
+                continue
+            orig = getattr(mod, fn, None)
+            if not callable(orig):
+                continue
+
+            def _make(fn=fn, orig=orig):
+                if inspect.iscoroutinefunction(orig):
+                    async def spy(*a, **kw):
+                        received.setdefault(fn, []).append(_address_of(orig, a, kw))
+                        return await orig(*a, **kw)
+                else:
+                    def spy(*a, **kw):
+                        received.setdefault(fn, []).append(_address_of(orig, a, kw))
+                        return orig(*a, **kw)
+                return spy
+
+            monkeypatch.setattr(mod, fn, _make())
+
+    _patch_rone(monkeypatch, _many_months("서울", rate=0.90))
+    from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
+
+    await desk_appraisal(address=_WIRED_ADDRESS, area_sqm=500.0,
+                         official_price_per_sqm=1_000_000.0)
+
+    # ★공허 방지 — 감시자가 실제로 발화했는가(0이면 이 락은 아무것도 안 본다).
+    assert len(received) >= _WIRED_CONSUMER_FLOOR, (
+        f"소비처가 {len(received)}개만 발화했다(하한 {_WIRED_CONSUMER_FLOOR}) — "
+        f"감시자가 안 걸렸거나 배선이 끊겼다: {sorted(received)}"
+    )
+    # ★팬아웃이 실제로 태워졌는가 — 이 자리가 R4 가 실증한 SURVIVED 지점이다.
+    assert _ADDRESS_FANOUT_ANCHOR in received, (
+        f"`{_ADDRESS_FANOUT_ANCHOR}` 가 발화하지 않았다 — 팬아웃이 이 락 밖이다: {sorted(received)}"
+    )
+    mangled = {
+        fn: vals for fn, vals in received.items()
+        if any(v != _WIRED_ADDRESS for v in vals)
+    }
+    assert not mangled, (
+        "소비처에 **입력과 다른 주소**가 도착했다 — 그 지표는 모든 필지에서 같은 값이 된다:\n  "
+        + "\n  ".join(f"{fn}: {vals!r}" for fn, vals in sorted(mangled.items()))
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# ★부채(초록 안에 보이게) — 지수형 표는 시점수정을 **원리적으로 못 낸다**
+#   라이브 실측 2026-09-08: 주택매매가격지수 `A_2024_00615` 의 `distinct_ITM_NM` = `['지수']`.
+#   `rate_series_from_rows` 는 `"변동" not in itm` 인 행을 버리므로 시계열이 `[]` 가 되고,
+#   `housing_time_adjust` → `resolve_time_adjustment` 가 **base·branch 모두** UNKNOWN 이다
+#   (이 PR 이 만든 회귀가 아니다 — 양쪽에서 같이 죽어 있다).
+#   지수형은 ∏(1+r) 이 아니라 `index[t1]/index[t0]` 로 계산해야 한다 — **별건**이라 여기서는
+#   고치지 않고, 고치면 이 xfail 이 **strict 라 빨개져** 마커를 지우게 만든다.
+# ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="★부채: 지수형(ITM_NM='지수') 표에서 시점수정 계수 미산출 — index[t1]/index[t0] 미구현",
+)
+def test_index_typed_table_should_yield_a_time_adjust_factor() -> None:
+    """지수형 표만 있는 상태에서도 시점수정 계수가 나와야 한다(미구현 — strict xfail)."""
+    from app.services.external_api.reb_client import cumulative_factor_from_rows
+
+    rows = [
+        {"GRP_NM": "서울", "CLS_NM": "전체", "ITM_NM": "지수",
+         "DTA_VAL": 100.0 + i * 0.1, "WRTTIME_IDTFR_ID": f"2024{i:02d}"}
+        for i in range(1, 13)
+    ] + [
+        {"GRP_NM": "서울", "CLS_NM": "전체", "ITM_NM": "지수",
+         "DTA_VAL": 101.2 + i * 0.1, "WRTTIME_IDTFR_ID": f"2025{i:02d}"}
+        for i in range(1, 13)
+    ]
+    assert cumulative_factor_from_rows(rows, "서울") is not None

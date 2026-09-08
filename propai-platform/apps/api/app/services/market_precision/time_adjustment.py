@@ -46,7 +46,18 @@ async def resolve_time_adjustment(address: str = "") -> TimeAdjustment:
         )
     # ★★독립 리뷰 R2 HIGH-C: 이 모듈은 독스트링에 *"임의 계수를 만들지 않고 UNKNOWN + 「미보정」
     #   정직 표기 … 가짜 계수 금지"* 라고 선언해 놓고, **존재하지 않는 지역도 OBSERVED** 로 승격시켰다
-    #   (실측: `zzz없는지역` → status=OBSERVED · factor=1.0243 · source='R-ONE').
+    #   (**픽스처 기준** 관측: `zzz없는지역` → status=OBSERVED · factor=1.0243 · source='R-ONE').
+    #   ★★출처 표기 정정(독립 리뷰 R4 MEDIUM-3 · 2026-09-08): 위 값은 **테스트 픽스처**에서 잰
+    #     것이지 라이브가 아니다. 종전에는 그냥 «실측» 이라고만 적어, 같은 파일을 읽는 사람이
+    #     **라이브 관측으로 오독**하게 돼 있었다(§증거규율 2 — 인과 주장에는 증거 토큰).
+    #   ★그리고 라이브에서는 이 경로가 **아예 값을 내지 않는다**(2026-09-08 실측):
+    #     이 함수는 `housing_time_adjust` 를 부르는데, 그 표(주택매매가격지수 `A_2024_00615`)의
+    #     `distinct_ITM_NM` 은 **`['지수']` 1종**이고 시계열 추출기는 `"변동" not in itm` 으로
+    #     그 행을 **전부 걸러 낸다** ⇒ 시계열 `[]` → 누적계수 `None` → 여기서 UNKNOWN «미보정».
+    #     즉 **base·branch 모두** 라이브에서 UNKNOWN 이다(이 PR 이 만든 회귀가 아니다).
+    #     지수형 표는 ∏(1+r) 이 아니라 `index[t1]/index[t0]` 로 계산해야 한다 — **별건**이라
+    #     이 PR 에서 고치지 않고, `tests/test_sido_resolution_fail_open.py` 의 **strict xfail** 로
+    #     초록 안에 드러나게 남긴다(커밋 메시지에만 적으면 안 보인다).
     #   그리고 `limitation` 이 «이 주소의 광역시도 대표치» 라고 **단정**했다.
     #   ⇒ 요청 지역의 값이 아니면 **관측이 아니다**. scope 를 읽어 가른다.
     scope = result.get("scope")

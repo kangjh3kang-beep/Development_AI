@@ -162,6 +162,11 @@ async def fetch_land_price_changes(months: int = 24) -> list[dict[str, Any]] | N
     return await fetch_recent_monthly_rows(statbl, months)
 
 
+# ★규모 구분 표의 **집계 행** 표기(라이브 실측 2026-09-08 — 주택매매가격지수 442/442 조합에
+#   정확히 1행). 이 표기가 없는 표에서는 아래 좁히기가 무동작이므로 안전하다.
+_AGGREGATE_CLS_NM = "전체"
+
+
 def latest_value_from_rows(
     rows: list[dict[str, Any]], region_sido: str = ""
 ) -> tuple[float, str] | None:
@@ -193,13 +198,29 @@ def latest_value_from_rows(
     #   ⇒ `row_region_name` 정확일치로 통일한다. 판정 규칙은 **한 자리**에 둔다.
     val_keys = ("DTA_VAL", "VALUE", "DATA_VALUE", "dtaVal")
     time_keys = ("WRTTIME_IDTFR_ID", "WRTTIME_DESC", "WRTTIME", "PRD_DE")
+
+    # ★★독립 리뷰 R4 HIGH-3(2026-09-08): 종전 처방(«모호하면 거부»)은 **증상에 걸려 있었다**.
+    #   카디널리티를 만드는 것은 «여러 지역이 섞였다» 가 아니라 **규모 구분 축**이고, 그 표들은
+    #   집계 행을 스스로 갖고 있다. 라이브 실측(주택매매가격지수 `A_2024_00615` · 전 2,210행):
+    #     · `(GRP_NM=서울, 202607)` → 5행 = `전체` / `40㎡이하` / `40㎡초과 60㎡이하` /
+    #       `60㎡초과 85㎡이하` / `85㎡초과` — 값이 100.66 / 100.34 / 101.11 / 102.25 / 105.22
+    #     · **(지역,시점) 조합 442개 전부**에 `CLS_NM="전체"` 가 **정확히 1행**씩 있었다(예외 0)
+    #   ⇒ 집계 행이 **실제로 있을 때만** 그 행으로 좁힌다. 거부는 그대로 **뒤에 남긴다**
+    #     (집계 표기가 없는 표에서는 좁히기가 무동작이고, 그때 거부가 받아 낸다).
+    #   ★없는 표기를 가정하지 않는다 — 상업용수익률 표는 `CLS_NM` 이 **상권명**이라 `전체` 가
+    #     없고, 그 표에서는 이 좁히기가 아무 일도 하지 않는다(실측: `distinct_CLS_NM` =
+    #     `강남`·`광복동`·`금호지구`… — 규모 구분이 아니다).
+    matched = [
+        row for row in rows
+        if isinstance(row, dict) and region_sido in row_region_names(row)
+    ]
+    aggregate = [row for row in matched if str(row.get("CLS_NM") or "").strip() == _AGGREGATE_CLS_NM]
+    if aggregate:
+        matched = aggregate
+
     best: tuple[str, float] | None = None
     tied: set[float] = set()
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        if region_sido not in row_region_names(row):
-            continue
+    for row in matched:
         raw = next((row.get(k) for k in val_keys if row.get(k) not in (None, "")), None)
         try:
             val = float(raw)
@@ -222,8 +243,11 @@ def latest_value_from_rows(
         #   그 값이 보증금 환산 → NOI → 수익환원가액으로 흘러 화면에 «R-ONE 실측» 으로 찍혔다.
         #   ⇒ **모호하면 거부한다.** 소비처는 문서화된 기본값으로 떨어지고 그것을 `[기본]` 으로
         #     표기한다(정직). 값을 임의로 고르는 것보다 낫다.
-        #   ★개선 여지: 표가 «전체» 같은 집계 행을 명시하면 그것을 고를 수 있다 — 다만 그 표기가
-        #     표마다 같다는 근거가 없어(이 PR 이 배운 것) 지금은 거부한다.
+        #   ★★2026-09-08 갱신 — 이 자리는 이제 **최후 방어**다. 위에서 집계 행(`전체`)이 있으면
+        #     그것으로 좁히므로, 여기까지 오는 것은 «집계 표기가 없는 표에서 여러 행이 같은 시점에
+        #     서로 다른 값을 내는» 경우뿐이다. 그때는 여전히 **고를 근거가 없어** 거부한다.
+        #     (종전 주석은 «표기가 표마다 같다는 근거가 없어 지금은 거부한다» 였다 — 그 근거를
+        #      라이브로 재서 얻었으므로 좁히기를 앞에 넣었고, 이 문장은 그에 맞춰 고쳤다.)
         logger.info(
             "R-ONE 최신값 모호 — 같은 시점에 값이 다른 행이 여럿(거부)",
             region=region_sido, wrttime=best[0], values=sorted(tied),

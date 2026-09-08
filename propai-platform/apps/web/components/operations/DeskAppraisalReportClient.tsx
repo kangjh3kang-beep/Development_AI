@@ -23,6 +23,7 @@ import {
   type DeskAppraisalResult as Result,
 } from "@/lib/land/desk-appraisal";
 import type { Locale } from "@/i18n/config";
+import { buildMarketBasisLines } from "@/lib/land/desk-appraisal-basis";
 
 const APPR_LABELS: Record<string, string> = {
   valuation_narrative: "추정 평가", comparable_explanation: "사례 비교", market_position: "시장 포지션",
@@ -567,14 +568,18 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
             {/* VI. 시점수정·시장통계 근거 */}
             <Section no="Ⅵ" title="시점수정·시장통계 근거">
               <ul className="space-y-1 text-[11px] text-[var(--text-secondary)]">
-                {res.time_adjust_basis && <li>· 시점수정: {res.time_adjust_basis}</li>}
-                {ms.cap_rate?.source === "R-ONE" && <li>· 자본환원율(R-ONE 실측): {ms.cap_rate.pct}% {ms.cap_rate.basis ? `— ${ms.cap_rate.basis}` : ""}</li>}
-                {ms.jeonse_conversion_rate?.source === "R-ONE" && <li>· 전월세전환율(R-ONE 실측): {ms.jeonse_conversion_rate.pct}%</li>}
-                {/* ★`basis` 를 함께 렌더한다(독립 리뷰 R3 HIGH-3). 종전에는 `factor` 만 찍어,
-                    요청 시·도가 아닌 **전국 대체 계수**가 아무 단서 없이 «주택가격지수 누적변동: 1.0243»
-                    으로 보였다. 바로 위 형제(cap_rate)는 이미 `basis` 를 렌더한다 — 같은 블록 안 비대칭이었다. */}
-                {ms.housing_time_adjust?.source === "R-ONE" && <li>· 주택가격지수 누적변동: {ms.housing_time_adjust.factor}{ms.housing_time_adjust.basis ? ` — ${ms.housing_time_adjust.basis}` : ""}</li>}
-                {!ms.rone_available && <li className="text-[var(--text-hint)]">· 시장통계: R-ONE 통계표 미설정 구간은 근사값 적용(관리자 설정 시 실데이터 전환).</li>}
+                {/* ★줄 조립은 순수 함수 `buildMarketBasisLines` 가 한다(독립 리뷰 R4 MEDIUM-2).
+                    종전에는 이 자리에 조건식이 직접 박혀 있어 **소스 grep 락**밖에 걸 수 없었고,
+                    `{false && …}` 로 렌더를 죽여도 토큰이 남아 초록이었다(리뷰어 실증 SURVIVED).
+                    이제 그 함수를 테스트가 **직접 태운다** — 렌더가 죽으면 배열이 달라져 잡힌다. */}
+                {buildMarketBasisLines(res).map((line) => (
+                  <li
+                    key={line}
+                    className={line.startsWith("· 시장통계:") ? "text-[var(--text-hint)]" : undefined}
+                  >
+                    {line}
+                  </li>
+                ))}
               </ul>
 
               {/* 월별·연도별 지가변동률 통계분석 */}
