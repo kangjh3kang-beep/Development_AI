@@ -310,6 +310,92 @@ async def test_commissionable_chain_distinguishes_its_two_failures() -> None:
     assert not issubclass(svc.OrgNodeNotFoundError, svc.OrgChainNotCommissionableError)
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="★이 저장소는 개발 환경(3.10)에서 **파싱조차 안 된다** — `app/crud/base.py` 가 3.11+ 문법. "
+           "`datetime.UTC` 셰임으로 우회를 시도했으나 SyntaxError 라 원리적으로 불가. "
+           "⇒ 이 락은 **CI(3.12)에서 처음 실행된다**(로컬 미실행 = 부채, 계획서 §5 에 명시). "
+           "같은 축을 임포트 없이 보는 `test_router_wiring_is_declared_in_source` 는 로컬에서 돌고, "
+           "그쪽으로 생존 3건이 CAUGHT 로 뒤집히는 것을 실측했다.",
+)
+async def test_contract_create_actually_validates_the_member_node(monkeypatch) -> None:
+    """★★**행위 락** — 라우터가 담당 노드를 **실제로 검증하고 결과를 넘기는가**.
+
+    ★기계 변이가 남긴 생존 3건이 정확히 이 배선이다(2026-09-08):
+
+        if mnode:                      → `if False:` ::VERDICT=SURVIVED   ← 검증이 통째로 꺼진다
+        mnode = mnode_uuid             → 줄삭제      ::VERDICT=SURVIVED   ← 원문 문자열이 그대로 간다
+        member_node_id=mnode,          → 줄삭제      ::VERDICT=SURVIVED   ← 담당자가 사라진다
+
+    앞선 락들은 **서비스 함수**를 태운다 — 「함수가 옳다」는 「그것이 불린다」를 함의하지 않는다.
+    저장소가 여러 번 데인 자리라 여기서는 **핸들러를 직접 호출**한다.
+    """
+    from app.api.endpoints.sales import actions as router
+
+    seen: dict = {}
+
+    async def _fake_assert(_db, site_id, node_id):
+        seen["asserted"] = (site_id, node_id)
+        return [_ChainNode("AGENCY")]
+
+    async def _fake_create(_db, _site, _unit, **kw):
+        seen["create_kwargs"] = kw
+        return type("C", (), {"id": uuid.uuid4(), "stage": "CONTRACTED", "total_price": 100})()
+
+    monkeypatch.setattr(router, "assert_commissionable_chain", _fake_assert, raising=True)
+    monkeypatch.setattr(router, "create_contract", _fake_create, raising=True)
+
+    class _DB:
+        async def commit(self): pass
+        async def rollback(self): pass
+
+    site = uuid.uuid4()
+    ctx = type("Ctx", (), {"site_id": site, "user": type("U", (), {"id": uuid.uuid4()})()})()
+    unit, node = uuid.uuid4(), uuid.uuid4()
+
+    # ── 모집단 A: 담당 노드를 넘겼다 → **검증이 돌고**, 정규화된 UUID 가 전달된다.
+    await router.contract_create(
+        {"unit_id": str(unit), "member_node_id": str(node)}, db=_DB(), ctx=ctx)
+    assert seen.get("asserted") == (site, node), "담당 노드 검증이 돌지 않았다"
+    assert seen["create_kwargs"]["member_node_id"] == node, (
+        "검증된 UUID 가 아니라 다른 값이 계약으로 넘어갔다(원문 문자열이거나 누락)"
+    )
+    assert not isinstance(seen["create_kwargs"]["member_node_id"], str), "UUID 로 정규화돼야 한다"
+
+    # ── 모집단 B: 담당 노드가 없다 → 검증을 **부르지 않고**, None 이 전달된다.
+    seen.clear()
+    await router.contract_create({"unit_id": str(unit)}, db=_DB(), ctx=ctx)
+    assert "asserted" not in seen, "담당 노드가 없는데 검증을 불렀다(불필요한 조회)"
+    assert seen["create_kwargs"]["member_node_id"] is None
+
+
+def test_router_wiring_is_declared_in_source() -> None:
+    """★위 행위 락의 **로컬 대역** — 임포트 없이 AST 로 같은 배선을 본다.
+
+    파이썬 3.10 개발 환경에서는 라우터를 임포트할 수 없어 위 락이 skip 된다.
+    그 동안 배선이 무잠금이 되지 않도록, «검증 호출이 있고 그 결과가 계약으로 간다» 를
+    소스 구조로 확인한다(문자열 grep 이 아니라 **호출 노드와 키워드 인자**).
+    """
+    api_root, _ = _tracked_backend_sources()
+    src = (api_root / "app/api/endpoints/sales/actions.py").read_text(encoding="utf-8")
+
+    fn = next(
+        n for n in ast.walk(ast.parse(src))
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "contract_create"
+    )
+    calls = [c for c in ast.walk(fn) if isinstance(c, ast.Call)]
+
+    assert any(
+        isinstance(c.func, ast.Name) and c.func.id == "assert_commissionable_chain" for c in calls
+    ), "`contract_create` 가 담당 노드 검증을 부르지 않는다"
+
+    create = next(
+        c for c in calls if isinstance(c.func, ast.Name) and c.func.id == "create_contract"
+    )
+    kw = {k.arg for k in create.keywords}
+    assert "member_node_id" in kw, "검증한 담당 노드가 계약으로 전달되지 않는다"
+
+
 def test_router_maps_the_two_failures_to_different_status_codes() -> None:
     """★배선 락 — 라우터가 두 예외를 **다른 HTTP 상태**로 옮기는가(AST).
 
