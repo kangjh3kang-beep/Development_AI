@@ -36,6 +36,16 @@ const WEB_ROOT = join(__dirname, "..");
 /** 현장앱 셸 **안쪽**은 대상이 아니다 — 앱 내 이동은 새 창을 열면 안 된다. */
 const INTRA_APP = [join("components", "sales-app") + sep, join("app", "[locale]", "(fieldapp)") + sep];
 
+/**
+ * ★락이 요구하는 **호출 형태** — 락과 탐지 테스트가 **같은 심볼**을 쓴다.
+ *
+ * 종전엔 탐지 테스트가 이 문자열을 **다시 선언**했다. 그래서 락의 판정식을 약화시켜도
+ * 탐지 테스트는 자기 사본을 보고 초록이었다 — `String.includes` 의 동작을 단언한 것이지
+ * **가드를 단언한 것이 아니었다**(2026-09-08 적대 리뷰 MAJOR-1, 변이로 실증).
+ * ⇒ 상수 하나로 묶어 **약화가 곧 빨강**이 되게 한다.
+ */
+const CALL_SHAPE = "shouldInterceptFieldAppClick(";
+
 const SKIP_DIRS = new Set(["node_modules", ".next", "dist", "build", "coverage", "e2e", "public"]);
 
 function sourceFiles(dir: string, acc: string[] = []): string[] {
@@ -74,8 +84,7 @@ const isIntraApp = (f: string) => INTRA_APP.some((p) => rel(f).startsWith(p));
  * 구현은 문자열 `/sales/sites` **하나**였다 — **선언은 파생형, 구현은 목록형**이었다.
  * `(fieldapp)` 아래 새 `page.tsx` 가 생기면 그 라우트로 가는 링크가 전부 감시망 밖이었다.
  */
-function fieldAppRouteSegments(): string[] {
-  const base = join(WEB_ROOT, "app", "[locale]", "(fieldapp)");
+function fieldAppRouteSegments(base = join(WEB_ROOT, "app", "[locale]", "(fieldapp)")): string[] {
   const segs = new Set<string>();
   const walk = (dir: string, parts: string[]) => {
     for (const name of readdirSync(dir)) {
@@ -156,7 +165,7 @@ describe("현장앱 진입 — 플랫폼 쪽 링크는 전부 진입 정책을 �
     const missing = renderers
       // ★「이름이 있다」가 아니라 **호출 형태**를 요구한다(적대 리뷰 NM-2(b)).
       //   프로브 실증: `const _x = shouldInterceptFieldAppClick;` 만 두고 **호출 0** 인데 통과했다.
-      .filter((f) => !codeOnly(readFileSync(f, "utf8"), f).includes("shouldInterceptFieldAppClick("))
+      .filter((f) => !codeOnly(readFileSync(f, "utf8"), f).includes(CALL_SHAPE))
       .map(rel);
 
     expect(
@@ -223,14 +232,23 @@ describe("남은 부채 — 이 축이 못 보는 것", () => {
  * ⇒ **판정 함수를 합성 입력으로 직접 태운다.** 그러면 약화가 곧 빨강이 된다.
  */
 describe("★탐지 축 — 판정 함수가 실제로 무엇을 가르는가", () => {
-  it("라우트 집합이 (fieldapp) 디렉토리에서 파생됐다 — 리터럴 하나가 아니다", () => {
-    // 공허 진리 가드: 파생 결과가 비면 아래가 무의미하다.
-    expect(FIELDAPP_ROUTES.length).toBeGreaterThan(0);
-    // 오늘의 실제 라우트가 들어 있다.
+  it("★라우트 집합이 **디렉토리에서 파생**된다 — 리터럴이면 픽스처를 못 읽는다", () => {
+    // ★2026-09-08 적대 리뷰 MAJOR-1(②): 종전 단언은 **프로덕션 라우트만** 입력으로 썼는데,
+    //   오늘 파생 결과가 리터럴 `"/sales/sites"` 와 **완전히 같다**(실측 확인).
+    //   ⇒ 「파생판」과 「리터럴판」이 같은 답을 내는 입력으로만 태우고 있었다 —
+    //     **차가 0인 픽스처는 잠금이 아니다.**
+    //   ⇒ **다른 세그먼트를 가진 픽스처 디렉토리**로 두 판을 가른다.
+    const fx = join(WEB_ROOT, "lib", "__fixtures__", "fieldapp-routes", "(fieldapp)");
+    const derived = fieldAppRouteSegments(fx);
+
+    // 양성: 픽스처의 라우트를 **실제로 읽어 온다**(리터럴 구현은 여기서 빈 배열이 된다).
+    expect(derived).toContain("/probe");
+    // 접두 축약도 함께 — 하위 라우트는 상위 접두에 흡수된다.
+    expect(derived).not.toContain("/sales/sites");
+
+    // 대조군: 프로덕션 base 는 프로덕션 라우트를 준다(조회기가 base 를 실제로 쓴다).
     expect(FIELDAPP_ROUTES.some((r) => r.includes("sales"))).toBe(true);
-    // ★그리고 그것은 **디렉토리에서 읽은 것**이지 손으로 적은 것이 아니다 —
-    //   `fieldAppRouteSegments()` 를 다시 불러 같은 값이 나오는지로 확인한다.
-    expect([...fieldAppRouteSegments()].length).toBeGreaterThan(0);
+    expect(FIELDAPP_ROUTES.length).toBeGreaterThan(0);
   });
 
   it("★두 모집단 — 앱 라우트 href 줄은 잡고, 무관한 href 줄은 안 잡는다", () => {
@@ -242,7 +260,7 @@ describe("★탐지 축 — 판정 함수가 실제로 무엇을 가르는가", 
   });
 
   it("★「호출 형태」와 「이름 언급」을 가른다 — 이름만 있으면 통과시키면 안 된다", () => {
-    const CALL = "shouldInterceptFieldAppClick(";
+    const CALL = CALL_SHAPE; // ★락이 쓰는 그 심볼 — 사본이 아니다
     const mention = "const _unused = shouldInterceptFieldAppClick; void _unused;";
     const call = "if (node.launch === 'app-window' && shouldInterceptFieldAppClick(e)) {";
     // 락이 쓰는 것과 **같은 판정**을 여기서 태운다.
