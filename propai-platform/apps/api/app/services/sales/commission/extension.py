@@ -105,7 +105,34 @@ def total_paid_of(gross, vat=0) -> int:
     return int(g + v)
 
 
-async def create_schedule(db: AsyncSession, split_id, milestones: list[dict]):
+async def _assert_split_in_site(db: AsyncSession, site_id, split_id) -> None:
+    """★**split 이 이 현장 것인지** 확인한다 — 외부 id 를 받는 함수의 공용 관문(2026-09-08).
+
+    이 모듈의 함수들은 `split_id`·`holdback_id` 를 **클라이언트가 준 값 그대로** 받는다.
+    현장을 안 보면 A현장 운영자가 B현장 split 에 보류금을 걸거나 지급표를 만들 수 있고,
+    `run_due_payouts` 가 `gross -= sum(holdback.amount)` 로 그것을 빼므로
+    **B현장 정산 금액이 A가 건 만큼 깎인다.**
+
+    ★`sales_commission_holdback`·`sales_commission_payout_schedule` 에는 `site_id` 컬럼이
+      **없어 RLS 가 원리적으로 못 막는다**(정책은 `site_id` 보유 테이블에만 걸린다).
+      ⇒ **앱 계층이 유일한 선**이고, 그래서 이 관문을 함수마다 흩지 않고 **하나로** 둔다.
+
+    ★2026-09-08 적대 리뷰 B3: 처음엔 `release_holdback` **하나만** 고쳤다. 그런데 라우터
+      세 개(`lifecycle_p6.py:80/88/97`)가 **연속 배치**돼 있고 앞의 둘이 같은 결함이었다 —
+      «처방을 지적된 자리에만 적용하면 형제 축이 그대로 남는다» 의 재발이다.
+    """
+    row = (await db.execute(
+        select(SalesCommissionSplit.id)
+        .join(SalesCommissionEvent, SalesCommissionEvent.id == SalesCommissionSplit.event_id)
+        .where(SalesCommissionSplit.id == split_id,
+               SalesCommissionEvent.site_id == site_id))).first()
+    if row is None:
+        # «없다» 와 «남의 현장» 을 같은 오류로 — 존재 여부가 새면 그 자체가 IDOR 단서다.
+        raise ValueError("배분(split)을 찾을 수 없습니다(이 현장의 배분만 다룰 수 있습니다)")
+
+
+async def create_schedule(db: AsyncSession, site_id, split_id, milestones: list[dict]):
+    await _assert_split_in_site(db, site_id, split_id)
     total = sum(Decimal(str(m["ratio"])) for m in milestones)
     if total > Decimal("1"):
         raise ValueError("마일스톤 비율 합계가 1을 초과")
@@ -115,13 +142,14 @@ async def create_schedule(db: AsyncSession, split_id, milestones: list[dict]):
     await db.flush()
 
 
-async def set_holdback(db: AsyncSession, split_id, reason, amount, release_condition=None):
+async def set_holdback(db: AsyncSession, site_id, split_id, reason, amount, release_condition=None):
+    await _assert_split_in_site(db, site_id, split_id)
     db.add(SalesCommissionHoldback(split_id=split_id, reason=reason, amount=amount,
            release_condition=release_condition))
     await db.flush()
 
 
-async def release_holdback(db: AsyncSession, holdback_id, site_id=None):
+async def release_holdback(db: AsyncSession, site_id, holdback_id):
     """보류금 해제 — ★**현장 격리**(2026-09-08).
 
     종전엔 `id` 만 보고 해제해, A현장 운영자가 B현장 보류금 UUID 로 부르면 **B현장 수수료 지급이
@@ -132,18 +160,21 @@ async def release_holdback(db: AsyncSession, holdback_id, site_id=None):
       (정책은 `site_id` 컬럼 보유 테이블에만 걸린다) — 그래서 **앱 계층이 유일한 선**이다.
       split → event 로 조인해 현장을 판정한다(`run_due_payouts` 와 같은 경로).
 
-    ★`site_id=None` 은 **하위호환**이 아니라 «호출부가 아직 안 넘긴다» 는 뜻이다.
-      넘어오면 격리하고, 안 넘어오면 종전대로 둔다 — 호출부를 다 고친 뒤 필수로 좁힌다.
-      (그 부채를 `it.todo` 대신 여기 적어 둔다 — 파이썬엔 그 장치가 없다.)
+    ★2026-09-08 적대 리뷰 M4 — 처음엔 `site_id=None` 기본값을 두고 *"호출부를 다 고친 뒤
+      좁힌다"* 고 적었는데 **둘 다 틀렸다**: ①호출부는 애초에 **하나뿐**이었다(좁힐 것이 없었다)
+      ②*"파이썬엔 `it.todo` 장치가 없다"* 도 거짓이다 — `pytest.mark.xfail(strict=True)` 가 있고
+      이 저장소가 **이미 그것으로 부채를 초록 안에 노출**하고 있다.
+      기본값은 «점진 이행» 이 아니라 **아무도 안 쓰는 우회로**였고, 새 호출부가 빠뜨리면
+      격리가 **조용히 꺼진다**. ⇒ **위치인자 필수**로 좁혔다.
     """
-    q = select(SalesCommissionHoldback).where(SalesCommissionHoldback.id == holdback_id)
-    if site_id is not None:
-        q = (q.join(SalesCommissionSplit,
-                    SalesCommissionSplit.id == SalesCommissionHoldback.split_id)
-              .join(SalesCommissionEvent,
-                    SalesCommissionEvent.id == SalesCommissionSplit.event_id)
-              .where(SalesCommissionEvent.site_id == site_id))
-    h = (await db.execute(q)).scalar_one_or_none()
+    h = (await db.execute(
+        select(SalesCommissionHoldback)
+        .join(SalesCommissionSplit,
+              SalesCommissionSplit.id == SalesCommissionHoldback.split_id)
+        .join(SalesCommissionEvent,
+              SalesCommissionEvent.id == SalesCommissionSplit.event_id)
+        .where(SalesCommissionHoldback.id == holdback_id,
+               SalesCommissionEvent.site_id == site_id))).scalar_one_or_none()
     if h is None:
         # ★«없다» 와 «남의 현장» 을 같은 오류로 돌린다 — 존재 여부가 새면 그 자체가 정보 노출이다.
         raise ValueError("보류금을 찾을 수 없습니다(이 현장의 보류금만 해제할 수 있습니다)")
