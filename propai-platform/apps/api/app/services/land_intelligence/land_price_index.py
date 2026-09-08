@@ -22,23 +22,27 @@ _ANNUAL_RATE: dict[str, float] = {
 _DEFAULT_RATE = 0.018  # 전국 평균 근사
 
 
-#: 주소 앞에 붙는 **비주소 잡음** — 이 목록은 **닫혀 있다**(임의 문자열을 벗기지 않는다).
-#: 우편번호 `(우)12345` · 국가명 · 대괄호/괄호 라벨. 그 이상은 벗기지 않는다 —
-#: 벗길수록 «시도가 아닌 것을 시도로 읽을» 위험이 커진다(정본이 `startswith` 인 이유다).
-_ADDR_PREFIX_NOISE = re.compile(
-    r"^\s*(?:\(\s*우\s*\)\s*\d{3,6}|\[[^\]]{1,20}\]|\([^)]{1,20}\)|대한민국|한국)\s*"
-)
+#: 주소 앞에 붙는 **비주소 잡음** — 우편번호 접두만 벗긴다.
+#:
+#: ★★독립 리뷰 R2 MEDIUM-1 정정: 종전 판은 `\([^)]{1,20}\)` · `\[[^\]]{1,20}\]` 로 **임의의**
+#:   괄호/대괄호 라벨을 벗기면서 독스트링에 *"이 목록은 **닫혀 있다**"* 고 썼다 — **거짓 면역
+#:   주장**이었다(§C-11). 그리고 실제로 **시도를 품은 라벨까지 벗겨** 회귀를 냈다(실측):
+#:       '(주)오케이 서울특별시 강남구' 서울 → ''    '[경기도] 성남시 분당구' 경기 → ''
+#:       '(서울) 강남구 역삼동'        서울 → ''    '(광주광역시) 북구'      광주 → ''
+#:   11개 형태 중 **9개 회귀**. `대한민국|한국` 을 경계 없이 벗긴 것도 위험했다
+#:   (`한국은행 서울특별시…` 의 앞 두 글자만 잘려 나갔다).
+#:
+#: ⇒ 지금은 **우편번호 접두 하나만** 벗긴다 — 그 형태는 시도를 품을 수 없어 안전하다.
+#:   괄호 라벨·국가명은 **건드리지 않는다**(정본이 `startswith` 인 이유를 존중한다).
+#:   그래서 `(주)오케이 서울…` 은 여전히 해석되지 않는다 — **그것은 이 PR 이 좁힌 범위이고
+#:   base 대비 회귀다.** 아래 `xfail` 로 초록 안에 드러낸다(숨기지 않는다).
+_ADDR_POSTAL_PREFIX = re.compile(r"^\s*(?:\(\s*우\s*\)\s*)?\d{5,6}\s+(?=\S)")
 
 
 def _strip_address_prefix_noise(address: str) -> str:
-    """주소 앞의 **닫힌 목록** 잡음만 반복 제거한다(최대 3회 — 무한루프·과잉제거 방지)."""
+    """우편번호 접두만 제거한다(그 이상은 벗기지 않는다)."""
     a = (address or "").strip()
-    for _ in range(3):
-        stripped = _ADDR_PREFIX_NOISE.sub("", a, count=1).strip()
-        if stripped == a:
-            break
-        a = stripped
-    return a
+    return _ADDR_POSTAL_PREFIX.sub("", a, count=1).strip()
 
 
 def _sido_of(address: str) -> str:
@@ -138,7 +142,12 @@ async def time_adjust_factor_async(address: str = "", base_year: int = 2025) -> 
                             f"(요청 지역{f' {sido}' if sido else ''}의 시계열이 없어 {scope} 값을 적용 — "
                             f"해당 지역 실데이터가 아닙니다)"
                         )
-                        source = f"R-ONE({scope} 대체)"
+                        # ★★`source` 는 **"R-ONE" 그대로** 둔다(독립 리뷰 R2 MEDIUM-3).
+                        #   프론트가 `source === "R-ONE"` **정확일치**로 렌더 여부를 정하므로
+                        #   (`DeskAppraisalReportClient.tsx:571-573`), 동적 문자열로 바꾸면
+                        #   **그 줄이 화면에서 통째로 사라진다** — 「고쳤는데 안 보이는」 형태다.
+                        #   ⇒ 정직성은 **표시 문구와 분리된 `scope`** 가 나른다(기계 판독 축).
+                        source = "R-ONE"
                     return {"factor": f, "annual_rate": None, "elapsed_years": None,
                             "rationale": label, "source": source, "scope": scope}
     except Exception:  # noqa: BLE001

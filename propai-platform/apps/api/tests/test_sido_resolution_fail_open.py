@@ -367,22 +367,39 @@ def test_time_adjust_actually_uses_the_address() -> None:
     [
         ("경기도 성남시 분당구 1", "경기"),
         ("(우)13561 경기도 성남시 분당구", "경기"),
-        ("대한민국 경기도 성남시", "경기"),
-        ("[본점] 서울특별시 강남구", "서울"),
-        ("(신관) 충청남도 천안시", "충남"),
+        ("13561 경기도 성남시 분당구", "경기"),
         ("  경기도 성남시", "경기"),
+        ("충청남도 천안시 서북구", "충남"),
     ],
 )
-def test_address_prefix_noise_does_not_break_resolution(addr: str, expected: str) -> None:
-    """★정본은 `startswith` 라 접두 잡음에 약하다 — 그 계열이 회귀했었다(독립 리뷰 MEDIUM-1).
-
-    ★내 «전수 대조» 는 정식 시도명을 **0번 위치에만** 놓고 태워서 이 계열을 **원리적으로
-      볼 수 없었다**(모집단이 결함의 축과 달랐다).
-    """
+def test_postal_prefix_does_not_break_resolution(addr: str, expected: str) -> None:
+    """★정본은 `startswith` 라 접두 잡음에 약하다 — **우편번호만** 벗겨 그 계열을 살린다."""
     assert _sido_of(addr) == expected
 
 
-@pytest.mark.parametrize("addr", ["zzz없는곳 1", "(우)00000 zzz없는곳", "광주시 오포읍", ""])
+# ★★이 PR 이 **좁힌 범위**를 숨기지 않는다(독립 리뷰 R2 MEDIUM-1).
+#   base 는 부분문자열이라 아래 형태를 해석했는데 지금은 못 한다. 임의 괄호 라벨을 벗기는
+#   1차 시도는 **시도를 품은 라벨까지 벗겨** 더 큰 회귀를 냈으므로(11형태 중 9회귀) 되돌렸다.
+#   ⇒ 정직한 상태: «우편번호 외의 접두는 지원하지 않는다». 부채로 초록 안에 드러낸다.
+@pytest.mark.xfail(strict=True, reason="★부채(R2 MEDIUM-1): 회사명·괄호 라벨·국가명 접두는 미지원 — base 대비 좁아진 범위")
+@pytest.mark.parametrize(
+    ("addr", "expected"),
+    [
+        ("(주)오케이 서울특별시 강남구 1", "서울"),
+        ("[경기도] 성남시 분당구 1", "경기"),
+        ("한국은행 서울특별시 중구 1", "서울"),
+        ("대한민국 경기도 성남시", "경기"),
+    ],
+)
+def test_other_prefix_noise_is_not_supported_yet(addr: str, expected: str) -> None:
+    """언젠가 지원해야 한다 — 다만 **시도를 품은 라벨을 벗기지 않는** 방식이어야 한다."""
+    assert _sido_of(addr) == expected
+
+
+@pytest.mark.parametrize(
+    "addr",
+    ["zzz없는곳 1", "(우)00000 zzz없는곳", "13561 zzz없는곳", "광주시 오포읍", "", "   "],
+)
 def test_prefix_stripping_does_not_fabricate_a_sido(addr: str) -> None:
     """★특이도 — 잡음을 벗겨도 **없는 시도를 지어내지 않는다**(모호한 `광주시` 포함)."""
     assert _sido_of(addr) == ""
@@ -453,9 +470,12 @@ async def test_nationwide_fallback_must_not_claim_regional_real_data(monkeypatch
     _patch_rone(monkeypatch, _many_months("전국"))
     out = await time_adjust_factor_async("경상남도 창원시 의창구 1")
 
+    # ★계약이 `source` 가 아니라 **`scope`** 다(R2 MEDIUM-3 재설계):
+    #   프론트가 `source === "R-ONE"` 정확일치로 렌더하므로 그 문자열은 **그대로 둔다** —
+    #   동적으로 바꾸면 «고쳤는데 화면에서 사라지는» 형태가 된다.
+    #   ⇒ 기계 판독 정직성은 `scope`, 사람이 읽는 정직성은 `rationale` 이 나른다.
     assert out.get("scope") == "전국", out
-    assert out["source"] != "R-ONE", f"전국 대체인데 그냥 R-ONE 이라고 말한다: {out['source']}"
-    assert "전국" in out["source"], out["source"]
+    assert out["source"] == "R-ONE", out["source"]   # 렌더 계약 보존
     # ★사용자가 읽는 줄이 **거짓 단정**을 하지 않는가.
     assert "해당 지역 실데이터가 아닙니다" in out["rationale"], out["rationale"]
     # 두 모집단 대조 — 지역 시계열이 있는 경우(위 테스트)와 **다른** 라벨이어야 한다.
@@ -482,3 +502,265 @@ async def test_async_path_actually_uses_the_resolved_address(monkeypatch) -> Non
     assert gyeongnam["factor"] != seoul["factor"], (
         f"주소가 결과를 바꾸지 않는다(배선 끊김): {gyeongnam['factor']} == {seoul['factor']}"
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# ★독립 리뷰 R2 반영 — 판정과 산출이 **같은 필터**를 쓰는가
+# ─────────────────────────────────────────────────────────────
+
+def _rows_region_present_but_values_missing() -> list[dict]:
+    """★그 지역 **행은 있는데 값이 결측**(`'-'`)인 모집단 — R-ONE 이 실제로 주는 형태.
+
+    ★R2 HIGH-A 가 재현한 자리다: `_has_region` 은 지역**만** 보므로 True 인데,
+      시계열을 만드는 `_collect` 는 `DTA_VAL` 이 **숫자로 파싱될 것**까지 보므로 빈다.
+      판정과 산출을 갈라 두면 «전국 값을 경남이라고 말하는» 상태가 된다.
+    """
+    return [
+        {"CLS_NM": "경남", "ITM_NM": "변동률", "DTA_VAL": "-", "WRTTIME_IDTFR_ID": f"2024{m:02d}"}
+        for m in range(1, 13)
+    ] + _many_months("전국")
+
+
+def test_scope_is_derived_from_the_same_filter_that_built_the_series() -> None:
+    """★★행은 있는데 시계열이 없으면 **그 지역이라고 말하면 안 된다**(R2 HIGH-A)."""
+    rows = _rows_region_present_but_values_missing()
+    # 전제 — 두 축이 실제로 갈리는 모집단인가(공허 방지).
+    assert rc._has_region(rows, "경남") is True, "경남 행이 없으면 이 락이 공허하다"
+    assert rc.rate_series_from_rows(rows, "경남", _no_fallback=True) == [], "값이 파싱되면 축이 안 갈린다"
+    # ★판정은 산출을 따라야 한다.
+    assert rc.rate_series_scope(rows, "경남") == "전국", rc.rate_series_scope(rows, "경남")
+    # 시계열은 전국 값이어야 한다(경남 값이 섞이면 안 된다).
+    assert sorted({r for _t, r in rc.rate_series_from_rows(rows, "경남")}) == [0.05]
+
+
+@pytest.mark.asyncio
+async def test_missing_values_do_not_produce_a_regional_real_data_label(monkeypatch) -> None:
+    """그 상태에서 라벨이 «경남 실데이터» 라고 말하면 안 된다(감정평가 문서에 찍힌다)."""
+    from app.services.land_intelligence.land_price_index import time_adjust_factor_async
+
+    _patch_rone(monkeypatch, _rows_region_present_but_values_missing())
+    out = await time_adjust_factor_async("경상남도 창원시 1")
+    assert out.get("scope") == "전국", out
+    assert out["source"] == "R-ONE", out["source"]   # 렌더 계약 보존
+    assert "해당 지역 실데이터가 아닙니다" in out["rationale"], out["rationale"]
+
+
+# ── R2 HIGH-E: 표마다 **지역 필드가 다르다** ──
+
+def _jeonse_shaped_rows() -> list[dict]:
+    """★전월세전환율 표의 **실측 모양**(2026-09-08 라이브): 지역이 `GRP_NM` 이고
+    `CLS_NM` 은 **규모 구분**이다. `CLS_NM` 만 보면 이 표에서 지역이 **0건**이 된다.
+    """
+    return [
+        {"GRP_NM": "서울", "GRP_FULLNM": "서울", "CLS_NM": "전체",
+         "ITM_NM": "전월세전환율", "DTA_VAL": 6.6, "WRTTIME_IDTFR_ID": "202607"},
+        {"GRP_NM": "도심권", "GRP_FULLNM": "서울>도심권", "CLS_NM": "전체",
+         "ITM_NM": "전월세전환율", "DTA_VAL": 5.8, "WRTTIME_IDTFR_ID": "202607"},
+        {"GRP_NM": "전국", "GRP_FULLNM": "전국", "CLS_NM": "40㎡이하",
+         "ITM_NM": "전월세전환율", "DTA_VAL": 7.1, "WRTTIME_IDTFR_ID": "202607"},
+    ]
+
+
+def test_region_field_differs_per_statistical_table() -> None:
+    """★후보 필드 **집합**으로 판정해야 표마다 다른 모양을 견딘다(R2 HIGH-E).
+
+    ★한 표의 모양을 보편이라 가정하면 다른 표에서 **조용히 0건**이 된다 — 그러면
+      R-ONE 실측값이 사라지고 하드코딩 기본값으로 떨어지는데, 그 상실이 **고지되지 않는다**.
+    """
+    rows = _jeonse_shaped_rows()
+    assert rc.row_region_names(rows[0]) == {"서울", "전체"}
+    # 지역은 GRP_NM 에서 잡힌다.
+    assert rc.latest_value_from_rows(rows, "서울") == (6.6, "202607")
+    assert rc.latest_value_from_rows(rows, "전국") == (7.1, "202607")
+    # ★규모 구분은 시도명과 절대 같아지지 않으므로 오염되지 않는다(판별력).
+    assert rc.latest_value_from_rows(rows, "40㎡이하") == (7.1, "202607")  # 명시 조회는 가능
+    # ★계층 경로 경유 과매칭은 여전히 금지 — "서울>도심권" 이 «서울» 로 잡히면 안 된다.
+    assert rc.latest_value_from_rows([rows[1]], "서울") is None, "GRP_FULLNM 과매칭"
+
+
+# ── R2 HIGH-F: per-call fail-open(무필터) 제거 ──
+
+def test_latest_value_refuses_when_region_is_unknown() -> None:
+    """★지역을 모르면 **거부**한다 — 종전에는 필터가 통째로 꺼져 «가장 늦은 행» 이 이겼다.
+
+    실측(리뷰어): `zzz없는지역` 이 **제주 9.9%** 를 «R-ONE 실측» 으로 받아 자본환원율로 채택됐다.
+    """
+    rows = [
+        {"CLS_NM": "서울", "DTA_VAL": 4.2, "WRTTIME_IDTFR_ID": "202506"},
+        {"CLS_NM": "제주", "DTA_VAL": 9.9, "WRTTIME_IDTFR_ID": "202606"},
+    ]
+    assert rc.latest_value_from_rows(rows, "") is None, "무필터 fail-open 재발"
+    # 특이도 — 지역을 알면 그 값을 준다(항상 거부도 결함이다).
+    assert rc.latest_value_from_rows(rows, "서울") == (4.2, "202506")
+    assert rc.latest_value_from_rows(rows, "제주") == (9.9, "202606")
+
+
+# ─────────────────────────────────────────────────────────────
+# ★R2 HIGH-B / HIGH-C / HIGH-D — 형제 표면과 **사용자 금액에 닿는 배선**
+# ─────────────────────────────────────────────────────────────
+
+def _patch_statbl(monkeypatch, rows: list[dict]) -> None:
+    """통계표 조회만 스텁 — 해석·범위판정·라벨조립은 진짜 코드가 돈다."""
+    import app.services.external_api.reb_client as _rc
+    import app.services.land_intelligence.reb_statistics_service as _rs
+
+    async def _fetch(statbl, cycle="MM", size=240, wrttime=None):
+        return rows
+
+    monkeypatch.setattr(_rc, "fetch_statbl_rows", _fetch)
+    monkeypatch.setattr(_rs, "_statbl", lambda key: "DUMMY_ID")
+
+
+@pytest.mark.asyncio
+async def test_housing_sibling_does_not_claim_regional_real_data(monkeypatch) -> None:
+    """★HIGH-B — 형제(`housing_time_adjust`)도 전국 대체를 그 지역인 척 말하면 안 된다.
+
+    실측(리뷰어): `zzz없는지역` 과 `경상남도` 가 **바이트 동일한 답**을 받았다.
+    이 셋(`housing`·`cap_rate`·`jeonse`)은 내가 고친 줄 **바로 밑에** 나란히 렌더된다.
+    """
+    from app.services.land_intelligence.reb_statistics_service import housing_time_adjust
+
+    _patch_statbl(monkeypatch, _many_months("전국"))   # 경남 행 없음
+    out = await housing_time_adjust("경상남도 창원시 1")
+    assert out is not None
+    assert out.get("scope") == "전국", out
+    assert out["source"] == "R-ONE", out["source"]   # 렌더 계약 보존(R2 MEDIUM-3)
+    # ★사람이 읽는 줄은 **대체 범위를 이름으로** 담아야 한다(기계 변이 [56] 이 약한 단언을 뚫었다).
+    assert "전국" in out["basis"], out["basis"]
+    assert "해당 지역 실데이터가 아닙니다" in out["basis"], out["basis"]
+
+    # 특이도 — 그 지역 시계열이 있으면 그 지역이라고 말해도 된다.
+    _patch_statbl(monkeypatch, _many_months("경남") + _many_months("전국"))
+    ok = await housing_time_adjust("경상남도 창원시 1")
+    assert ok["source"] == "R-ONE" and ok.get("scope") == "경남", ok
+
+
+@pytest.mark.asyncio
+async def test_cap_rate_refuses_for_unknown_region(monkeypatch) -> None:
+    """★HIGH-B/F — 「없는 지역」이 남의 지역 수익률을 받으면 안 된다.
+
+    실측(리뷰어): `zzz없는지역` → **제주 9.9%** 를 «R-ONE … 실측» 으로 받아 채택됐다.
+    """
+    from app.services.land_intelligence.reb_statistics_service import commercial_cap_rate
+
+    rows = [
+        {"CLS_NM": "서울", "DTA_VAL": 4.2, "WRTTIME_IDTFR_ID": "202506"},
+        {"CLS_NM": "제주", "DTA_VAL": 9.9, "WRTTIME_IDTFR_ID": "202606"},
+    ]
+    _patch_statbl(monkeypatch, rows)
+    assert await commercial_cap_rate("zzz없는지역 1") is None
+    # 특이도 — 아는 지역은 자기 값을 받는다.
+    got = await commercial_cap_rate("서울특별시 강남구 1")
+    assert got and got["pct"] == 4.2, got
+
+
+@pytest.mark.asyncio
+async def test_market_precision_does_not_call_a_substitute_observed(monkeypatch) -> None:
+    """★HIGH-C — 요청 지역 값이 아니면 **OBSERVED 가 아니다**.
+
+    그 모듈은 *"가짜 계수 금지 … UNKNOWN + 미보정 정직 표기"* 를 독스트링에 선언해 놓고
+    존재하지 않는 지역도 **관측됨**으로 승격시키고 있었다.
+    """
+    from app.services.market_precision.time_adjustment import resolve_time_adjustment
+    from app.services.provenance.fact_status import FactStatus
+
+    _patch_statbl(monkeypatch, _many_months("전국"))
+    sub = await resolve_time_adjustment("경상남도 창원시 1")
+    assert sub.status == FactStatus.UNKNOWN, sub.status
+    assert "아닙니다" in sub.limitation, sub.limitation
+
+    _patch_statbl(monkeypatch, _many_months("경남") + _many_months("전국"))
+    real = await resolve_time_adjustment("경상남도 창원시 1")
+    assert real.status == FactStatus.OBSERVED, real.status
+
+
+@pytest.mark.asyncio
+async def test_desk_appraisal_wiring_actually_passes_the_address(monkeypatch) -> None:
+    """★★HIGH-D — 사용자 감정평가 금액에 닿는 **유일한 경로**의 배선을 태운다.
+
+    ★리뷰어 실측: `desk_appraisal_service.py` 에서 `time_adjust_factor_async(address, …)` 를
+      `("" , …)` 로 바꾸는 변이가 **12,269건을 통과**했다 — 모든 필지의 주소를 버려도 초록이었다.
+      내가 추가한 배선 락 둘은 **`land_price_index` 안**만 태웠다(한 층 짧았다).
+    """
+    from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
+
+    _patch_rone(monkeypatch, _many_months("서울", rate=0.90) + _many_months("경남", rate=0.05))
+    seoul = await desk_appraisal(address="서울특별시 강남구 역삼동 1", area_sqm=500.0,
+                                 official_price_per_sqm=1_000_000.0)
+    gyeongnam = await desk_appraisal(address="경상남도 창원시 의창구 1", area_sqm=500.0,
+                                     official_price_per_sqm=1_000_000.0)
+    assert seoul.get("time_adjust") != gyeongnam.get("time_adjust"), (
+        f"주소가 시점수정을 바꾸지 않는다(배선 끊김): {seoul.get('time_adjust')}"
+    )
+    # 사유에도 그 지역이 실려야 한다.
+    assert "서울" in str(seoul.get("time_adjust_basis") or ""), seoul.get("time_adjust_basis")
+
+
+# ─────────────────────────────────────────────────────────────
+# ★기계 변이 전수(75건 · 생존 10) 트리아지 — **클래스로** 적는다(항목 나열 금지)
+#   `scripts/mutate_changed.py --tests <이 파일> --max 300` · base `6f43d1c6010c` · 절단 없음
+#
+#   (C1) **이중 가드** 1건 — `reb_client.py:171 if not region_sido:` 조기 반환.
+#        아래 루프의 집합 판정이 빈 문자열을 어떤 집합에서도 못 찾아 **같은 결과**를 낸다
+#        (후보 집합은 빈 값을 담지 않는다). 등가 변이이지 구멍이 아니다 — 사유를 코드에 적었다.
+#   (C2) **산문** 8건 — `rationale`·`basis`·`limitation`·`assumption` 문구.
+#        §30 대로 표현은 단언하지 않는다. 대신 **의미를 담은 토큰**(대체 범위 이름 ·
+#        «해당 지역 실데이터가 아닙니다» · «아닙니다»)만 잠근다. 의미를 뒤집는 변이는 CAUGHT 다.
+#   (C3) **약한 단언** 1건 → **봉합했다**: housing 의 `source` 를 `!= "R-ONE"` 로만 봤는데
+#        임의 문자열도 그 조건을 만족했다. **대체 범위 이름을 담는지**까지 단언한다.
+#
+#   ⇒ 새 생존이 나오면 먼저 이 세 클래스에 속하는지 보라. 속하지 않으면 진짜 구멍이다.
+# ─────────────────────────────────────────────────────────────
+
+
+# ─────────────────────────────────────────────────────────────
+# ★`market_precision` 은 «scope 부재» 를 강등하지 않는다(기존 회귀가드가 옳았다).
+#   그 안전성은 **우리 생산자가 항상 scope 를 싣는다**는 데서 온다 — 그것을 여기서 강제한다.
+#   이 락이 없으면 «부재는 통과» 가 조용한 fail-open 이 된다.
+# ─────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_our_producers_always_report_scope(monkeypatch) -> None:
+    """R-ONE 값을 돌려주는 우리 생산자는 **예외 없이** `scope` 를 싣는다."""
+    from app.services.land_intelligence.land_price_index import time_adjust_factor_async
+    from app.services.land_intelligence.reb_statistics_service import housing_time_adjust
+
+    for rows, addr in (
+        (_many_months("경남") + _many_months("전국"), "경상남도 창원시 1"),   # 지역 있음
+        (_many_months("전국"), "경상남도 창원시 1"),                          # 전국 대체
+        (_many_months("전국"), "zzz없는지역 1"),                              # 지역 미해석
+    ):
+        _patch_rone(monkeypatch, rows)
+        ta = await time_adjust_factor_async(addr)
+        if ta.get("source") == "R-ONE":
+            assert ta.get("scope"), f"time_adjust: scope 누락 {ta}"
+
+        _patch_statbl(monkeypatch, rows)
+        h = await housing_time_adjust(addr)
+        if h and h.get("source") == "R-ONE":
+            assert h.get("scope"), f"housing: scope 누락 {h}"
+
+
+@pytest.mark.asyncio
+async def test_market_precision_demotes_only_on_contradiction(monkeypatch) -> None:
+    """★부재(모름)와 모순(다름)을 가른다 — 둘을 뭉치면 기존 계약이 깨진다.
+
+    ★처음엔 «부재도 강등» 으로 짰다가 기존 회귀가드 `test_rone_가용시_observed_실계수` 가
+      빨개져 알았다. **그 테스트가 옳았다** — 생산자가 안 알려준 것을 «다르다» 로 지어내면 안 된다.
+    """
+    from app.services.market_precision import time_adjustment as _ta
+    from app.services.provenance.fact_status import FactStatus
+
+    async def _no_scope(*_a, **_k):
+        return {"factor": 1.05, "source": "R-ONE", "basis": "x"}
+
+    async def _other_scope(*_a, **_k):
+        return {"factor": 1.05, "source": "R-ONE", "basis": "x", "scope": "전국"}
+
+    monkeypatch.setattr(_ta, "housing_time_adjust", _no_scope)
+    assert (await _ta.resolve_time_adjustment("서울 강남구 1")).status == FactStatus.OBSERVED
+
+    monkeypatch.setattr(_ta, "housing_time_adjust", _other_scope)
+    demoted = await _ta.resolve_time_adjustment("서울 강남구 1")
+    assert demoted.status == FactStatus.UNKNOWN, demoted.status
+    assert "아닙니다" in demoted.limitation, demoted.limitation

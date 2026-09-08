@@ -168,6 +168,20 @@ def latest_value_from_rows(
     """월/분기 행에서 지역 매칭 최신 시점의 값(%)·작성시점을 반환. 값 필드 방어적 탐색."""
     if not rows:
         return None
+    if not region_sido:
+        # ★**이중 가드다**(변이 «이 조건 무력화» → 생존 = 등가). 아래 루프의
+        #   `region_sido not in row_region_names(row)` 도 빈 문자열을 **어떤 집합에서도 못 찾아**
+        #   전 행을 건너뛴다(후보 집합은 빈 값을 담지 않는다). 그래서 이 조기 반환을 지워도
+        #   결과가 같다 — **구멍이 아니라 의도된 이중 방어**다(§B-5: 사유를 코드에 적는다).
+        #   그래도 남기는 이유: 「지역을 모르면 거부한다」는 계약을 **읽는 사람에게 보이게** 하기 위함.
+        # ★★독립 리뷰 적발(R2 HIGH-F): 종전에는 `region_sido` 가 falsy 면 **필터가 통째로 꺼져**
+        #   전 지역에서 «시점이 가장 늦은 행» 이 이겼다. 실측: `zzz없는지역` 이 **제주 9.9%** 를
+        #   «R-ONE … 실측» 으로 받아 `desk_appraisal` 의 자본환원율로 채택됐다.
+        #   형제 `rate_series_from_rows` 는 같은 상황에서 «전국» 으로 좁히는데 이 함수만
+        #   «전 지역 무필터» 였다 — **같은 축을 두 함수가 반대로 처리**했다.
+        #   ⇒ 지역을 모르면 **거부**한다(모름을 유효값으로 표현하지 않는다). 소비처는 각자
+        #     문서화된 기본값으로 떨어지고, 그것은 정직하다.
+        return None
     # ★★독립 리뷰 적발(HIGH-1 · 2026-09-08): 이 함수는 **같은 rows** 를 받는 형제인데
     #   정확일치 처방을 안 받고 있었다(`land_price.py` 가 `rate_series_from_rows` 와
     #   **나란히** 호출한다). 종전에 셋이 동시에 틀렸다:
@@ -183,7 +197,7 @@ def latest_value_from_rows(
     for row in rows:
         if not isinstance(row, dict):
             continue
-        if region_sido and row_region_name(row) != region_sido:
+        if region_sido not in row_region_names(row):
             continue
         raw = next((row.get(k) for k in val_keys if row.get(k) not in (None, "")), None)
         try:
@@ -196,7 +210,9 @@ def latest_value_from_rows(
     return (round(best[1], 4), best[0]) if best else None
 
 
-def rate_series_from_rows(rows: list[dict[str, Any]], region_sido: str) -> list[tuple[str, float]]:
+def rate_series_from_rows(
+    rows: list[dict[str, Any]], region_sido: str, *, _no_fallback: bool = False,
+) -> list[tuple[str, float]]:
     """변동률(%) 시계열 [(YYYYMM, rate)] 추출 — ITM='변동률'만, 지역(sido→전국 폴백), 시점 오름차순."""
     if not rows:
         return []
@@ -222,7 +238,7 @@ def rate_series_from_rows(rows: list[dict[str, Any]], region_sido: str) -> list[
             #   그래서 부분문자열 매칭은 **같은 달의 수십 개 하위지역**을 한 시계열로 모았고,
             #   소비처는 그것을 「그 지역 24개월」로 읽어 ∏(1+r/100) 로 곱했다
             #   (라이브: 경기 `yearly 2024 = +80.68%` — 월 최대 0.267%로는 물리적으로 불가).
-            if region_filter and row_region_name(row) != region_filter:
+            if region_filter and region_filter not in row_region_names(row):
                 continue
             raw = next((row.get(k) for k in val_keys if row.get(k) not in (None, "")), None)
             try:
@@ -234,6 +250,10 @@ def rate_series_from_rows(rows: list[dict[str, Any]], region_sido: str) -> list[
         return out
 
     series = _collect(region_sido) if region_sido else []
+    if _no_fallback:
+        # ★scope 판정용 — 폴백 없이 «그 지역 시계열이 실재하는가» 만 답한다.
+        series.sort(key=lambda x: x[0])
+        return series
     if not series:
         # ★★fail-open 제거(2026-09-08). 종전에는 `_collect("전국") or _collect(None)` 이었고
         #   그 **`_collect(None)` 이 fail-open** 이었다 — 지역 필터가 안 맞으면 **모든 지역**을
@@ -268,31 +288,55 @@ def rate_series_from_rows(rows: list[dict[str, Any]], region_sido: str) -> list[
 def rate_series_scope(rows: list[dict[str, Any]], region_sido: str) -> str:
     """시계열이 **어느 범위**에서 나왔는지 — 소비처가 라벨을 거짓으로 쓰지 않게.
 
-    ★값만 주면 소비처가 「지역 실데이터」라고 단정한다(실제로 화면이 그랬다).
+    ★★독립 리뷰 적발(R2 HIGH-A): 종전에는 `_has_region`(지역 **만** 본다)으로 판정했는데,
+      시계열을 실제로 만드는 `_collect` 는 지역 + `ITM_NM` 에 "변동" 포함 + `DTA_VAL` 이
+      **숫자로 파싱될 것**까지 본다. 그래서 «그 지역 행이 있다» 와 «그 지역 시계열이 있다» 가
+      갈렸다 — R-ONE 이 결측을 `'-'` 로 주는 흔한 형태에서 **행은 있는데 시계열이 없어**
+      전국으로 폴백하면서 scope 는 «경남» 이라고 말했고, 그 라벨이 감정평가 문서에 찍혔다.
+      ⇒ **시계열을 만든 그 필터로 판정한다.** 판정과 산출을 갈라 두면 반드시 다시 갈린다.
     """
-    if region_sido and rate_series_from_rows(rows, region_sido) and _has_region(rows, region_sido):
+    if region_sido and rate_series_from_rows(rows, region_sido, _no_fallback=True):
         return region_sido
-    if _has_region(rows, "전국"):
+    if rate_series_from_rows(rows, "전국", _no_fallback=True):
         return "전국"
     return "미상(지역 필터 불일치 — 전체 행)"
 
 
-def row_region_name(row: dict[str, Any]) -> str:
-    """행의 **지역명**(축약형 시도명 등)을 뽑는다 — 계층 경로는 쓰지 않는다.
+def row_region_names(row: dict[str, Any]) -> set[str]:
+    """행이 **지역으로 주장하는 이름들**(계층 경로는 제외한 정확값 집합).
 
-    ★이 헬퍼가 생긴 이유(2026-09-08): 종전에는 `_collect` 와 `_has_region` 이 **각자**
-      `CLS_NM + CLS_FULLNM + …` 를 이어 붙여 부분문자열로 판정했다. 그래서 `"경기"` 가
-      계층 경로 `"경기>수원시"` 에 매칭됐고, `_collect` 만 고치자 **`_has_region` 이 남아**
-      `rate_series_scope` 가 전국 폴백을 받고도 «경기» 라고 말했다(내 락이 그것을 잡았다).
-      ⇒ 판정 규칙을 **한 자리**에 둔다 — 복제하면 두 축이 다시 갈린다.
+    ★★어느 필드가 지역인지는 **통계표마다 다르다**(2026-09-08 라이브 실측 — 독립 리뷰 R2 HIGH-E
+      가 지목한 미측정 전제를 재서 확인했다). 한 표의 모양을 보편이라 가정하면 다른 표에서
+      **조용히 0건**이 된다:
+
+        지가변동률(A_2024_00903)   CLS_NM="전남"   GRP_NM=null     CLS_FULLNM="전남광주>전남"
+        전월세전환율(T2411631…)     CLS_NM="전체"   GRP_NM="서울"   ← ★지역은 GRP_NM 이다
+                                   (CLS_NM 은 **규모 구분**: 전체·40㎡이하·60㎡초과 85㎡이하…)
+        상업용수익률(A_2024_00683) CLS_NM="서울"                   CLS_FULLNM="광주>금호지구"
+
+      ⇒ 후보 필드의 **정확값 집합**을 돌려주고, 소비처는 «찾는 시도명이 그 집합에 있는가» 로
+        판정한다. 규모 구분(`"40㎡이하"`)은 시도명과 **절대 같아질 수 없으므로** 안전하다.
+
+    ★계층 경로(`CLS_FULLNM`·`GRP_FULLNM`)는 **넣지 않는다** — `"경기>수원시"` 가 «경기» 에
+      매칭돼 산하 시군구가 통째로 섞이던 것이 이 PR 이 고친 결함이다.
+
+    ★**설명된 생존**(변이 «계층 경로를 후보에 추가» → SURVIVED): 이 설계는 **정확값 비교**라
+      `"경기>수원시" != "경기"` 이므로 계층 경로를 넣어도 **시도명 판정이 바뀌지 않는다**
+      (실측 4행 전수: 판정 차이 **0/4**). 즉 **등가 변이**이지 구멍이 아니다.
+      ⇒ 그래도 넣지 않는 이유는 «부분문자열로 되돌아갈 때 즉시 새는 재료» 를 남기지 않기 위함이다.
     """
     if not isinstance(row, dict):
-        return ""
-    name = str(row.get("CLS_NM") or "").strip()
-    if name:
-        return name
-    for k in ("REGION_NM", "REGION"):
-        v = str(row.get(k) or "").strip()
+        return set()
+    return {
+        v for v in (str(row.get(k) or "").strip() for k in ("CLS_NM", "GRP_NM", "REGION_NM", "REGION"))
+        if v
+    }
+
+
+def row_region_name(row: dict[str, Any]) -> str:
+    """표시·디버깅용 대표 이름(후보 중 하나). **판정에는 `row_region_names` 를 쓴다.**"""
+    for k in ("CLS_NM", "GRP_NM", "REGION_NM", "REGION"):
+        v = str(row.get(k) or "").strip() if isinstance(row, dict) else ""
         if v:
             return v
     return ""
@@ -300,7 +344,7 @@ def row_region_name(row: dict[str, Any]) -> str:
 
 def _has_region(rows: list[dict[str, Any]], needle: str) -> bool:
     """그 지역의 행이 **정확일치**로 실재하는가(계층 경로 경유 과매칭 금지)."""
-    return any(row_region_name(row) == needle for row in rows or [])
+    return any(needle in row_region_names(row) for row in rows or [])
 
 
 def distinct_period_count(series: list[tuple[str, float]]) -> int:

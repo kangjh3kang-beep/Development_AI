@@ -63,9 +63,24 @@ async def housing_time_adjust(address: str = "") -> dict[str, Any] | None:
         rows = await fetch_statbl_rows(statbl, "MM", size=480)
         if not rows:
             return None
-        f = cumulative_factor_from_rows(rows, _sido_of(address))
+        sido = _sido_of(address)
+        f = cumulative_factor_from_rows(rows, sido)
         if f and 0.5 < f < 2.0:  # sane: 24개월 누적이 ±100% 이내
-            return {"factor": f, "source": "R-ONE", "basis": "주택매매가격지수 누적 변동"}
+            # ★★독립 리뷰 R2 HIGH-B: 이 형제도 «요청 지역이 아니어도 R-ONE 이라고 단정» 하고
+            #   있었다. 실측에서 `zzz없는지역` 과 `경상남도` 가 **바이트 동일한 답**을 받았다 —
+            #   PR 제목 그 자체가 형제에 살아 있었다. 라벨은 `land_price_index` 와 **같은 규칙**을 쓴다.
+            from app.services.external_api.reb_client import rate_series_scope
+
+            scope = rate_series_scope(rows, sido)
+            if sido and scope == sido:
+                return {"factor": f, "source": "R-ONE", "scope": scope,
+                        "basis": f"주택매매가격지수 누적 변동({sido})"}
+            # ★`source` 는 "R-ONE" 유지 — 프론트가 정확일치로 렌더한다(R2 MEDIUM-3).
+            #   정직성은 `scope` + `basis` 가 나른다.
+            return {"factor": f, "source": "R-ONE", "scope": scope,
+                    "basis": (f"주택매매가격지수 누적 변동 — {scope} 범위 값"
+                              f"(요청 지역{f' {sido}' if sido else ''}의 시계열이 없어 대체 · "
+                              f"해당 지역 실데이터가 아닙니다)")}
     except Exception:  # noqa: BLE001
         pass
     return None
