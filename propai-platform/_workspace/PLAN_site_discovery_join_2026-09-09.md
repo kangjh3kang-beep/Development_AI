@@ -94,11 +94,48 @@ development_type · status` + **내 관계**(`membership`: `none|pending|active`
 테이블은 `CREATE TABLE IF NOT EXISTS` 라 남지만 **아무도 읽지 않으면 무해**하다
 (행이 남는 것이 싫으면 별도 마이그레이션으로 드롭 — 이 PR 에서는 하지 않는다).
 
-## 5. 잠금 (구현과 함께 채운다 — 지금은 **미작성**)
+## 5. 잠금 — **실재하는 테스트 이름** (구현 후 작성)
 
-★**여기에 산문을 적지 않는다.** PR #1021 에서 «선언만 있고 테스트가 없는 §5» 로 반려당했다.
-구현이 끝나면 **파일::함수**로 채우고, 채우지 못한 축은 **부채 표**로 내린다.
+★계획서가 «선언만 하고 테스트가 없는» 상태로 반려당한 전례가 있어(PR #1021 B2),
+여기는 **파일::함수**로만 적는다. 이름을 댈 수 없는 축은 아래 부채 표로 내린다.
 
-| 무엇을 지키나 | 통과해야 | 막혀야 | 락 |
+| 무엇을 지키나 | 통과해야(A) | 막혀야(B) | 락 |
 |---|---|---|---|
-| (구현 후 작성) | | | |
+| **라우터가 실제로 붙는다** | `include_router` 인자에 있다 | 파일만 만들고 등록 누락 | `apps/api/tests/test_site_join_pipeline.py::test_module_is_registered_on_the_sales_router` |
+| **승인이 `create_node` 를 경유** | 호출 노드 존재 | raw INSERT 재등장 | 같은 파일 `::test_approval_goes_through_create_node_not_raw_insert` (축 = **함수의 호출 노드·실행 리터럴**) |
+| **테넌트 식별자 미노출** | 축소 필드 | `organization_id` 를 실음 | 같은 파일 `::test_discover_does_not_leak_the_tenant_identifier` (축 = **응답 dict 키**) |
+| **사유 어휘 공유** | `market` 에서 임포트 | 이 모듈에서 재정의 | 같은 파일 `::test_reason_vocabulary_is_shared_with_the_hiring_approval` |
+| **순환 임포트 금지** | `market` 이 `site_join` 을 안 봄 | 반대 방향 발생 | 같은 파일 `::test_no_import_cycle_market_does_not_depend_on_join` |
+| **승인 권한이 좁다** | `AGENCY`·`TEAM_LEADER` 포함 | `MEMBER` 포함 | 같은 파일 `::test_member_cannot_approve` + 행위 `::test_approver_resolution_two_populations` |
+| **재신청이 가능하다** | 대기 중에만 유일 | 전체 유니크 | 같은 파일 `::test_pending_uniqueness_is_partial_not_total` |
+| **고아를 안 만든다(돈 축)** | 부모 있으면 `LINKED` | 부모 없으면 **보류** | `::test_link_membership_holds_when_there_is_no_parent` + `::test_link_membership_attaches_under_the_approver` |
+| **가드 거부를 안 삼킨다** | 정상은 `LINKED` | 거부는 `ORG_NOT_SEEDED` | `::test_link_membership_reports_reason_when_guard_rejects` |
+| **멱등** | 기존 멤버면 재생성 0 | — | `::test_link_membership_is_idempotent_for_existing_member` |
+| **운영자 승인 분기** | 노드 없는 운영자도 승인 | — | `::test_platform_operator_can_approve_without_a_node` |
+| **상태 어휘** | SQL 이 내는 값 ⊆ 목록 | 목록 밖 값 | `::test_every_emitted_status_is_declared` |
+| **화면이 세 관계를 가른다** | 멤버는 안 보임 · `pending`=배지 · `none`=버튼 | 한 값으로 뭉갬 | `apps/web/components/sales-app/__tests__/discover-sites-panel.test.tsx`(8건 · **렌더**를 태운다) |
+| **응답을 읽는다** | `already_member` → 목록에서 뺌 | 낙관적 `pending` 도색 | 같은 파일 `★★서버가 already_member 를…` |
+
+### ★이 PR 의 락에는 **`skipif` 가 없다**
+
+PR #1021 에서는 판정이 라우터에 있어 행위 락 7건이 전부 CI 전용이었다(개발 환경 python 3.10 이
+`app/crud/base.py` 의 PEP 695 `class CRUDBase[M]:` 를 **파싱조차 못 한다**).
+이번에는 판정을 **처음부터 서비스 층**(`app/services/sales/org/join.py`)에 두어
+**행위 락 7건이 전부 로컬에서 돈다.** 「태울 수 있는 자리에 두는 것」이 락 설계의 일부다.
+
+### 변이 검증 (실측)
+
+| 축 | 결과 |
+|---|---|
+| 손 변이(약화) 백엔드 5 | **5/5 CAUGHT** — 보류 대신 고아 생성 · 가드 거부 삼킴 · MEMBER 를 승인자에 · 부모를 승인자 아닌 곳에 · 테넌트 식별자 노출 |
+| 손 변이(약화) 프론트 3 | **3/3 CAUGHT** — 필터 뒤집기 · 응답 버리고 pending 도색 · 배지/버튼 동일화 |
+| 기계 변이 | ★**아래 부채 참조** — base 가 `origin/main` 이라 #1021 의 변경까지 분모에 들어온다 |
+
+### ★부채 (초록 안에 보이게 둔다)
+
+| 항목 | 왜 |
+|---|---|
+| **라이브 도달성 미측정** | 새 라우트를 라이브에 태우지 않았다(배포 전). 코드·락까지만 |
+| **DB 통합 테스트 부재** | 부분 유니크 인덱스·`ON CONFLICT` 의 실제 동작은 Postgres 없이는 못 잰다. 지금 락은 **DDL 문자열**까지만 본다 |
+| **기계 변이 분모 오염** | 이 브랜치는 #1021 위에 쌓여 있어 `mutate_changed.py` 의 base(`origin/main`)가 **#1021 의 변경까지** 포함한다. #1021 머지 후 다시 돌려야 이 PR 만의 생존을 안다 |
+| **볼트 조회 불가**(§0) | 과거 기각 이력 미확인 |
