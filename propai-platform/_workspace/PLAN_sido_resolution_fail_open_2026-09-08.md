@@ -367,3 +367,25 @@ R2 지적으로 `desk_appraisal()` 층을 잠갔더니 R3 가 **그 바깥 3곳*
   `resolve_time_adjustment` 가 **base·branch 모두** UNKNOWN. 지수형은 `index[t1]/index[t0]`
   로 계산해야 한다 — **strict xfail 로 초록 안에 드러나게** 남겼다
   (`test_index_typed_table_should_yield_a_time_adjust_factor`).
+
+### §9-1. 변이 감사 커버리지 — **프론트는 「감사했다」고 말할 수 없다**(정직 표기)
+
+| 축 | 명령 | 결과 |
+|---|---|---|
+| 백엔드 | `--only apps/api --tests <신규 락> --max 400` | **86건 · 생존 11 → 봉합 후 10** · 절단 없음 |
+| 프론트 | `--only apps/web --tests <라벨 락> --max 200` | **변이 4건** · 생존 3 |
+
+★**프론트 4건은 감사가 아니다.** 새 파일 `desk-appraisal-basis.ts`(74줄)에서 기계 변이가
+**1건**만 나왔다 — 도구가 TS 에서 만들 수 있는 변이 축이 좁다(줄삭제·문자열변경 위주).
+그래서 프론트는 **손 변이 4종**으로 따로 태웠고 **4/4 CAUGHT** 다:
+
+    ㉮ basis 렌더 죽이기(R4 가 SURVIVED 로 뚫은 그 자리)  → CAUGHT
+    ㉯ scope 경고 죽이기                                  → CAUGHT
+    ㉰ 전월세 줄 삭제                                     → CAUGHT
+    ㉱ 컴포넌트 배선 끊기(buildMarketBasisLines 호출 제거) → CAUGHT
+
+**그래도 「손으로 고른 변이」다** — 이번 라운드가 반증당한 바로 그 형태이므로,
+«프론트 전수 감사» 라고 쓰지 않는다. 기계가 만든 분모는 4이고, 나머지는 내 진술이다.
+
+프론트 생존 3건은 전부 **표현 계층**이라 잠그지 않는다(§30):
+`key={line}`(React 키) · `className`(안내 줄 글자색) — 계약이 아니라 표시다.
