@@ -314,9 +314,26 @@ def rate_series_from_rows(
         out: list[tuple[str, float]] = []
         # ★★형제에도 같은 좁히기를 적용한다(독립 리뷰 R5 HIGH-3). 안 하면 규모 구분 5행 표에서
         #   시계열이 5배가 되고 `trend_from_rows` 의 연간 합계가 그대로 5배로 찍힌다.
-        for row in narrow_to_period_aggregate(
-            [r for r in rows if isinstance(r, dict)], time_keys
-        ):
+        #
+        # ★★★적용 **지점**을 형제와 맞춘다(독립 리뷰 R6 HIGH-1 · 2026-09-08).
+        #   R5 대응에서 이 좁히기를 **전 행**에 걸었는데, `latest_value_from_rows` 는
+        #   **지역 필터 뒤**에 건다. 그래서 한 시점에 **다른 지역**이 집계행을 가지면
+        #   집계행이 없는 지역의 행이 그 시점에서 **통째로 삭제**됐다. 실측:
+        #       rows = [서울/전체 0.5, 서울/40㎡이하 0.7, 경기/시군구계 0.3] (모두 202607)
+        #       latest_value_from_rows(rows,"경기") = (0.3, '202607')   ← 유일행, 모호하지 않다
+        #       rate_series_from_rows(rows,"경기")  = []                ← 같은 행이 사라졌다
+        #       rate_series_scope(rows,"경기")      = "미상(지역 필터 불일치 — 전체 행)"
+        #   ★«함수를 공유했다» 가 «축을 공유했다» 를 뜻하지 않는다 — 공용 헬퍼로 뺀 그 커밋이
+        #     바로 그 착각을 했다. 좁히기는 **(지역, 시점)** 단위여야 한다.
+        #   ★항목(ITM) 필터도 좁히기 **앞**에 둔다 — 집계행이 다른 항목에만 있으면
+        #     쓸 행이 그 이유로 지워질 수 있다(좁히기는 «실제로 쓸 행» 위에서만 판정해야 한다).
+        candidates = [
+            r for r in rows
+            if isinstance(r, dict)
+            and not (str(r.get("ITM_NM") or "") and "변동" not in str(r.get("ITM_NM") or ""))
+            and (not region_filter or region_filter in row_region_names(r))
+        ]
+        for row in narrow_to_period_aggregate(candidates, time_keys):
             itm = str(row.get("ITM_NM") or "")
             # ★★주석 정정(독립 리뷰 R3 MEDIUM-6): 종전 주석은 *"'누계' 등 제외"* 라 했지만
             #   `"누계변동률"` 은 `"변동"` 을 **포함해 통과한다** — 거짓 면역 주장이었다(§C-11).

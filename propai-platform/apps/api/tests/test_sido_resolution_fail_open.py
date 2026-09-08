@@ -1313,3 +1313,62 @@ async def test_region_resolved_tells_the_truth_about_address_parsing(monkeypatch
     unresolved = await get_market_stats("zzz없는지역 123")
     assert unresolved["region_resolved"] is False, unresolved
     assert unresolved["region"] == "전국", unresolved
+
+
+# ─────────────────────────────────────────────────────────────
+# ★R6 HIGH-1 — 「공용 헬퍼로 뺐다」가 「축을 공유했다」를 뜻하지 않았다
+#
+#   R5 대응에서 좁히기를 `narrow_to_period_aggregate()` 로 빼서 두 추출기가 함께 쓰게 했다.
+#   그런데 **적용 지점**이 달랐다 — `latest_value_from_rows` 는 **지역 필터 뒤**, `_collect` 는
+#   **전 행**. 그래서 한 시점에 **다른 지역**이 집계행을 가지면 집계행 없는 지역의 행이
+#   그 시점에서 통째로 사라졌다(리뷰어 실증, 내가 재현):
+#       latest_value_from_rows(rows,"경기") = (0.3, '202607')   ← 유일행
+#       rate_series_from_rows(rows,"경기")  = []                ← 같은 행이 사라졌다
+#
+#   ★★락이 못 본 이유: `_size_series_rows` 가 **한 지역만** 만든다. 단일 지역에서는
+#     두 적용 지점이 **원리적으로 같은 답**을 낸다 — 저장소 §「픽스처는 두 모집단을 갈라야 한다」.
+#     그래서 여기서는 **집계행을 가진 지역 + 갖지 않은 지역**을 같은 표에 넣는다.
+# ─────────────────────────────────────────────────────────────
+
+
+def _mixed_region_rows(periods: list[str]) -> list[dict]:
+    """한 표에 두 지역 — 서울은 규모 구분(집계행 있음) · 경기는 단일 행(집계행 없음)."""
+    out: list[dict] = []
+    for t in periods:
+        out += [
+            {"GRP_NM": "서울", "CLS_NM": cls, "ITM_NM": "변동률",
+             "DTA_VAL": 0.5, "WRTTIME_IDTFR_ID": t}
+            for cls in _SIZE_CLASSES
+        ]
+        out.append({"GRP_NM": "경기", "CLS_NM": "시군구계", "ITM_NM": "변동률",
+                    "DTA_VAL": 0.3, "WRTTIME_IDTFR_ID": t})
+    return out
+
+
+def test_another_regions_aggregate_row_does_not_delete_mine() -> None:
+    """★남의 지역 집계행이 **내 지역 행을 지우지 않는다**(좁히기는 (지역,시점) 축이다)."""
+    from app.services.external_api.reb_client import (
+        latest_value_from_rows,
+        rate_series_from_rows,
+        rate_series_scope,
+    )
+
+    rows = _mixed_region_rows(_TWO_YEARS)
+    series = rate_series_from_rows(rows, "경기")
+    assert len(series) == len(_TWO_YEARS), (
+        f"경기 시계열이 {len(series)}건 — 서울이 집계행을 가졌다는 이유로 지워졌다"
+    )
+    assert rate_series_scope(rows, "경기") == "경기", rate_series_scope(rows, "경기")
+    # ★두 추출기가 **같은 답**을 내야 한다 — 이것이 「공용 헬퍼」가 실제로 뜻하는 것이다.
+    assert latest_value_from_rows(rows, "경기") == (0.3, _TWO_YEARS[-1])
+
+
+def test_mixed_table_still_narrows_the_region_that_has_an_aggregate_row() -> None:
+    """★위양성 축 — 축을 고치느라 **집계행이 있는 지역의 좁히기까지 죽이지 않는다**."""
+    from app.services.external_api.reb_client import rate_series_from_rows
+
+    rows = _mixed_region_rows(_TWO_YEARS)
+    seoul = rate_series_from_rows(rows, "서울")
+    assert len(seoul) == len(_TWO_YEARS), (
+        f"서울 시계열이 {len(seoul)}건 — 규모 5행이 그대로 새고 있다(좁히기 사망)"
+    )
