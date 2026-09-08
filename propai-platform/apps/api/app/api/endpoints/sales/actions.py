@@ -19,10 +19,11 @@ from app.services.sales.contract.service import (
 from app.services.sales.org.overview import TeamOverviewResponse, team_overview
 from app.services.sales.org.service import (
     _ORG_RANK,
+    OrgChainNotCommissionableError,
     OrgCrossSiteError,
     OrgCycleError,
     OrgNodeNotFoundError,
-    ancestors_path,
+    assert_commissionable_chain,
     assert_hierarchy,
     create_node,
     move_subtree,
@@ -612,20 +613,20 @@ async def contract_create(body: dict, db: AsyncSession = Depends(get_db),
     #   **RESIDUAL 전액이 그 노드에 귀속**됐다(`commission/engine.py`).
     #   ★세 조건을 **한 번에** 본다 — 하나라도 빠지면 그 축이 무잠금이 된다:
     #     ①이 현장 소속 ②삭제 안 됨 ③**조상 체인의 최상위가 AGENCY**(=배분이 성립한다)
+    #   ★판정은 **서비스 층**(`assert_commissionable_chain`)에 있다. 라우터에 인라인으로 두었더니
+    #     기계 변이가 그 두 조건을 지워도 전부 생존했다 — FastAPI 의존 때문에 아무도 못 태웠다.
+    #     여기 남는 것은 **HTTP 매핑**뿐이다(404 못 찾음 / 409 상태 충돌).
     if mnode:
         try:
             mnode_uuid = uuid.UUID(str(mnode))
         except (ValueError, TypeError) as e:
             raise HTTPException(400, "member_node_id 형식이 올바르지 않습니다(UUID 필요)") from e
-        chain = await ancestors_path(db, ctx.site_id, mnode_uuid)
-        if not chain:
-            # 현장 밖·미존재·삭제됨을 **같은 오류**로 돌린다(존재 여부가 새면 그 자체가 IDOR 단서다).
-            raise HTTPException(404, "담당 노드를 찾을 수 없습니다(이 현장의 조직 노드만 지정 가능)")
-        if str(chain[0].node_type) != "AGENCY":
-            raise HTTPException(
-                409,
-                "담당 노드의 조직 체인 최상위가 대행사(AGENCY)가 아닙니다 — "
-                "부모 없는 노드로는 수수료가 배분되지 않습니다. 조직도에서 상위를 지정하세요.")
+        try:
+            await assert_commissionable_chain(db, ctx.site_id, mnode_uuid)
+        except OrgNodeNotFoundError as e:
+            raise HTTPException(404, str(e)) from e
+        except OrgChainNotCommissionableError as e:
+            raise HTTPException(409, str(e)) from e
         mnode = mnode_uuid
 
     try:

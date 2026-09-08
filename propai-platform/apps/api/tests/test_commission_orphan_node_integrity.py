@@ -240,6 +240,108 @@ async def test_create_node_rejects_unknown_node_type(monkeypatch) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 계약 층 — 담당 노드가 **배분 가능한 체인**을 갖는가
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# ★★기계 변이가 짚어 준 자리(2026-09-08 · 60변이 중 생존 8건이 전부 이 블록):
+#
+#     if not chain:                                   → 조건무력화 ::VERDICT=SURVIVED
+#     if str(chain[0].node_type) != "AGENCY":         → 조건무력화 ::VERDICT=SURVIVED
+#
+#   이 PR 이 «돈이 새는 것을 막았다» 고 선언한 자리가 **무잠금**이었다. 원인은 판정이
+#   **라우터 안에 인라인**이라(`actions.record_contract`) 태우려면 FastAPI 의존을 다 세워야 했던 것.
+#   ⇒ 판정을 `org/service.assert_commissionable_chain` 으로 내리고 **여기서 직접 태운다.**
+#   ★M1 과 같은 형태의 형제다 — 규칙을 라우터에 두면 아무도 못 태운다.
+
+
+class _ChainNode:
+    def __init__(self, node_type: str):
+        self.id = uuid.uuid4()
+        self.node_type = node_type
+
+
+def _patch_chain(monkeypatch, chain):
+    """`ancestors_path` 만 갈아 끼운다 — 판정 로직은 **원문**을 태운다."""
+    from app.services.sales.org import service as svc
+
+    async def _fake(_db, _site, _node):
+        return chain
+
+    monkeypatch.setattr(svc, "ancestors_path", _fake, raising=True)
+    return svc
+
+
+async def test_commissionable_chain_rejects_empty_chain(monkeypatch) -> None:
+    """★체인이 비면(현장 밖·미존재·삭제됨) **거부**한다."""
+    svc = _patch_chain(monkeypatch, [])
+    with pytest.raises(svc.OrgNodeNotFoundError):
+        await svc.assert_commissionable_chain(None, uuid.uuid4(), uuid.uuid4())
+
+
+async def test_commissionable_chain_rejects_non_agency_root(monkeypatch) -> None:
+    """★최상위가 대행사가 아니면 **거부**한다 — RESIDUAL 전액 귀속을 막는 그 조건."""
+    svc = _patch_chain(monkeypatch, [_ChainNode("MEMBER")])
+    with pytest.raises(svc.OrgChainNotCommissionableError):
+        await svc.assert_commissionable_chain(None, uuid.uuid4(), uuid.uuid4())
+
+
+async def test_commissionable_chain_allows_agency_root(monkeypatch) -> None:
+    """★★**반대편 모집단** — 정상 체인은 통과하고 **체인을 돌려준다**.
+
+    이것이 없으면 위 둘이 «모든 입력을 거부한다» 와 구별되지 않는다
+    (계약 체결이 통째로 막히는 것도 결함이다).
+    """
+    chain = [_ChainNode("AGENCY"), _ChainNode("TEAM_LEADER"), _ChainNode("MEMBER")]
+    svc = _patch_chain(monkeypatch, chain)
+    out = await svc.assert_commissionable_chain(None, uuid.uuid4(), uuid.uuid4())
+    assert out is chain, "호출자가 재조회하지 않도록 체인을 그대로 돌려줘야 한다"
+
+
+async def test_commissionable_chain_distinguishes_its_two_failures() -> None:
+    """★두 실패가 **서로 다른 예외**인가 — 라우터가 404/409 로 갈라야 한다.
+
+    한 예외로 뭉치면 사용자는 «못 찾았다» 와 «찾았는데 배분이 안 된다» 를 구별할 수 없고,
+    조치도 달라진다(노드를 다시 고른다 / **조직도에서 상위를 지정한다**).
+    """
+    from app.services.sales.org import service as svc
+
+    assert svc.OrgChainNotCommissionableError is not svc.OrgNodeNotFoundError
+    assert not issubclass(svc.OrgChainNotCommissionableError, svc.OrgNodeNotFoundError)
+    assert not issubclass(svc.OrgNodeNotFoundError, svc.OrgChainNotCommissionableError)
+
+
+def test_router_maps_the_two_failures_to_different_status_codes() -> None:
+    """★배선 락 — 라우터가 두 예외를 **다른 HTTP 상태**로 옮기는가(AST).
+
+    서비스가 갈라 준 것을 라우터가 다시 뭉치면 사용자 쪽에서는 안 갈린 것과 같다.
+    """
+    api_root, _ = _tracked_backend_sources()
+    src = (api_root / "app/api/endpoints/sales/actions.py").read_text(encoding="utf-8")
+
+    codes: dict[str, set[int]] = {}
+    for handler in ast.walk(ast.parse(src)):
+        if not isinstance(handler, ast.ExceptHandler) or handler.type is None:
+            continue
+        names = {n.id for n in ast.walk(handler.type) if isinstance(n, ast.Name)}
+        target = names & {"OrgNodeNotFoundError", "OrgChainNotCommissionableError"}
+        if not target:
+            continue
+        for call in ast.walk(handler):
+            if (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == "HTTPException"
+                and call.args
+                and isinstance(call.args[0], ast.Constant)
+            ):
+                for t in target:
+                    codes.setdefault(t, set()).add(call.args[0].value)
+
+    assert codes.get("OrgNodeNotFoundError") == {404}, f"실측: {codes}"
+    assert codes.get("OrgChainNotCommissionableError") == {409}, f"실측: {codes}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 생성 층 (3) — **생산자가 하나뿐인가** (계획서 §5 «노드 생성 단일화» 의 실체)
 # ─────────────────────────────────────────────────────────────────────────────
 

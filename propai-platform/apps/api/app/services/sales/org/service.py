@@ -100,6 +100,40 @@ def assert_hierarchy(parent_type: str, child_type: str) -> None:
         raise ValueError(f"{parent_type} 아래에 {child_type}을(를) 둘 수 없습니다(직속 위계 위반).")
 
 
+class OrgChainNotCommissionableError(ValueError):
+    """조상 체인의 최상위가 대행사가 아니라 **수수료 배분이 성립하지 않는다.**"""
+
+
+async def assert_commissionable_chain(db: AsyncSession, site_id, member_node_id):
+    """담당 노드가 «이 현장 소속 · 살아 있음 · 배분 가능» 셋을 모두 만족하는가.
+
+    ## 왜 서비스 층인가 (2026-09-08 · 기계 변이 생존 8건이 짚어 준 자리)
+
+    이 판정은 **라우터 안에 인라인**돼 있었다(`actions.record_contract`). 그래서
+    ①라우터를 안 거치는 계약 생성 경로가 생기면 그대로 새고
+    ②판정을 태우려면 FastAPI 의존을 통째로 세워야 해서 **락이 하나도 없었다.**
+    기계 변이가 `if not chain:` 과 `if str(chain[0].node_type) != "AGENCY":` 를
+    조건무력화로 지웠는데 **둘 다 `::VERDICT=SURVIVED`** 였다 —
+    이 PR 이 «돈이 새는 것을 막았다» 고 선언한 자리가 **무잠금**이었다는 뜻이다.
+
+    ★M1 과 **같은 형태의 형제**다: 규칙을 라우터에 두면 생산자마다 규칙이 갈린다.
+
+    반환은 조상 체인(호출자가 재조회하지 않게). 위반은 **서로 다른 예외**로 구분한다 —
+    호출자가 404(못 찾음)와 409(상태 충돌)로 나눠 매핑해야 하고,
+    한 예외로 뭉치면 사용자가 «내 잘못인가 데이터 잘못인가» 를 가를 수 없다.
+    """
+    chain = await ancestors_path(db, site_id, member_node_id)
+    if not chain:
+        # ★현장 밖·미존재·삭제됨을 **같은 오류**로 돌린다(존재 여부가 새면 그 자체가 IDOR 단서).
+        raise OrgNodeNotFoundError(
+            "담당 노드를 찾을 수 없습니다(이 현장의 조직 노드만 지정 가능)")
+    if str(chain[0].node_type) != "AGENCY":
+        raise OrgChainNotCommissionableError(
+            "담당 노드의 조직 체인 최상위가 대행사(AGENCY)가 아닙니다 — "
+            "부모 없는 노드로는 수수료가 배분되지 않습니다. 조직도에서 상위를 지정하세요.")
+    return chain
+
+
 async def create_node(db: AsyncSession, site_id, node_type, parent_id=None, **kw) -> SalesOrgNode:
     """org 노드 생성. parent_id 가 있으면 그 부모의 path 를 상속해 자식 path 를 만든다.
 
