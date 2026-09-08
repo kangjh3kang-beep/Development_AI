@@ -188,7 +188,27 @@ def build_report_model_from_appraisal(
         basis_lines.append(f"· 자본환원율(R-ONE 실측): {_pct(cap.get('pct'))} ({fmt_value(cap.get('basis'))})")
     jc = ms.get("jeonse_conversion_rate") or {}
     if jc.get("source") == "R-ONE":
-        basis_lines.append(f"· 전월세전환율(R-ONE 실측): {_pct(jc.get('pct'))}")
+        basis_lines.append(
+            f"· 전월세전환율(R-ONE 실측): {_pct(jc.get('pct'))} ({fmt_value(jc.get('basis'))})"
+        )
+    # ★★독립 리뷰 R6 LOW-2(2026-09-08): 화면은 4종을 그리는데 **제출 PDF 는 3종**이었다 —
+    #   `housing_time_adjust`(+그 대체 범위 경고)와 시·도 미해석 고지가 빠져 있었다.
+    #   제출본은 화면보다 오래 남고 **다른 사람이 읽는다**. 화면과 제출본이 갈리면
+    #   그 갈림 자체가 결함이다(§6 형제·미러 스윕).
+    ht = ms.get("housing_time_adjust") or {}
+    if ht.get("source") == "R-ONE":
+        line = f"· 주택가격지수 누적변동: {fmt_value(ht.get('factor'))}"
+        if ht.get("basis"):
+            line += f" — {fmt_value(ht.get('basis'))}"
+        scope, region = ht.get("scope"), ms.get("region")
+        if scope and region and scope != region:
+            line += f" — 범위 {fmt_value(scope)} — 요청 지역({fmt_value(region)}) 실데이터가 아닙니다"
+        basis_lines.append(line)
+    if ms.get("region_resolved") is False:
+        basis_lines.append(
+            "· 지역 해석: 주소에서 시·도를 해석하지 못해 전국 값을 적용했습니다"
+            "(이 지역 실데이터가 아닙니다)."
+        )
     if not ms.get("rone_available"):
         basis_lines.append("· 시장통계: R-ONE 통계표 미설정 구간은 근사값 적용(설정 시 실데이터 전환).")
     sections.append(Section(title="5. 시점수정·시장통계 근거", blocks=[

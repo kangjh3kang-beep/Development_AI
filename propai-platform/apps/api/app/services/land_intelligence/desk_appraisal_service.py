@@ -758,6 +758,16 @@ async def desk_appraisal(
         "base_year": base_year,
         "time_adjust": round(time_adjust, 4),
         "time_adjust_basis": ta["rationale"],
+        # ★★독립 리뷰 R6 MEDIUM-2(2026-09-08): 같은 «대체 scope» 신호에 두 모듈이 **반대로**
+        #   반응한다 — `market_precision.resolve_time_adjustment` 는 요청 지역 값이 아니면
+        #   **적용하지 않고** UNKNOWN 을 낸다. 여기는 **적용하고 고지한다**.
+        #   ★이것은 실수가 아니라 **다른 계약**이고, 그 사실이 코드에 안 적혀 있던 것이 결함이었다:
+        #     · `market_precision` = Zero-Trust 사실 파이프라인 — «관측 아니면 값 없음»(무날조)
+        #     · `desk_appraisal`   = **참고용 추정** — 값을 내되 그 한계를 **표면까지** 싣는다
+        #       (`disclaimer` 가 감정평가가 아님을 명시하고, `time_adjust_basis` 가 대체 범위를 말한다)
+        #   ⇒ 어느 쪽인지 기계가 읽을 수 있게 `scope` 를 **여기서도 싣는다**. 종전에는 이 PR 이
+        #     새로 만든 `ta["scope"]` 를 여기서 **읽지 않아** 정직성이 산문 한 줄에만 실렸다.
+        "time_adjust_scope": ta.get("scope"),
         "market_stats": market_stats,   # R-ONE 부동산통계(시점수정·cap rate·전환율) 출처 투명화
         "disclaimer": "본 추정치는 「감정평가 및 감정평가사에 관한 법률」상 감정평가가 아니며, "
                       "공시지가·실거래 등 공개데이터에 기반한 참고용 예상 시세 추정입니다. "

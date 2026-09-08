@@ -1372,3 +1372,141 @@ def test_mixed_table_still_narrows_the_region_that_has_an_aggregate_row() -> Non
     assert len(seoul) == len(_TWO_YEARS), (
         f"서울 시계열이 {len(seoul)}건 — 규모 5행이 그대로 새고 있다(좁히기 사망)"
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# ★R6 LOW-2 — 제출 PDF 가 화면보다 **적게** 말하고 있었다
+#   화면(`desk-appraisal-basis.ts`)은 4종을 그리는데 PDF 어댑터는 3종이었다.
+#   제출본은 화면보다 오래 남고 **다른 사람이 읽는다** — 갈림 자체가 결함이다.
+# ─────────────────────────────────────────────────────────────
+
+
+def _pdf_basis_lines(market_stats: dict, time_adjust_basis: str = "시점수정 근거") -> list[str]:
+    """PDF 어댑터가 §5 에 실제로 싣는 줄들을 뽑는다(렌더 산출물을 본다)."""
+    from app.services.report.render.appraisal_adapter import build_report_model_from_appraisal
+
+    doc = build_report_model_from_appraisal({
+        "ok": True, "address": "서울특별시 강남구 1",
+        "appraised_price_per_sqm": 2_000_000, "appraised_total_won": 1_000_000_000,
+        "area_sqm": 500, "confidence": 0.7, "range_per_sqm": {"low": 1, "high": 2},
+        "methods": [], "weight_note": "단독 채택",
+        "time_adjust_basis": time_adjust_basis, "market_stats": market_stats,
+    })
+    for sec in doc.sections:
+        if sec.title.startswith("5."):
+            return [p for b in sec.blocks for p in getattr(b, "paragraphs", [])]
+    return []
+
+
+def test_pdf_carries_the_same_honesty_signals_as_the_screen() -> None:
+    """★제출 PDF 가 주택지수 대체 범위와 시·도 미해석을 **함께 싣는다**."""
+    lines = _pdf_basis_lines({
+        "region": "서울", "region_resolved": True, "rone_available": True,
+        "housing_time_adjust": {"source": "R-ONE", "factor": 1.0243,
+                                "basis": "주택매매가격지수 누적 변동", "scope": "전국"},
+    })
+    joined = "\n".join(lines)
+    assert lines, "PDF §5 가 비었다(수집기 사망)"
+    assert "주택가격지수 누적변동" in joined, joined
+    assert "범위 전국" in joined and "실데이터가 아닙니다" in joined, joined
+
+
+def test_pdf_reports_unresolved_sido() -> None:
+    """★시·도 미해석 고지가 제출본에도 실린다(화면만 고치고 끝내지 않는다)."""
+    lines = _pdf_basis_lines({"region": "전국", "region_resolved": False, "rone_available": True})
+    assert any("시·도를 해석하지 못해" in ln for ln in lines), lines
+
+
+def test_pdf_does_not_cry_wolf_when_scope_matches() -> None:
+    """★위양성 축 — 요청 지역 값이면 그 경고가 **뜨지 않는다**."""
+    lines = _pdf_basis_lines({
+        "region": "서울", "region_resolved": True, "rone_available": True,
+        "housing_time_adjust": {"source": "R-ONE", "factor": 1.0243,
+                                "basis": "주택매매가격지수 누적 변동(서울)", "scope": "서울"},
+    })
+    joined = "\n".join(lines)
+    assert "주택가격지수 누적변동" in joined, joined
+    assert "실데이터가 아닙니다" not in joined, joined
+    assert "시·도를 해석하지 못해" not in joined, joined
+
+
+# ─────────────────────────────────────────────────────────────
+# ★R6 MEDIUM-2 — 같은 «대체 scope» 신호에 두 모듈이 **반대로** 반응한다
+#   리뷰어: «어느 쪽이 계약인지 코드가 말하지 않는다». 맞다 — 그래서 **실행 가능한 형태**로 적는다.
+#     · market_precision = Zero-Trust 사실 파이프라인 → **적용하지 않는다**(UNKNOWN)
+#     · desk_appraisal   = 참고용 추정 → **적용하되 고지한다**(+ 이제 `scope` 를 기계 필드로 싣는다)
+#   두 명제를 같은 테스트에서 나란히 단언해, 한쪽이 조용히 바뀌면 잡히게 한다.
+# ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_two_pipelines_answer_substitute_scope_differently_on_purpose(monkeypatch) -> None:
+    """★대체 scope 에 대한 두 계약을 **함께** 잠근다(비대칭이 의도임을 실행으로 적는다)."""
+    from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
+    from app.services.provenance.fact_status import FactStatus
+
+    # 경남 시계열은 없고 전국만 있다 → scope="전국" 대체가 발생하는 상황.
+    _patch_rone(monkeypatch, _many_months("전국", rate=0.5))
+
+    out = await desk_appraisal(address="경상남도 창원시 의창구 1", area_sqm=500.0,
+                               official_price_per_sqm=1_000_000.0)
+    # ① desk_appraisal — **적용하고 고지한다**(값이 살아 있고 범위가 기계 필드로 실린다).
+    assert out.get("time_adjust"), out.get("time_adjust")
+    assert out.get("time_adjust_scope") == "전국", out.get("time_adjust_scope")
+    assert "실데이터가 아닙니다" in str(out.get("time_adjust_basis") or ""), out.get("time_adjust_basis")
+
+    # ② market_precision — **적용하지 않는다**(같은 신호에 반대로 답한다).
+    import app.services.market_precision.time_adjustment as _ta
+
+    async def _substituted(_address: str = "") -> dict:
+        return {"factor": 1.0121, "source": "R-ONE", "scope": "전국", "basis": "대체"}
+
+    monkeypatch.setattr(_ta, "housing_time_adjust", _substituted)
+    demoted = await _ta.resolve_time_adjustment("경상남도 창원시 의창구 1")
+    assert demoted.status == FactStatus.UNKNOWN, demoted.status
+    # ★계수는 **남아 있다** — 그 모듈은 그것을 «근거 표기용» 이라 부르고 표시 가격에 곱하지 않는다.
+    #   내가 처음 쓴 단언(`factor is None`)은 **코드를 안 읽고 쓴 것**이라 틀렸다.
+    #   계약은 «값을 지운다» 가 아니라 «관측이 아니라고 말하고, 인용하지 말라고 적는다» 이다.
+    assert demoted.factor is not None, demoted.factor
+    assert "적용하지 않은 미보정 원본" in demoted.assumption, demoted.assumption
+    assert "아닙니다" in demoted.limitation and "인용하지 마십시오" in demoted.limitation, demoted.limitation
+
+    # ★두 계약의 차이를 한 줄로 못 박는다 — 한쪽이 조용히 상대 쪽으로 바뀌면 여기서 걸린다.
+    assert out.get("time_adjust") and demoted.status is FactStatus.UNKNOWN, (
+        "desk_appraisal 은 적용하고 고지하며, market_precision 은 관측으로 승격하지 않는다"
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# ★R6 MEDIUM-1 — 자본환원율 락의 픽스처가 **라이브 모양과 모순**된다(부채를 초록 안에)
+#
+#   내 픽스처는 `CLS_NM="서울"` 인데, 라이브 상업용수익률 표(`A_2024_00683`)의 실제 모양은
+#   `CLS_NM` = **상권명**(`강남`·`광복동`·`금호지구`)이고 시도는 **`CLS_FULLNM` 안에만** 있다.
+#   `row_region_names` 는 계층 경로를 **의도적으로 제외**하므로(경기>수원시 과매칭을 막은 처방),
+#   그 모양에서는 시도 선택이 **원리적으로 불가능**하다 — 전 주소에서 `None` 이 된다.
+#   그리고 그 상실은 고지되지 않는다: `rone_available` 은 `any([...])` 라 다른 통계가 하나만
+#   살아 있어도 True 이고, 화면은 자본환원율 자리에 기본값 0.045 를 **아무 말 없이** 그린다.
+#
+#   ★오늘 라이브가 무해한 이유는 **별건**(레지스트리 `cycle="QQ"` 가 행 0건) 때문이다 —
+#     그 별건을 고치는 순간 이 결함이 켜진다. 그래서 **strict xfail 로 드러낸다**
+#     (커밋 메시지에만 적으면 다음 사람이 못 본다 — §C-13).
+# ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="★부채: 상업용수익률 표는 시도가 CLS_FULLNM 에만 있어 시도 선택 불가 — 계층 경로를 "
+           "과매칭 없이 읽는 방법(예: 경로의 첫 마디만)이 미구현",
+)
+def test_commercial_yield_live_shape_should_still_resolve_a_sido() -> None:
+    """라이브 모양(시도가 계층 경로에만)에서도 시도 값을 골라야 한다(미구현 — strict xfail)."""
+    from app.services.external_api.reb_client import latest_value_from_rows
+
+    # 라이브 실측 모양 그대로: CLS_NM 은 상권명, 시도는 CLS_FULLNM 의 첫 마디.
+    rows = [
+        {"CLS_NM": "강남", "CLS_FULLNM": "서울>강남", "ITM_NM": "투자수익률",
+         "DTA_VAL": 4.2, "WRTTIME_IDTFR_ID": "2024"},
+        {"CLS_NM": "금호지구", "CLS_FULLNM": "광주>금호지구", "ITM_NM": "투자수익률",
+         "DTA_VAL": 7.1, "WRTTIME_IDTFR_ID": "2024"},
+    ]
+    assert latest_value_from_rows(rows, "서울") is not None
