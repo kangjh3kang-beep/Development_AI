@@ -334,15 +334,15 @@ async def test_contract_create_actually_validates_the_member_node(monkeypatch) -
 
     seen: dict = {}
 
-    async def _fake_assert(_db, site_id, node_id):
-        seen["asserted"] = (site_id, node_id)
-        return [_ChainNode("AGENCY")]
+    async def _fake_resolve(_db, site_id, raw):
+        seen["resolved"] = (site_id, raw)
+        return uuid.UUID(str(raw)) if raw else None
 
     async def _fake_create(_db, _site, _unit, **kw):
         seen["create_kwargs"] = kw
         return type("C", (), {"id": uuid.uuid4(), "stage": "CONTRACTED", "total_price": 100})()
 
-    monkeypatch.setattr(router, "assert_commissionable_chain", _fake_assert, raising=True)
+    monkeypatch.setattr(router, "resolve_member_node", _fake_resolve, raising=True)
     monkeypatch.setattr(router, "create_contract", _fake_create, raising=True)
 
     class _DB:
@@ -353,28 +353,77 @@ async def test_contract_create_actually_validates_the_member_node(monkeypatch) -
     ctx = type("Ctx", (), {"site_id": site, "user": type("U", (), {"id": uuid.uuid4()})()})()
     unit, node = uuid.uuid4(), uuid.uuid4()
 
-    # ── 모집단 A: 담당 노드를 넘겼다 → **검증이 돌고**, 정규화된 UUID 가 전달된다.
+    # ── 모집단 A: 담당 노드를 넘겼다 → **해석이 돌고**, 그 결과가 계약으로 간다.
     await router.contract_create(
         {"unit_id": str(unit), "member_node_id": str(node)}, db=_DB(), ctx=ctx)
-    assert seen.get("asserted") == (site, node), "담당 노드 검증이 돌지 않았다"
+    assert seen.get("resolved") == (site, str(node)), "담당 노드 해석이 돌지 않았다"
     assert seen["create_kwargs"]["member_node_id"] == node, (
-        "검증된 UUID 가 아니라 다른 값이 계약으로 넘어갔다(원문 문자열이거나 누락)"
+        "해석 결과가 아니라 다른 값이 계약으로 넘어갔다(원문 문자열이거나 누락)"
     )
     assert not isinstance(seen["create_kwargs"]["member_node_id"], str), "UUID 로 정규화돼야 한다"
 
-    # ── 모집단 B: 담당 노드가 없다 → 검증을 **부르지 않고**, None 이 전달된다.
+    # ── 모집단 B: 담당 노드가 없다 → 그래도 해석을 거치고, None 이 전달된다.
     seen.clear()
     await router.contract_create({"unit_id": str(unit)}, db=_DB(), ctx=ctx)
-    assert "asserted" not in seen, "담당 노드가 없는데 검증을 불렀다(불필요한 조회)"
     assert seen["create_kwargs"]["member_node_id"] is None
 
 
-def test_router_wiring_is_declared_in_source() -> None:
-    """★위 행위 락의 **로컬 대역** — 임포트 없이 AST 로 같은 배선을 본다.
+async def test_resolve_member_node_is_one_value_flow(monkeypatch) -> None:
+    """★★해석·검증·정규화가 **한 값 흐름**인가 — 조각을 끄면 반환값이 달라지는가.
 
-    파이썬 3.10 개발 환경에서는 라우터를 임포트할 수 없어 위 락이 skip 된다.
-    그 동안 배선이 무잠금이 되지 않도록, «검증 호출이 있고 그 결과가 계약으로 간다» 를
-    소스 구조로 확인한다(문자열 grep 이 아니라 **호출 노드와 키워드 인자**).
+    라우터에 세 조각으로 흩어져 있을 때는 **어느 하나를 꺼도 나머지가 그대로 돌아**
+    변이가 살아남았다. 한 함수로 묶었으니 여기서 **네 모집단**을 같은 실행에서 태운다.
+    """
+    from app.services.sales.org import service as svc
+
+    called: list = []
+
+    async def _fake(_db, site, node):
+        called.append((site, node))
+        return [_ChainNode("AGENCY")]
+
+    monkeypatch.setattr(svc, "assert_commissionable_chain", _fake, raising=True)
+    site, node = uuid.uuid4(), uuid.uuid4()
+
+    # ① 빈 값 → None, **검증을 부르지 않는다**(불필요한 조회가 돌면 그것도 결함).
+    assert await svc.resolve_member_node(None, site, None) is None
+    assert await svc.resolve_member_node(None, site, "") is None
+    assert called == [], "담당 노드가 없는데 검증을 불렀다"
+
+    # ② 정상 값 → **검증이 돌고**, UUID 로 정규화된 값이 나온다(문자열이 아니다).
+    out = await svc.resolve_member_node(None, site, str(node))
+    assert called == [(site, node)], "검증이 돌지 않았다"
+    assert out == node and isinstance(out, uuid.UUID), "정규화된 UUID 가 아니다"
+
+    # ③ 형식 오류 → 전용 예외(400 으로 매핑된다).
+    with pytest.raises(svc.OrgMemberNodeFormatError):
+        await svc.resolve_member_node(None, site, "not-a-uuid")
+
+
+async def test_resolve_member_node_propagates_chain_failures(monkeypatch) -> None:
+    """★검증이 거부하면 **해석도 거부**한다 — 삼켜서 None 을 돌려주면 담당자가 조용히 사라진다.
+
+    ★이 방향이 없으면 «검증을 부르기만 하고 결과를 무시» 하는 구현이 통과한다
+      (저장소가 여러 번 데인 «호출을 잠그면 효과는 안 잠긴다»).
+    """
+    from app.services.sales.org import service as svc
+
+    async def _reject(_db, _site, _node):
+        raise svc.OrgChainNotCommissionableError("거부")
+
+    monkeypatch.setattr(svc, "assert_commissionable_chain", _reject, raising=True)
+    with pytest.raises(svc.OrgChainNotCommissionableError):
+        await svc.resolve_member_node(None, uuid.uuid4(), str(uuid.uuid4()))
+
+
+def test_router_wiring_is_declared_in_source() -> None:
+    """★위 행위 락의 **로컬 대역** — 임포트 없이 AST 로 배선을 본다.
+
+    파이썬 3.10 개발 환경에서는 라우터를 임포트할 수 없어(3.11+ 문법) 행위 락이 skip 된다.
+    ★단 이 락이 잡을 수 있는 것은 **구조**뿐이다 — `if False:` 안에서도 호출 노드는 남으므로
+      «존재» 로는 «실행» 을 잠글 수 없다(실측: 그 변이가 SURVIVED 했다).
+      그래서 축을 **값의 출처**로 옮긴다: `member_node_id=` 에 실리는 이름이
+      `resolve_member_node(...)` 의 **반환으로 대입된 그 이름**인가.
     """
     api_root, _ = _tracked_backend_sources()
     src = (api_root / "app/api/endpoints/sales/actions.py").read_text(encoding="utf-8")
@@ -383,17 +432,32 @@ def test_router_wiring_is_declared_in_source() -> None:
         n for n in ast.walk(ast.parse(src))
         if isinstance(n, ast.AsyncFunctionDef) and n.name == "contract_create"
     )
-    calls = [c for c in ast.walk(fn) if isinstance(c, ast.Call)]
 
-    assert any(
-        isinstance(c.func, ast.Name) and c.func.id == "assert_commissionable_chain" for c in calls
-    ), "`contract_create` 가 담당 노드 검증을 부르지 않는다"
+    # `<이름> = await resolve_member_node(...)` 로 대입되는 이름을 모은다.
+    resolved: set[str] = set()
+    for a in ast.walk(fn):
+        if not isinstance(a, ast.Assign):
+            continue
+        call = a.value.value if isinstance(a.value, ast.Await) else a.value
+        if (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "resolve_member_node"
+        ):
+            resolved |= {t.id for t in a.targets if isinstance(t, ast.Name)}
+
+    assert resolved, "`contract_create` 가 담당 노드를 해석해 **변수에 담지** 않는다"
 
     create = next(
-        c for c in calls if isinstance(c.func, ast.Name) and c.func.id == "create_contract"
+        c for c in ast.walk(fn)
+        if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "create_contract"
     )
-    kw = {k.arg for k in create.keywords}
-    assert "member_node_id" in kw, "검증한 담당 노드가 계약으로 전달되지 않는다"
+    passed = {k.arg: k.value for k in create.keywords}
+    assert "member_node_id" in passed, "해석한 담당 노드가 계약으로 전달되지 않는다"
+    val = passed["member_node_id"]
+    assert isinstance(val, ast.Name) and val.id in resolved, (
+        "계약에 넘기는 담당 노드가 **해석 결과가 아니다** — 원문 값이 그대로 갈 수 있다."
+    )
 
 
 def test_router_maps_the_two_failures_to_different_status_codes() -> None:

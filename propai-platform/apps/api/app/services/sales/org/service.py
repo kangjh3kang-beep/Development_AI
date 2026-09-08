@@ -104,6 +104,41 @@ class OrgChainNotCommissionableError(ValueError):
     """조상 체인의 최상위가 대행사가 아니라 **수수료 배분이 성립하지 않는다.**"""
 
 
+class OrgMemberNodeFormatError(ValueError):
+    """`member_node_id` 가 UUID 가 아니다(입력 형식 오류 — 400)."""
+
+
+async def resolve_member_node(db: AsyncSession, site_id, raw):
+    """요청 본문의 `member_node_id` 를 **검증된 UUID(또는 None)** 로 바꾼다.
+
+    ## 왜 「검증 함수」가 아니라 「해석 함수」인가 (2026-09-08 · 3차 변이)
+
+    앞 판은 라우터가 세 가지를 직접 했다 — ①빈 값 분기 ②UUID 파싱 ③검증 호출.
+    그 셋이 라우터에 흩어져 있으니 **어느 하나를 꺼도 나머지가 그대로 돌았다**:
+
+        if mnode:            → `if False:`  ::VERDICT=SURVIVED   ← 검증이 통째로 꺼진다
+        mnode = mnode_uuid   → 줄삭제       ::VERDICT=SURVIVED   ← 원문 문자열이 그대로 간다
+
+    ★두 번째가 특히 나쁘다: 검증은 **돌지만** 그 결과가 버려지고 원문 문자열이 계약으로 간다.
+      「검증했다」와 「검증한 것을 썼다」는 다른 명제인데, 라우터에서는 두 줄이라 갈렸다.
+
+    ⇒ 셋을 **한 값 흐름**으로 묶는다. 그러면 어느 조각을 지워도 반환값이 달라져
+      호출부에서 즉시 드러난다(끄면 `None` 이 되어 담당자가 사라진다).
+
+    ★AST 락으로는 이 축을 못 잡는다 — `if False:` 안에서도 **호출 노드는 남기** 때문이다
+      («존재를 잠그면 행위는 안 잠긴다» 의 실측 사례).
+    """
+    if not raw:
+        return None
+    try:
+        node_id = uuid.UUID(str(raw))
+    except (ValueError, TypeError) as e:
+        raise OrgMemberNodeFormatError(
+            "member_node_id 형식이 올바르지 않습니다(UUID 필요)") from e
+    await assert_commissionable_chain(db, site_id, node_id)
+    return node_id
+
+
 async def assert_commissionable_chain(db: AsyncSession, site_id, member_node_id):
     """담당 노드가 «이 현장 소속 · 살아 있음 · 배분 가능» 셋을 모두 만족하는가.
 

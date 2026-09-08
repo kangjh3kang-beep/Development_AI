@@ -22,11 +22,12 @@ from app.services.sales.org.service import (
     OrgChainNotCommissionableError,
     OrgCrossSiteError,
     OrgCycleError,
+    OrgMemberNodeFormatError,
     OrgNodeNotFoundError,
-    assert_commissionable_chain,
     assert_hierarchy,
     create_node,
     move_subtree,
+    resolve_member_node,
     seed_default_org,
 )
 from app.services.sales.pricing.engine import (
@@ -613,21 +614,20 @@ async def contract_create(body: dict, db: AsyncSession = Depends(get_db),
     #   **RESIDUAL 전액이 그 노드에 귀속**됐다(`commission/engine.py`).
     #   ★세 조건을 **한 번에** 본다 — 하나라도 빠지면 그 축이 무잠금이 된다:
     #     ①이 현장 소속 ②삭제 안 됨 ③**조상 체인의 최상위가 AGENCY**(=배분이 성립한다)
-    #   ★판정은 **서비스 층**(`assert_commissionable_chain`)에 있다. 라우터에 인라인으로 두었더니
-    #     기계 변이가 그 두 조건을 지워도 전부 생존했다 — FastAPI 의존 때문에 아무도 못 태웠다.
-    #     여기 남는 것은 **HTTP 매핑**뿐이다(404 못 찾음 / 409 상태 충돌).
-    if mnode:
-        try:
-            mnode_uuid = uuid.UUID(str(mnode))
-        except (ValueError, TypeError) as e:
-            raise HTTPException(400, "member_node_id 형식이 올바르지 않습니다(UUID 필요)") from e
-        try:
-            await assert_commissionable_chain(db, ctx.site_id, mnode_uuid)
-        except OrgNodeNotFoundError as e:
-            raise HTTPException(404, str(e)) from e
-        except OrgChainNotCommissionableError as e:
-            raise HTTPException(409, str(e)) from e
-        mnode = mnode_uuid
+    #   ★해석·검증·정규화가 **한 값 흐름**이다(`resolve_member_node`). 종전엔 라우터에 세 조각
+    #     (빈 값 분기 · UUID 파싱 · 검증 호출)으로 흩어져 있어, 기계 변이가 **어느 하나를 꺼도**
+    #     나머지가 그대로 돌았다(`if mnode:`→`if False:` · 정규화 대입 삭제 → 둘 다 SURVIVED).
+    #     ★특히 두 번째가 나쁘다 — 검증은 **돌지만** 그 결과가 버려지고 원문 문자열이 계약으로 간다.
+    #     한 줄로 묶으면 끄는 순간 담당자가 사라져 **호출부에서 즉시 드러난다.**
+    #     여기 남는 것은 **HTTP 매핑**뿐이다(400 형식 / 404 못 찾음 / 409 상태 충돌).
+    try:
+        mnode = await resolve_member_node(db, ctx.site_id, mnode)
+    except OrgMemberNodeFormatError as e:
+        raise HTTPException(400, str(e)) from e
+    except OrgNodeNotFoundError as e:
+        raise HTTPException(404, str(e)) from e
+    except OrgChainNotCommissionableError as e:
+        raise HTTPException(409, str(e)) from e
 
     try:
         c = await create_contract(
