@@ -12,6 +12,9 @@ import { apiClient } from "@/lib/api-client";
 import { getStoredSiteToken } from "@/lib/salesApi";
 import SiteEnterModal from "@/components/sales-app/SiteEnterModal";
 import InstallGuide from "@/components/sales-app/InstallGuide";
+// Stage 2 — 「등록 안 된 현장」 발견·신청. 종전 빈 상태는 «관리자가 추가하면 표시됩니다» 로
+// 끝나 사용자가 할 수 있는 일이 **없었다**.
+import DiscoverSitesPanel from "@/components/sales-app/DiscoverSitesPanel";
 import { ROLE_LABEL, STATUS_LABEL } from "@/components/sales-app/roleConfig";
 import type { Locale } from "@/i18n/config";
 
@@ -137,7 +140,7 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
         <div className="sa-empty">
           <span className="sa-empty__icon" aria-hidden><House className="mx-auto size-9 opacity-70" /></span>
           <p className="text-sm font-semibold text-[var(--text-secondary)]">소속된 현장이 없습니다.</p>
-          <p className="text-xs text-[var(--text-tertiary)]">현장 관리자가 조직도에 추가하면 여기에 표시됩니다.</p>
+          <p className="text-xs text-[var(--text-tertiary)]">아래 「등록 안 된 현장」에서 등록신청하면 관리자·상위 레벨이 승인합니다.</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -211,6 +214,9 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
           </div>
         </div>
       )}
+
+      {/* ★내 현장 아래에 「등록 안 된 현장」 — 막다른 길을 연다. */}
+      <DiscoverSitesPanel />
 
       {enterSite && (
         <SiteEnterModal

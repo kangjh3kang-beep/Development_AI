@@ -30,7 +30,6 @@
 
 from __future__ import annotations
 
-import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -49,8 +48,6 @@ from app.api.endpoints.sales.market import _LINKED_REASONS
 #   아무도 태울 수 없다(PR #1021 에서 정확히 그 형태로 데였다). 여기 남는 것은 HTTP 매핑뿐이다.
 from app.services.sales.org.join import link_membership, resolve_approver_node
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
-
-logger = logging.getLogger(__name__)
 
 site_join_router = APIRouter(tags=["sales-join"])
 
