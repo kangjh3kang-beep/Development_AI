@@ -107,16 +107,23 @@ const FIELDAPP_ROUTES = (() => {
   return all.filter((r) => !all.some((o) => o !== r && r.startsWith(o + "/")));
 })();
 
-/** `href=` 와 (fieldapp) 라우트가 **같은 줄**에 있는 렌더 줄. */
-function isFieldAppHrefLine(line: string): boolean {
-  return line.includes("href=") && FIELDAPP_ROUTES.some((r) => line.includes(r));
+/**
+ * `href=` 와 (fieldapp) 라우트가 **같은 줄**에 있는 렌더 줄.
+ *
+ * ★`routes` 를 인자로 받는다 — 그래야 «이 함수가 **파생 결과를 실제로 쓰는가**» 를
+ *   픽스처 라우트로 가를 수 있다. 리터럴로 되돌리면 픽스처 라우트를 못 잡아 빨개진다
+ *   (2026-09-08 적대 리뷰 MAJOR-1(②): 종전엔 파생 결과가 프로덕션 리터럴과 **같아서**
+ *    두 판이 원리적으로 구별 불가였다).
+ */
+function isFieldAppHrefLine(line: string, routes: string[] = FIELDAPP_ROUTES): boolean {
+  return line.includes("href=") && routes.some((r) => line.includes(r));
 }
 
 describe("현장앱 진입 — 플랫폼 쪽 링크는 전부 진입 정책을 거친다(파생형)", () => {
   it("★공허 진리 가드 — 모집단이 비어 있지 않다", () => {
     expect(files.length).toBeGreaterThan(200);
     const anyHref = files.filter((f) =>
-      codeOnly(readFileSync(f, "utf8"), f).split("\n").some(isFieldAppHrefLine),
+      codeOnly(readFileSync(f, "utf8"), f).split("\n").some((l) => isFieldAppHrefLine(l)),
     );
     // 하나도 없으면 아래 판정 전체가 공허하다.
     expect(anyHref.length).toBeGreaterThan(0);
@@ -143,7 +150,7 @@ describe("현장앱 진입 — 플랫폼 쪽 링크는 전부 진입 정책을 �
     // 이게 없으면 ①의 "위반 0" 이 «그런 href 자체가 없어서» 인지 구별되지 않는다.
     const intra = files
       .filter(isIntraApp)
-      .filter((f) => codeOnly(readFileSync(f, "utf8"), f).split("\n").some(isFieldAppHrefLine));
+      .filter((f) => codeOnly(readFileSync(f, "utf8"), f).split("\n").some((l) => isFieldAppHrefLine(l)));
     expect(intra.length).toBeGreaterThan(0);
   });
 
@@ -249,6 +256,12 @@ describe("★탐지 축 — 판정 함수가 실제로 무엇을 가르는가", 
     // 대조군: 프로덕션 base 는 프로덕션 라우트를 준다(조회기가 base 를 실제로 쓴다).
     expect(FIELDAPP_ROUTES.some((r) => r.includes("sales"))).toBe(true);
     expect(FIELDAPP_ROUTES.length).toBeGreaterThan(0);
+
+    // ★★그리고 **판정 함수가 그 파생 결과를 실제로 소비하는지**를 가른다.
+    //   리터럴로 되돌린 구현은 픽스처 라우트를 못 잡으므로 여기서 빨개진다.
+    expect(isFieldAppHrefLine('<Link href="/probe/x">', derived)).toBe(true);
+    // 두 모집단 — 픽스처 라우트가 아닌 줄은 안 잡는다(특이도).
+    expect(isFieldAppHrefLine('<Link href="/projects">', derived)).toBe(false);
   });
 
   it("★두 모집단 — 앱 라우트 href 줄은 잡고, 무관한 href 줄은 안 잡는다", () => {
