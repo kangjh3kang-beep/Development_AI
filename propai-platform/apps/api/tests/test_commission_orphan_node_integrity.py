@@ -97,6 +97,48 @@ async def test_create_node_allows_orphan_agency(monkeypatch) -> None:
     assert "." not in str(node.path)
 
 
+async def test_create_node_allows_child_member(monkeypatch) -> None:
+    """★★**반대편 모집단** — 부모가 있는 MEMBER 는 **정상 생성**된다.
+
+    이것이 없으면 가드가 «부모 조건» 을 잃어도(=모든 비-AGENCY 를 막아도) 초록이다.
+    실제로 그 변이가 **SURVIVED** 했다(2026-09-08):
+
+        if parent is None and str(node_type) != "AGENCY":  →  if str(node_type) != "AGENCY":
+            ::VERDICT=SURVIVED
+
+    그 변이는 **정상 조직 확장을 통째로 막는다**(팀원을 못 넣는다) — 위양성도 결함이다.
+    ⇒ 「막아야 할 것이 막힌다」와 「막지 말아야 할 것이 통과한다」를 **같은 실행에서** 태운다.
+    """
+    from app.services.sales.org import service as svc
+
+    site = uuid.uuid4()
+    parent = _FakeNode(node_type="AGENCY", path="a1", site_id=site)
+
+    class _Res:
+        def scalar_one_or_none(self_inner): return parent
+
+    class _DB:
+        def add(self, _obj): pass
+        async def flush(self): pass
+        async def execute(self, *_a, **_k): return _Res()
+
+    # ★`SalesOrgNode` 를 통째로 대체하면 `select(SalesOrgNode)` 가 ArgumentError 를 낸다
+    #   (SQLAlchemy 가 실제 매핑 클래스를 요구한다). 그래서 **생성만** 가로챈다 —
+    #   부모 조회는 원본 클래스로 가고, 조회 결과는 위 `_DB` 가 돌려준다.
+    real = svc.SalesOrgNode
+
+    class _Ctor(real):  # type: ignore[misc,valid-type]
+        def __new__(cls, **kw):  # noqa: D401
+            return _FakeNode(**kw)
+
+    monkeypatch.setattr(svc, "SalesOrgNode", _Ctor, raising=True)
+
+    node = await svc.create_node(_DB(), site, "MEMBER", parent_id=parent.id)
+    assert node.node_type == "MEMBER"
+    # 부모 path 를 상속한다 — 체인이 대행사에서 시작한다는 뜻이다.
+    assert str(node.path).startswith("a1.")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 정산 층 — 체인 최상위가 AGENCY 가 아니면 배분하지 않는다
 # ─────────────────────────────────────────────────────────────────────────────
