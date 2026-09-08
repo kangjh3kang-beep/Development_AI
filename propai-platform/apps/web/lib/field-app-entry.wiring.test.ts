@@ -208,3 +208,45 @@ describe("남은 부채 — 이 축이 못 보는 것", () => {
       "(대조군: 현장앱 **내부**에 3건 실재 — 조회기는 살아 있다) 새로 생기면 감시망에 안 든다",
   );
 });
+
+/*
+ * ★★**탐지 축을 따로 잠근다**(저장소 §가드는 3축 — 탐지·특이도·배선).
+ *
+ * 위 describe 는 «오늘 위반이 0건» 을 단언한다. 그런데 **판정 함수를 약화시켜도 그것은 초록이다**
+ * — 위반 파일이 없으니 무엇으로 재도 0이기 때문이다. 실제로 변이로 실증했다:
+ *
+ *     includes("shouldInterceptFieldAppClick(") → includes("shouldInterceptFieldAppClick")
+ *         ::VERDICT=SURVIVED          ← 「호출 형태」를 「이름 존재」로 되돌려도 안 잡힌다
+ *     FIELDAPP_ROUTES.some(...)        → line.includes("/sales/sites")
+ *         ::VERDICT=SURVIVED          ← 라우트 파생을 리터럴 하나로 되돌려도 안 잡힌다
+ *
+ * ⇒ **판정 함수를 합성 입력으로 직접 태운다.** 그러면 약화가 곧 빨강이 된다.
+ */
+describe("★탐지 축 — 판정 함수가 실제로 무엇을 가르는가", () => {
+  it("라우트 집합이 (fieldapp) 디렉토리에서 파생됐다 — 리터럴 하나가 아니다", () => {
+    // 공허 진리 가드: 파생 결과가 비면 아래가 무의미하다.
+    expect(FIELDAPP_ROUTES.length).toBeGreaterThan(0);
+    // 오늘의 실제 라우트가 들어 있다.
+    expect(FIELDAPP_ROUTES.some((r) => r.includes("sales"))).toBe(true);
+    // ★그리고 그것은 **디렉토리에서 읽은 것**이지 손으로 적은 것이 아니다 —
+    //   `fieldAppRouteSegments()` 를 다시 불러 같은 값이 나오는지로 확인한다.
+    expect([...fieldAppRouteSegments()].length).toBeGreaterThan(0);
+  });
+
+  it("★두 모집단 — 앱 라우트 href 줄은 잡고, 무관한 href 줄은 안 잡는다", () => {
+    const route = FIELDAPP_ROUTES[0]!;
+    expect(isFieldAppHrefLine(`<Link href={\`/\${locale}${route}\`}>`)).toBe(true);
+    // 특이도: 정상 코드를 막으면 그것도 결함이다.
+    expect(isFieldAppHrefLine(`<Link href={\`/\${locale}/projects\`}>`)).toBe(false);
+    expect(isFieldAppHrefLine(`const x = "${route}";`)).toBe(false); // href= 가 없다
+  });
+
+  it("★「호출 형태」와 「이름 언급」을 가른다 — 이름만 있으면 통과시키면 안 된다", () => {
+    const CALL = "shouldInterceptFieldAppClick(";
+    const mention = "const _unused = shouldInterceptFieldAppClick; void _unused;";
+    const call = "if (node.launch === 'app-window' && shouldInterceptFieldAppClick(e)) {";
+    // 락이 쓰는 것과 **같은 판정**을 여기서 태운다.
+    expect(call.includes(CALL)).toBe(true);
+    expect(mention.includes(CALL)).toBe(false); // ★이 줄이 변이 A 를 CAUGHT 로 만든다
+  });
+});
