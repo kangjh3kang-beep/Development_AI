@@ -95,6 +95,22 @@ export function shouldInterceptFieldAppClick(e: {
  * @param url 열 주소. 생략하면 현재 주소(어포던스의 「별도 창으로 열기」가 그렇게 쓴다).
  * @returns 무엇으로 열렸는지 — 호출부가 기본 이동 차단 여부를 판단하는 근거.
  */
+/**
+ * 대상이 **우리 오리진**인가 — `noopener` 를 뺄 수 있는지의 유일한 판정자.
+ *
+ * ★동일 오리진에서는 `noopener` 가 **얻는 것이 없다**(SOP 상 이미 접근 가능하다). 반면
+ *   잃는 것은 크다 — sessionStorage 상속이 끊겨 **현장 비밀번호를 다시 묻게 된다**(실측).
+ *   교차 오리진에서는 반대로 `noopener` 가 실재하는 방어이므로 **유지한다.**
+ *   상대 URL 은 현재 주소를 기준으로 해석된다(오늘의 모든 호출부가 상대 경로다).
+ */
+function sameOrigin(target: string): boolean {
+  try {
+    return new URL(target, window.location.href).origin === window.location.origin;
+  } catch {
+    return false; // 파싱 불가는 «모른다» 이고, 모르면 안전한 쪽(noopener)으로 간다.
+  }
+}
+
 export function launchFieldApp(url?: string): FieldAppLaunchResult {
   if (typeof window === "undefined") return "same";
   const target = url ?? window.location.href;
@@ -111,10 +127,35 @@ export function launchFieldApp(url?: string): FieldAppLaunchResult {
     return "window";
   }
 
-  // ②팝업 차단 → 새 탭. 원래 창(플랫폼)이 남는다는 목적은 이것으로도 달성된다.
-  //   ★`noopener` 를 준다 — 이름을 못 주는 대신 역참조를 끊는다.
-  const tab = window.open(target, "_blank", "noopener,noreferrer");
-  if (tab) return "tab";
+  // ②팝업 차단 → **같은 이름의 탭**. 원래 창(플랫폼)이 남는다는 목적은 이것으로도 달성된다.
+  //
+  // ★★`_blank` + `noopener` 를 쓰지 않는다 — **실측으로 갈렸다**(Chromium · 2026-09-08):
+  //
+  //     window.open(url, "propai-field-app", features)  → sessionStorage **상속**  · name 유지
+  //     window.open(url, "propai-field-app")            → sessionStorage **상속**  · name 유지
+  //     window.open(url, "_blank", "noopener,…")        → sessionStorage **새로 시작**(null) · name ""
+  //
+  //   현장 진입 토큰(`propai_site_token:*`)은 **sessionStorage** 에 산다. 그래서 `noopener`
+  //   폴백은 **현장 비밀번호를 다시 묻게 만든다** — 같은 탭 이동보다도 나쁘다(회귀).
+  //   그리고 이름을 잃으면 그 창이 「현장앱 창」으로 판정되지 않아 어포던스도 틀린 답을 낸다.
+  //
+  //   ★`noopener` 를 버리는 것이 안전한 이유: 대상이 **동일 오리진**이다. `noopener` 는
+  //   교차 오리진에서 역참조를 끊는 장치이고, 동일 오리진은 어차피 SOP 상 접근 가능하므로
+  //   여기서는 **얻는 것이 없고 잃는 것만 있었다.**
+  //   ★그러나 **동일 오리진일 때만** 그렇다. 교차 오리진 대상에는 `noopener` 를 유지한다 —
+  //     그때는 역탭내빙이 실재하는 위험이고, sessionStorage 도 어차피 공유되지 않는다.
+  //     (이 분기가 없으면 적대 리뷰가 넣어 둔 F1 가드를 **사유 없이 무력화**하는 것이 된다.)
+  const tab = sameOrigin(target)
+    ? window.open(target, FIELD_APP_WINDOW_NAME)
+    : window.open(target, "_blank", "noopener,noreferrer");
+  if (tab) {
+    try {
+      tab.focus();
+    } catch {
+      /* 포커스는 부가 기능이다(교차 오리진이면 접근 자체가 막힐 수 있다). */
+    }
+    return "tab";
+  }
 
   // ③둘 다 막혔다. 여기서 조용히 실패하면 **버튼이 죽은 것처럼 보인다** —
   //   호출부가 기본 이동을 그대로 두게 해서 최소한 오늘의 동작은 보장한다.

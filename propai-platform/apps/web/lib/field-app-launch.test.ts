@@ -50,9 +50,12 @@ describe("launchFieldApp — 3분기가 서로 갈린다", () => {
 
     expect(launchFieldApp("/ko/sales/sites")).toBe("tab");
     expect(open).toHaveBeenCalledTimes(2);
-    expect(open.mock.calls[1]![1]).toBe("_blank");
-    // 이름을 못 주는 대신 역참조를 끊는다.
-    expect(String(open.mock.calls[1]![2])).toContain("noopener");
+    // ★폴백도 **같은 이름**으로 연다(2026-09-08 실측): `_blank`+`noopener` 는 sessionStorage 를
+    //   새로 시작해 **현장 비밀번호를 다시 묻게 만들었다**(현장 토큰이 sessionStorage 에 산다).
+    //   이름을 유지하면 세션 상속 + 앱 정체성 판별이 둘 다 산다.
+    expect(open.mock.calls[1]![1]).toBe(FIELD_APP_WINDOW_NAME);
+    // 팝업 features 는 주지 않는다 — 그래야 탭으로 열린다(차단을 우회하는 지점).
+    expect(open.mock.calls[1]![2]).toBeUndefined();
   });
 
   it("③ 둘 다 차단되면 'same' 을 낸다 — 호출부가 기본 이동을 살려 두게", () => {

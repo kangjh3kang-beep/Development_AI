@@ -36,7 +36,6 @@ vi.mock("next/navigation", () => ({
 }));
 
 const origOpen = window.open;
-const TY = "(_u?: string | URL, _t?: string, _f?: string) => Window | null";
 
 beforeEach(() => {
   pathname = "/ko";
