@@ -48,15 +48,18 @@ export type FieldAppLaunchResult =
  */
 const POPUP_MAX_W = 1180;
 const POPUP_MAX_H = 900;
-const POPUP_MIN_W = 360;
-const POPUP_MIN_H = 480;
 
 function popupFeatures(): string {
   const availW = window.screen?.availWidth ?? POPUP_MAX_W;
   const availH = window.screen?.availHeight ?? POPUP_MAX_H;
-  // 하한을 걸되 **화면을 넘지 않게** 다시 clamp — 이 두 번째 clamp 가 주석을 참으로 만든다.
-  const w = Math.min(availW, Math.max(POPUP_MIN_W, Math.min(POPUP_MAX_W, availW)));
-  const h = Math.min(availH, Math.max(POPUP_MIN_H, Math.min(POPUP_MAX_H, availH)));
+  // ★상한 하나만 건다 — **화면을 넘지 않는다**가 이 함수의 유일한 불변식이다.
+  //   ★2026-09-08 적대 리뷰: 종전 판은 `Math.min(availW, Math.max(MIN, Math.min(MAX, availW)))`
+  //     였는데 이것은 **대수적으로** `Math.min(MAX, availW)` 와 항상 같다(모든 availW 에서 실측 확인).
+  //     즉 `POPUP_MIN_W`/`POPUP_MIN_H` 는 **결과에 영향을 주지 않는 죽은 상수**였다.
+  //     「하한을 건다」는 의도였다면 그 코드는 그것을 **하지 않고 있었다** — 지워서 정직하게 만든다.
+  //     (하한이 정말 필요해지면 그때 «화면보다 크게 요청하지 않는다» 와 충돌하지 않는 형태로 넣어라.)
+  const w = Math.min(POPUP_MAX_W, availW);
+  const h = Math.min(POPUP_MAX_H, availH);
   const left = Math.max(0, Math.round((availW - w) / 2));
   const top = Math.max(0, Math.round((availH - h) / 2));
   return `popup=yes,width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,status=no,resizable=yes,scrollbars=yes`;
@@ -90,12 +93,6 @@ export function shouldInterceptFieldAppClick(e: {
 }
 
 /**
- * 현장앱을 독자 창으로 연다.
- *
- * @param url 열 주소. 생략하면 현재 주소(어포던스의 「별도 창으로 열기」가 그렇게 쓴다).
- * @returns 무엇으로 열렸는지 — 호출부가 기본 이동 차단 여부를 판단하는 근거.
- */
-/**
  * 대상이 **우리 오리진**인가 — `noopener` 를 뺄 수 있는지의 유일한 판정자.
  *
  * ★동일 오리진에서는 `noopener` 가 **얻는 것이 없다**(SOP 상 이미 접근 가능하다). 반면
@@ -115,6 +112,21 @@ export function launchFieldApp(url?: string): FieldAppLaunchResult {
   if (typeof window === "undefined") return "same";
   const target = url ?? window.location.href;
 
+  // ★★**오리진 판정이 맨 앞이다**(2026-09-08 적대 리뷰 후속 — 내 테스트가 잡았다).
+  //   종전엔 `sameOrigin` 을 **폴백에만** 걸어서, 주 경로가 교차 오리진 대상에게
+  //   **현장앱 이름을 주고 `noopener` 없이** 열었다 — F1 가드가 지키려던 **바로 그 노출**이다.
+  //   가드를 한 갈래에만 걸면 나머지 갈래가 그대로 뚫린다(§처방 범위 = 결함 범위).
+  if (!sameOrigin(target)) {
+    // 교차 오리진 — 이름을 주지 않고 `noopener` 를 유지한다.
+    //   ★`noopener` 가 설정되면 `window.open` 은 **명세상 `null` 을 반환한다.**
+    //     반환값으로 성공을 판정하면 **정상으로 열린 탭을 실패로 읽는다** ⇒ 반환값을 보지 않는다.
+    //   ★오늘 이 갈래는 **도달 불가**다(호출부 5곳이 전부 상대경로 또는 현재 주소).
+    //     그래도 두는 이유: `launchFieldApp` 은 `url` 을 받는 공개 함수라 다음 호출부가
+    //     외부 주소를 넘길 수 있고, 그때 조용히 틀리는 것보다 계약이 있는 편이 낫다.
+    window.open(target, "_blank", "noopener,noreferrer");
+    return "tab";
+  }
+
   // ①이름 있는 전용 창 — 같은 이름으로 다시 열면 **그 창이 재사용**된다(창이 늘어나지 않는다).
   //   그 이름이 곧 현장앱 정체성 판별자다(`useFieldAppShell` 의 `inSeparateWindow`).
   const win = window.open(target, FIELD_APP_WINDOW_NAME, popupFeatures());
@@ -127,32 +139,13 @@ export function launchFieldApp(url?: string): FieldAppLaunchResult {
     return "window";
   }
 
-  // ②팝업 차단 → **같은 이름의 탭**. 원래 창(플랫폼)이 남는다는 목적은 이것으로도 달성된다.
-  //
-  // ★★`_blank` + `noopener` 를 쓰지 않는다 — **실측으로 갈렸다**(Chromium · 2026-09-08):
-  //
-  //     window.open(url, "propai-field-app", features)  → sessionStorage **상속**  · name 유지
-  //     window.open(url, "propai-field-app")            → sessionStorage **상속**  · name 유지
-  //     window.open(url, "_blank", "noopener,…")        → sessionStorage **새로 시작**(null) · name ""
-  //
-  //   현장 진입 토큰(`propai_site_token:*`)은 **sessionStorage** 에 산다. 그래서 `noopener`
-  //   폴백은 **현장 비밀번호를 다시 묻게 만든다** — 같은 탭 이동보다도 나쁘다(회귀).
-  //   그리고 이름을 잃으면 그 창이 「현장앱 창」으로 판정되지 않아 어포던스도 틀린 답을 낸다.
-  //
-  //   ★`noopener` 를 버리는 것이 안전한 이유: 대상이 **동일 오리진**이다. `noopener` 는
-  //   교차 오리진에서 역참조를 끊는 장치이고, 동일 오리진은 어차피 SOP 상 접근 가능하므로
-  //   여기서는 **얻는 것이 없고 잃는 것만 있었다.**
-  //   ★그러나 **동일 오리진일 때만** 그렇다. 교차 오리진 대상에는 `noopener` 를 유지한다 —
-  //     그때는 역탭내빙이 실재하는 위험이고, sessionStorage 도 어차피 공유되지 않는다.
-  //     (이 분기가 없으면 적대 리뷰가 넣어 둔 F1 가드를 **사유 없이 무력화**하는 것이 된다.)
-  const tab = sameOrigin(target)
-    ? window.open(target, FIELD_APP_WINDOW_NAME)
-    : window.open(target, "_blank", "noopener,noreferrer");
+  // ②팝업 차단 → **같은 이름의 탭**(features 없이). 세부 근거는 위 주석 블록에 있다.
+  const tab = window.open(target, FIELD_APP_WINDOW_NAME);
   if (tab) {
     try {
       tab.focus();
     } catch {
-      /* 포커스는 부가 기능이다(교차 오리진이면 접근 자체가 막힐 수 있다). */
+      /* 포커스는 부가 기능이다. */
     }
     return "tab";
   }

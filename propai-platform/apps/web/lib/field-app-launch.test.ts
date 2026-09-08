@@ -129,3 +129,59 @@ describe("★팝업 크기 — 주석이 선언한 불변식을 태운다(적대
     expect(h).toBeLessThanOrEqual(900);
   });
 });
+
+describe("★교차 오리진 — noopener 가드는 **살아 있다**(적대 리뷰 NM-1 봉합)", () => {
+  // 종전엔 이 모집단을 `FieldAppAffordance.test.tsx` 의 `if (isSame) … else …` 안에 두었는데,
+  // 그 컴포넌트는 **언제나 `launchFieldApp()`(인자 없음)** 을 부른다 → target = 현재 주소
+  // → `isSame` 이 **항상 true** → `else` 가 **한 번도 실행되지 않았다.**
+  // ★대조군을 조건문 안에 두었고 그 조건이 도달 불가였다 — 도구의 기계 변이가
+  //   `"noopener,noreferrer"` 문자열 변경을 **SURVIVED** 로 이미 찍어 놓았는데 내가 안 읽었다.
+  // ⇒ 여기서는 **교차 오리진 입력을 직접 만들어** 태운다.
+
+  it("교차 오리진 대상에는 noopener·noreferrer 를 **유지한다**", () => {
+    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);
+    window.open = open as unknown as typeof window.open;
+
+    // 팝업이 열리든 말든 이 갈래는 features 로 판정한다.
+    launchFieldApp("https://example.com/evil");
+
+    const feat = String(open.mock.calls.at(-1)![2]);
+    expect(feat).toContain("noopener");
+    expect(feat).toContain("noreferrer");
+    expect(open.mock.calls.at(-1)![1]).toBe("_blank"); // 이름을 주지 않는다
+  });
+
+  it("★두 모집단 — 같은 실행에서 상대경로는 **이름 있는 창**을 받는다", () => {
+    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);
+    window.open = open as unknown as typeof window.open;
+
+    launchFieldApp("/ko/sales/sites");          // 동일 오리진
+    launchFieldApp("https://example.com/evil"); // 교차 오리진
+
+    expect(open.mock.calls[0]![1]).toBe(FIELD_APP_WINDOW_NAME);
+    expect(String(open.mock.calls[0]![2])).not.toContain("noopener");
+    expect(open.mock.calls.at(-1)![1]).toBe("_blank");
+    expect(String(open.mock.calls.at(-1)![2])).toContain("noopener");
+  });
+
+  it("★교차 오리진은 noopener 때문에 open 이 null 을 줘도 **'tab' 이다**(Nm-1)", () => {
+    // 명세상 noopener 가 설정되면 window.open 은 null 을 반환한다.
+    // 반환값으로 성공을 판정하면 **정상으로 열린 탭을 실패로 읽어** 원래 창까지 이동한다.
+    window.open = vi.fn(() => null) as unknown as typeof window.open;
+    expect(launchFieldApp("https://example.com/evil")).toBe("tab");
+  });
+
+  it("★대조군 — 동일 오리진은 열리지 않으면 여전히 'same' 이다(방향이 갈린다)", () => {
+    window.open = vi.fn(() => null) as unknown as typeof window.open;
+    expect(launchFieldApp("/ko/sales/sites")).toBe("same");
+  });
+
+  it("★프로토콜 상대·javascript: 는 교차 오리진으로 떨어진다(안전측)", () => {
+    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);
+    window.open = open as unknown as typeof window.open;
+    for (const bad of ["//evil.com/x", "javascript:alert(1)", "data:text/html,x"]) {
+      launchFieldApp(bad);
+      expect(String(open.mock.calls.at(-1)![2]), bad).toContain("noopener");
+    }
+  });
+});
