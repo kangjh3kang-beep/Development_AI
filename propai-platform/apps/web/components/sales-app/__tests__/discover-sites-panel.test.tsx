@@ -69,6 +69,12 @@ describe("selectJoinable — 무엇을 보여줄지의 계약", () => {
 });
 
 describe("DiscoverSitesPanel — 렌더", () => {
+  it("★발견 목록을 **그 엔드포인트에서** 읽는다(경로 축 — 아무도 안 보던 자리)", async () => {
+    render(<DiscoverSitesPanel />);
+    await screen.findByText("신청가능현장");
+    expect(getMock).toHaveBeenCalledWith("/sales/sites/discover");
+  });
+
   it("★신청 가능한 현장에는 **신청 버튼**, 대기 중에는 **대기 배지**", async () => {
     render(<DiscoverSitesPanel />);
     expect(await screen.findByText("신청가능현장")).toBeTruthy();
@@ -85,20 +91,22 @@ describe("DiscoverSitesPanel — 렌더", () => {
   });
 
   it("★신청을 누르면 **실제로 POST 가 나가고** 그 카드가 대기로 바뀐다", async () => {
-    postMock.mockResolvedValue({ status: "pending" });
+    postMock.mockResolvedValue({ status: "pending", already_member: false });
     render(<DiscoverSitesPanel />);
     fireEvent.click(await screen.findByText("등록신청"));
 
     await waitFor(() => expect(postMock).toHaveBeenCalled());
-    // ★어느 현장에 신청했는지까지 본다 — 「불렀다」가 아니라 「무엇을 넘겼는가」.
-    expect(String(postMock.mock.calls[0][0])).toContain("s-open");
+    // ★★경로를 **정확히** 못 박는다(적대 리뷰 B-8). 앞 판은 `toContain("s-open")` 뿐이라
+    //   경로가 통째로 깨져도(`join-requests-TYPO`) site id 만 들어 있으면 통과했다
+    //   — 주석은 «무엇을 넘겼는가를 본다» 고 선언했는데 코드가 그 면역을 안 갖고 있었다.
+    expect(postMock.mock.calls[0][0]).toBe("/sales/sites/s-open/join-requests");
     // 버튼이 사라지고 대기 배지가 둘이 된다(원래 1 + 방금 1).
     await waitFor(() => expect(screen.queryByText("등록신청")).toBeNull());
     expect(screen.getAllByText("승인 대기").length).toBe(2);
   });
 
   it("★★서버가 `already_member` 를 주면 **pending 을 지어내지 않고** 목록에서 뺀다", async () => {
-    postMock.mockResolvedValue({ status: "already_member" });
+    postMock.mockResolvedValue({ status: null, already_member: true });
     render(<DiscoverSitesPanel />);
     fireEvent.click(await screen.findByText("등록신청"));
 

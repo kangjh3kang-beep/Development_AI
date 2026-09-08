@@ -42,6 +42,7 @@ from app.api.deps import get_current_user, get_db
 # ★노드 생성은 **공용 함수 하나**를 경유한다(2026-09-08) — 종전 raw INSERT 가 루트 고아를
 #   만들어 수수료 RESIDUAL 전액이 신입에게 귀속됐다. create_node 가 루트 규칙을 강제한다.
 from app.services.sales.org.service import create_node
+from app.services.sales.transition import claim_status_transition
 from apps.api.database.models.sales.site_org import SalesOrgMembershipHistory
 
 # ★멤버십 판정은 **`active = true AND deleted_at IS NULL`** 두 조건을 함께 본다(2026-09-08).
@@ -637,9 +638,15 @@ async def decide_application(application_id: uuid.UUID, body: DecideRequest,
         return {"id": str(application_id), "status": new_status, "idempotent": True,
                 "membership_linked": False, "membership_reason": "IDEMPOTENT_NO_CHANGE"}
 
-    await db.execute(text(
-        "UPDATE job_applications SET status = :st, updated_at = now() WHERE id = :id"),
-        {"st": new_status, "id": str(application_id)})
+    # ★★**CAS** — 형제 문(`site_join.decide_join_request`)과 **같은 헬퍼**를 쓴다(리뷰 B-1).
+    #   종전엔 `WHERE id` 만 걸어 동시 결정이 둘 다 통과했다. 조건을 «pending 고정» 이 아니라
+    #   **읽은 값 그대로**로 두는 이유: 이 문은 «거절 → 수락» 재결정을 허용한다(위 멱등 검사 참조).
+    #   `pending` 으로 못 박으면 그 정당한 경로가 409 로 죽는다 — 정상 사용을 막는 가드는 결함이다.
+    if not await claim_status_transition(
+            db, "job_applications", application_id,
+            expected_status=row[3], new_status=new_status):
+        await db.rollback()
+        raise HTTPException(409, "이미 다른 사람이 이 신청을 처리했습니다")
 
     # ★거절은 «해당 없음» 이 아니다 — 기계 변이가 이 줄의 생존으로 짚어 준 자리다(2026-09-08).
     #   앞 판은 거절에도 `NOT_APPLICABLE`(현장 비연계 공고라 멤버십이 생길 일이 없다)을 실어,

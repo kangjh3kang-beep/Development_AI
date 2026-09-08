@@ -28,32 +28,34 @@ from fastapi import Depends, HTTPException, Request
 from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.services.sales.org.roles as _ROLES  # ★역할·서열 SSOT(의존 없는 최하위 모듈)
 from app.api.deps import get_current_user, get_db
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
 
 # ★SSOT(단일 출처): 플랫폼 User.role → sales 폴백 역할 매핑(조직노드 없을 때).
 # deps_sales 가 sales 인증의 최하위 모듈이므로 여기서 1회 정의하고, site_auth 등 상위 모듈은
 # 이 집합을 import 해 재사용한다(과거 deps_sales·site_auth 중복정의로 드리프트 위험이 있었음).
-_SUPERADMIN_ROLES = {"superadmin", "super_admin", "admin", "owner", "총괄관리자", "platform_admin"}
-_DEVELOPER_ROLES = {"developer", "시행사", "dev"}
+# ★★2026-09-09 — 정의를 **더 아래로** 내렸다(`app/services/sales/org/roles.py`).
+#   이 모듈은 스스로 «sales 인증의 최하위» 라 적었지만 FastAPI `Depends` 와 인증 서비스를
+#   끌고 온다. 그래서 **서비스 층이 상수 하나를 쓰려고 임포트하면 앱 전체가 딸려 왔다**
+#   (실측: 개발 환경 3.10 에서 테스트가 임포트 단계에서 죽었다).
+#   ⇒ 상수는 의존 없는 모듈에 두고 여기서 **이름만 재수출**한다 — 기존 소비처는 그대로 산다.
+_SUPERADMIN_ROLES = set(_ROLES.SUPERADMIN_ROLES)
+_DEVELOPER_ROLES = set(_ROLES.DEVELOPER_ROLES)
 
 # 한 사용자가 같은 현장에 복수의 살아있는 조직노드를 가질 수 있다((site_id,user_id) UNIQUE 부재).
 # 그때 결정적으로 '상위 권한' 노드를 고르기 위한 우선순위(작을수록 상위). 목록에 없는 값은
 # 맨 뒤(낮은 우선순위)로 정렬한다. scalar_one_or_none() 의 MultipleResultsFound(500) 위험을
 # scalars().first() + 이 정렬로 대체한다.
-_NODE_TYPE_PRIORITY = {
-    "AGENCY": 0,
-    "SUBAGENCY": 1,
-    "GM_DIRECTOR": 2,
-    "DIRECTOR": 3,
-    "TEAM_LEADER": 4,
-    "MEMBER": 5,
-}
+_NODE_TYPE_PRIORITY = dict(_ROLES.NODE_TYPE_PRIORITY)   # ★재수출(정의는 org/roles.py)
 
 
 def _node_priority(node_type: str) -> int:
-    """조직노드 권한 우선순위(작을수록 상위). 미등록 타입은 가장 낮은 우선순위로."""
-    return _NODE_TYPE_PRIORITY.get(node_type, len(_NODE_TYPE_PRIORITY))
+    """조직노드 권한 우선순위(작을수록 상위). 미등록 타입은 가장 낮은 우선순위로.
+
+    ★판정 본체는 `app/services/sales/org/roles.py::node_priority` 다 — 여기는 위임이다.
+    """
+    return _ROLES.node_priority(node_type)
 
 # RLS 정책이 읽는 세션변수 키(정책 USING 절과 1:1 — v62_2_sales_rls.py / sales_rls_bootstrap.py).
 _CTX_SITE_KEY = "app.site_id"

@@ -22,8 +22,13 @@ import logging
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# ★역할 집합·노드 우선순위는 **`deps_sales` 가 SSOT** 다(그 파일이 명문으로 그렇게 선언한다).
+#   앞 판은 이것을 **손으로 복사**해 `총괄관리자`·`platform_admin`·`시행사`·`dev` **네 토큰을
+#   떨어뜨렸다** — 그 역할들은 `my_sites` 에서 전 현장을 보면서 승인만 403 이 됐다.
+#   ★같은 커밋에서 «사유 어휘를 복사하지 마라» 는 락을 걸어 놓고 옆에서 다른 SSOT 를 복사했다.
+from app.services.sales.org.roles import DEVELOPER_ROLES, SUPERADMIN_ROLES, node_priority
 from app.services.sales.org.service import create_node
-from apps.api.database.models.sales.site_org import SalesOrgNode
+from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +37,14 @@ logger = logging.getLogger(__name__)
 APPROVER_NODE_TYPES = frozenset(
     {"AGENCY", "SUBAGENCY", "GM_DIRECTOR", "DIRECTOR", "TEAM_LEADER"})
 
-# 플랫폼 역할로 승인 가능한 집합(현장 조직도에 노드가 없어도 되는 운영자).
+# 플랫폼 역할로 승인 가능한 집합 — **SSOT 에서 파생한다**(리터럴 재선언 금지).
 # ★이 분기가 없으면 «조직도를 아직 안 만든 현장» 은 **아무도 승인할 수 없어** 영원히 막힌다.
-APPROVER_PLATFORM_ROLES = frozenset(
-    {"superadmin", "super_admin", "admin", "owner", "developer"})
+# ★두 집합을 **가른다**: 총괄관리자는 현장 무관, 시행사는 **자기 테넌트 현장만**.
+#   앞 판은 둘을 한 집합으로 뭉쳐서, A 테넌트 `developer` 가 B 테넌트 현장의 조직도에
+#   제3자를 MEMBER 로 넣을 수 있었다(그 노드가 곧 `enter_site` 의 게이트다).
+#   형제들은 전부 **읽기**라 그 비대칭이 안 보였는데, 이 모듈은 **쓰기**다.
+APPROVER_PLATFORM_ROLES = frozenset(SUPERADMIN_ROLES)
+TENANT_SCOPED_APPROVER_ROLES = frozenset(DEVELOPER_ROLES)
 
 
 async def resolve_approver_node(db: AsyncSession, site_id, user):
@@ -47,15 +56,36 @@ async def resolve_approver_node(db: AsyncSession, site_id, user):
       체인이 승인자의 체인을 물려받는다. 「승인 가능한가」와 「누구 아래인가」를 따로 구하면
       두 판정이 갈릴 수 있다 — PR #1021 에서 «검증했다 ≠ 검증한 것을 썼다» 로 데인 형태다.
     """
-    node = (await db.execute(select(SalesOrgNode).where(
+    # ★★노드를 **권한 우선순위**로 고른다(`path` 순이 아니라).
+    #   `deps_sales:41` 이 명문으로 적는다 — *"한 사용자가 같은 현장에 복수의 살아있는
+    #   조직노드를 가질 수 있다((site_id,user_id) UNIQUE 부재)."* 그래서 `path` 오름차순
+    #   `.first()` 는 **아무 노드나** 집는다. 실제 실패: 대행사 둘인 현장에서 `agc_00aa` 아래
+    #   MEMBER 이면서 `agc_ffbb` 아래 DIRECTOR 인 사람이 **403** 을 받는다(MEMBER 가 먼저 나와서).
+    #   그리고 승인이 되더라도 **부모가 최상위 노드가 아니면** 신입이 다른 체인에 붙어
+    #   수수료 귀속이 바뀐다 — 이 함수 독스트링이 «승인자의 체인을 물려받는다» 고 선언한 그것.
+    #   형제 둘(`deps_sales.resolve_site_membership` · `site_auth.my_sites`)이 이미
+    #   `(_node_priority, path, id)` 로 고른다. **같은 기준을 쓴다.**
+    nodes = (await db.execute(select(SalesOrgNode).where(
         SalesOrgNode.site_id == site_id, SalesOrgNode.user_id == user.id,
         SalesOrgNode.active.is_(True),
-        SalesOrgNode.deleted_at.is_(None)).order_by(SalesOrgNode.path))).scalars().first()
-    if node is not None and str(node.node_type) in APPROVER_NODE_TYPES:
-        return True, node
+        SalesOrgNode.deleted_at.is_(None)))).scalars().all()
+    if nodes:
+        node = min(nodes, key=lambda n: (node_priority(str(n.node_type)), str(n.path), str(n.id)))
+        if str(node.node_type) in APPROVER_NODE_TYPES:
+            return True, node
 
-    if (getattr(user, "role", "") or "").lower() in APPROVER_PLATFORM_ROLES:
+    role = (getattr(user, "role", "") or "").lower()
+    if role in APPROVER_PLATFORM_ROLES:
         return True, None
+
+    # ★시행사(DEVELOPER 계열)는 **자기 테넌트 현장만** 승인한다 — 쓰기 경로의 테넌트 경계.
+    if role in TENANT_SCOPED_APPROVER_ROLES:
+        tenant_id = getattr(user, "tenant_id", None)
+        if tenant_id is not None:
+            org_id = (await db.execute(select(SalesSite.organization_id).where(
+                SalesSite.id == site_id))).scalar()
+            if org_id is not None and str(org_id) == str(tenant_id):
+                return True, None
 
     return False, None
 

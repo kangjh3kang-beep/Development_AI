@@ -81,11 +81,15 @@ export default function DiscoverSitesPanel() {
   const apply = (siteId: string) => {
     setSendingId(siteId);
     apiClient
-      .post<{ status?: string }>(`/sales/sites/${siteId}/join-requests`, { body: {} })
+      .post<{ status?: string | null; already_member?: boolean }>(
+        `/sales/sites/${siteId}/join-requests`,
+        { body: {} },
+      )
       .then((r) => {
-        // ★서버가 판정한 상태를 **그대로 반영**한다(낙관적으로 'pending' 을 지어내지 않는다).
-        //   이미 멤버였다면 서버는 `already_member` 를 주고, 그때 이 카드는 목록에서 빠져야 한다.
-        const next = r?.status === "already_member" ? "active" : "pending";
+        // ★서버가 판정한 결과를 **그대로 반영**한다(낙관적으로 'pending' 을 지어내지 않는다).
+        //   ★`status` 는 **행 상태**, `already_member` 는 **처리 결과** — 서버가 두 어휘를
+        //   분리했다(2026-09-09). 종전엔 한 키에 섞여 있어 프론트가 상태값으로 결과를 읽었다.
+        const next = r?.already_member ? "active" : "pending";
         setSites((prev) =>
           prev.map((s) => (s.site_id === siteId ? { ...s, membership: next } : s)),
         );

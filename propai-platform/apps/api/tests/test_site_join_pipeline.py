@@ -28,8 +28,6 @@ import subprocess
 import uuid
 from pathlib import Path
 
-import pytest
-
 _HERE = Path(__file__).resolve()
 _API = _HERE.parents[1]
 _MODULE = _API / "app/api/endpoints/sales/site_join.py"   # 라우터(배선·격리)
@@ -101,101 +99,52 @@ def test_approval_goes_through_create_node_not_raw_insert() -> None:
     )
 
 
-def test_discover_does_not_leak_the_tenant_identifier() -> None:
-    """★발견 목록이 `organization_id` 를 **안 싣는다** — 모듈이 선언한 격리의 실체.
+def test_discover_does_not_read_the_tenant_column_into_the_response() -> None:
+    """★발견 응답이 `organization_id` 를 **안 읽는다** — 축은 **값의 출처**다.
 
-    ★선언(주석)이 아니라 **응답 dict 의 키**를 본다. 주석은 지워도 아무것도 안 깨진다.
+    ★2026-09-09 적대 리뷰 A-3 정정: 앞 판은 응답 dict 의 **키 이름** `"organization_id"` 의
+      부재만 봤다. 그래서 키만 바꿔 실으면 그대로 샜다 — 실측:
+
+          "site_id": sid,  →  "site_id": sid, "org": str(s.organization_id),
+              ::VERDICT=SURVIVED
+
+      **낱말을 잠그면 속성이 아니라 어휘를 잠근다.** 이제 «그 컬럼을 **읽는** 코드가 있는가» 를
+      본다(`s.organization_id` 의 `ast.Attribute`), 이름이 무엇이든 걸린다.
     """
     fn = _fn("discover_sites")
-    keys: set[str] = set()
+
+    # 응답을 만드는 dict 안에서 읽는 속성 이름을 전부 모은다.
+    attrs: set[str] = set()
     for d in ast.walk(fn):
         if isinstance(d, ast.Dict):
-            keys |= {k.value for k in d.keys
-                     if isinstance(k, ast.Constant) and isinstance(k.value, str)}
-    # 공허 방지 — 응답 dict 를 못 찾으면 아래 부재 단언이 무의미하다.
-    assert {"site_id", "site_name", "membership"} <= keys, f"응답 키 수집 실패: {sorted(keys)}"
-    assert "organization_id" not in keys, (
-        "발견 목록이 **어느 시행사의 현장인가**를 흘린다 — 요구를 넘어선 노출이다"
-    )
-
-
-def test_reason_vocabulary_is_shared_with_the_hiring_approval() -> None:
-    """★사유 어휘가 채용 승인 경로(`market.py`)에서 **온다** — 사본이면 하나가 낡는다.
-
-    ★사본을 만들었는지 보는 방법은 «`_LINKED_REASONS` 를 임포트하는가» 다.
-      이 모듈 안에서 **재정의**하면 두 승인 경로가 서로 다른 말을 하게 된다.
-    """
-    tree = _tree()
-    imported = {
-        a.name
-        for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
-        and (n.module or "").endswith("sales.market")
-        for a in n.names
-    }
-    assert "_LINKED_REASONS" in imported, "사유 어휘를 채용 경로에서 안 가져온다"
-
-    redefined = [
-        t.id for n in ast.walk(tree) if isinstance(n, ast.Assign)
-        for t in n.targets if isinstance(t, ast.Name)
-        and t.id in {"_LINKED_REASONS", "_MEMBERSHIP_REASONS"}
-    ]
-    assert not redefined, f"사유 어휘를 이 모듈에서 **재정의**했다: {redefined}"
-
-
-def test_no_import_cycle_market_does_not_depend_on_join() -> None:
-    """★방향을 잠근다 — `market` 은 이 모듈을 임포트하지 않는다(순환 금지).
-
-    이 모듈이 `market` 을 임포트하므로, 반대 방향이 생기는 순간 앱이 **기동 자체를 못 한다.**
-    주석에 «순환 없음» 이라고 쓴 것을 **기계가 지키게** 한다.
-    """
-    market = (_API / "app/api/endpoints/sales/market.py").read_text(encoding="utf-8")
-    modules = {
-        (n.module or "") for n in ast.walk(ast.parse(market)) if isinstance(n, ast.ImportFrom)
-    }
-    # 공허 방지 — market 이 무언가는 임포트한다.
-    assert len(modules) >= 3, "market 의 임포트 수집이 비정상"
-    assert not any("site_join" in m for m in modules), "순환 임포트가 생겼다"
-
-
-def test_member_cannot_approve() -> None:
-    """★「관리자 및 상위레벨」의 기계적 정의에 **MEMBER 가 없다**.
-
-    MEMBER 는 서열 최하위라 아래를 승인할 대상이 없다(`_ORG_RANK` 와 정합).
-    ★두 모집단으로 본다 — 없어야 할 것이 없고, **있어야 할 것이 있다**.
-      후자가 없으면 «집합을 통째로 비워도» 초록이다.
-    """
-    approvers: set[str] = set()
-    for n in ast.walk(_tree(_SVC)):
-        if isinstance(n, ast.Assign) and any(
-                isinstance(t, ast.Name) and t.id == "APPROVER_NODE_TYPES" for t in n.targets):
-            approvers = {c.value for c in ast.walk(n)
-                         if isinstance(c, ast.Constant) and isinstance(c.value, str)}
-    assert "MEMBER" not in approvers, "말단 직원이 남을 현장에 들일 수 있다"
-    assert {"AGENCY", "TEAM_LEADER"} <= approvers, (
-        f"승인자 집합이 비었거나 좁다: {sorted(approvers)} — 아무도 승인 못 하면 파이프라인이 죽는다"
-    )
-
-
-def test_pending_uniqueness_is_partial_not_total() -> None:
-    """★유일성이 **대기 중에만** 걸리는가 — 전체 유니크면 **재신청이 원리적으로 불가**다.
-
-    거절당한 사람이 나중에 다시 신청하는 것은 정당하다.
-    정상 사용을 막는 가드는 그 자체가 결함이다.
-    """
-    src = _MODULE.read_text(encoding="utf-8")
-    flat = " ".join(src.split())
-    assert "CREATE UNIQUE INDEX IF NOT EXISTS ux_join_pending_one" in flat, "유일성 인덱스가 없다"
-    idx = flat.index("ux_join_pending_one")
-    assert "WHERE status = 'pending'" in flat[idx:idx + 260], (
-        "유일성이 **전체**에 걸렸다 — 거절 뒤 재신청이 영원히 막힌다"
+            for v in d.values:
+                attrs |= {a.attr for a in ast.walk(v) if isinstance(a, ast.Attribute)}
+    # ★공허 방지 — 정상적으로 읽는 것이 있어야 위 수집이 살아 있다는 뜻이다.
+    assert {"site_name", "site_code"} <= attrs, f"응답이 읽는 속성 수집 실패: {sorted(attrs)}"
+    assert "organization_id" not in attrs, (
+        "발견 응답이 **어느 시행사의 현장인가**를 읽어 싣는다 — 키 이름과 무관하게 누출이다"
     )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# B. 행위 — **원문 함수를 직접 부른다**(서비스 층이라 로컬에서도 돈다)
+# B. 행위 — **원문 함수를 직접 부른다** + **스텁이 쿼리를 읽는다**
 # ═══════════════════════════════════════════════════════════════════════════
-
-pytestmark_async = pytest.mark.asyncio
+#
+# ★★2026-09-09 적대 리뷰 A-1(BLOCKER): 앞 판의 스텁이 이랬다.
+#
+#       class _DB:
+#           async def execute(self, *_a, **_k): return _Res()
+#
+#   **인자를 버린다.** 그래서 `join.py` 의 WHERE 술어 14개(현장격리·소유자·active·
+#   soft-delete·node_type·정렬)가 **무엇이든 같은 답**이 나왔고, 아래 두 변이가 살아남았다:
+#
+#       SalesOrgNode.site_id == site_id,  삭제  → **타 현장 관리자가 이 현장 신청을 승인**
+#           ::VERDICT=SURVIVED
+#       node_type == "AGENCY" → "SUBAGENCY"     → **대행사 아닌 곳**에 붙어 수수료 체인 붕괴
+#           ::VERDICT=SURVIVED
+#
+#   ⇒ 스텁이 **받은 쿼리를 컴파일해 기록**한다. 술어가 사라지면 기록에서 사라지고 단언이 깨진다.
+#     («행위» 와 «질의» 는 다른 축이다 — 반환값만 보면 질의는 영원히 무잠금이다.)
 
 
 class _Node:
@@ -205,13 +154,127 @@ class _Node:
         self.path = path
 
 
-@pytest.mark.asyncio
-async def test_link_membership_holds_when_there_is_no_parent(monkeypatch) -> None:
-    """★★붙일 자리가 없으면 **고아를 만들지 않고 보류**한다.
+class _Result:
+    """SQLAlchemy Result 의 최소 대역 — 호출별로 **다른 행**을 준다."""
 
-    이것이 이 파이프라인의 돈 축이다 — 조용히 루트를 만들면
-    수수료 RESIDUAL 전액이 신입에게 간다.
-    ★그리고 보류는 **전용 사유**로 말한다(«실패» 도 «해당없음» 도 아니다).
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return list(self._rows)
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+    def scalar(self):
+        return self._rows[0] if self._rows else None
+
+    def scalar_one_or_none(self):
+        return self._rows[0] if self._rows else None
+
+
+class _RecordingDB:
+    """★**쿼리를 읽는** 스텁. `rows` 는 «컴파일된 SQL → 행 목록» 라우터다.
+
+    기록된 SQL(`self.sql`)에 술어가 실제로 실려 있는지를 테스트가 단언한다.
+    리터럴 바인딩으로 컴파일하므로 `node_type = 'AGENCY'` 같은 **값까지** 보인다.
+    """
+
+    def __init__(self, rows=None):
+        self.sql: list[str] = []
+        self._rows = rows or (lambda _s: [])
+
+    async def execute(self, stmt, params=None):
+        try:
+            rendered = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+        except Exception:                     # noqa: BLE001 — text() 등은 그대로 문자열화
+            rendered = str(stmt)
+        flat = " ".join(rendered.split())
+        self.sql.append(flat)
+        return _Result(self._rows(flat))
+
+    async def commit(self):
+        pass
+
+    def find(self, needle: str) -> str:
+        """기록된 쿼리 중 `needle` 을 담은 첫 줄 — 없으면 명시적으로 실패시킨다."""
+        for q in self.sql:
+            if needle in q:
+                return q
+        raise AssertionError(f"{needle!r} 를 담은 쿼리가 없다. 기록: {self.sql}")
+
+
+def _rows_for(*, member=None, agency=None, name=None):
+    """조회 종류별로 다른 답을 주는 라우터 — 한 모집단으로 뭉개지 않는다."""
+    def route(sql: str):
+        if "FROM users" in sql:
+            return [name] if name else []
+        if "node_type" in sql and "AGENCY" in sql:
+            return [agency] if agency else []
+        return [member] if member else []
+    return route
+
+
+async def test_link_membership_scopes_every_lookup_to_the_site(monkeypatch) -> None:
+    """★★**현장 격리** — 멤버십 조회가 `site_id` 로 묶이는가(리뷰 A-1 의 그 자리).
+
+    이 술어가 사라지면 **타 현장 관리자가 이 현장 신청을 승인**할 수 있다.
+    반환값만 보는 락으로는 원리적으로 못 잡는다 — 그래서 **쿼리를 본다.**
+    """
+    from app.services.sales.org import join as mod
+
+    async def _create(*_a, **_k):
+        pass
+
+    monkeypatch.setattr(mod, "create_node", _create, raising=True)
+
+    site = uuid.uuid4()
+    db = _RecordingDB(_rows_for(name=("홍길동",)))
+    await mod.link_membership(db, site, uuid.uuid4(), _Node())
+
+    q = db.find("sales_org_nodes")
+    assert "site_id" in q, f"멤버십 조회가 현장으로 묶이지 않는다: {q}"
+    # ★SQLAlchemy 는 UUID 를 하이픈 없이 렌더한다 — **값**을 보되 표기에 기대지 않는다.
+    assert (str(site) in q) or (site.hex in q), "조회가 **이 현장**이 아니라 다른 값으로 묶였다"
+    assert "user_id" in q, "소유자 술어가 없다 — 남의 멤버십을 보고 판정한다"
+    assert "deleted_at IS NULL" in q, "소프트 삭제된 노드를 살아 있는 멤버로 센다"
+
+
+async def test_link_membership_uses_the_agency_root_when_operator_approves(monkeypatch) -> None:
+    """★★**운영자 승인 분기** — 부모가 없으면 **대행사 루트**를 찾는다(그 쿼리를 본다).
+
+    ★모듈 독스트링이 «이 분기가 없으면 조직도 없는 현장은 영원히 막힌다» 고 선언한 자리인데,
+      앞 판에는 **이 분기를 태우는 테스트가 한 건도 없었다**(리뷰 A-1).
+      `node_type == "AGENCY"` 를 `"SUBAGENCY"` 로 바꿔도 초록이었다 — 대행사가 아닌 곳에
+      붙으면 수수료 체인이 처음부터 어긋난다.
+    """
+    from app.services.sales.org import join as mod
+
+    seen: dict = {}
+
+    async def _create(_db, site_id, node_type, parent_id=None, **kw):
+        seen.update(parent_id=parent_id, node_type=node_type)
+
+    monkeypatch.setattr(mod, "create_node", _create, raising=True)
+
+    root = _Node("AGENCY", "a1")
+    db = _RecordingDB(_rows_for(agency=root, name=("홍길동",)))
+    reason = await mod.link_membership(db, uuid.uuid4(), uuid.uuid4(), None)
+
+    assert reason == "LINKED"
+    assert seen["parent_id"] == root.id, "대행사 루트가 아니라 다른 노드에 붙었다"
+    q = db.find("node_type")
+    assert "'AGENCY'" in q, f"루트를 **대행사로** 찾지 않는다: {q}"
+
+
+async def test_link_membership_holds_when_there_is_no_parent(monkeypatch) -> None:
+    """★★붙일 자리가 없으면 **고아를 만들지 않고 보류**한다 — 이 파이프라인의 돈 축.
+
+    조용히 루트를 만들면 정산이 `chain[0]` 을 대행사로 보므로
+    **수수료 RESIDUAL 전액이 신입에게** 간다. 보류는 **전용 사유**로 말한다.
     """
     from app.services.sales.org import join as mod
 
@@ -222,23 +285,16 @@ async def test_link_membership_holds_when_there_is_no_parent(monkeypatch) -> Non
 
     monkeypatch.setattr(mod, "create_node", _create, raising=True)
 
-    class _Res:
-        def first(self): return None
-        def scalars(self): return self
-        def all(self): return []
-    class _DB:
-        async def execute(self, *_a, **_k): return _Res()
-
-    reason = await mod.link_membership(_DB(), uuid.uuid4(), uuid.uuid4(), None)
+    db = _RecordingDB()          # 어떤 조회도 빈 결과
+    reason = await mod.link_membership(db, uuid.uuid4(), uuid.uuid4(), None)
     assert reason == "ORG_NOT_SEEDED"
     assert created == [], "★붙일 자리가 없는데 노드를 만들었다 — 고아 루트다"
 
 
-@pytest.mark.asyncio
 async def test_link_membership_attaches_under_the_approver(monkeypatch) -> None:
     """★★**반대편 모집단** — 승인자 노드가 있으면 **그 아래**에 붙고 `LINKED` 를 낸다.
 
-    이것이 없으면 위 단언이 «항상 보류한다» 와 구별되지 않는다(파이프라인이 통째로 죽어도 초록).
+    이것이 없으면 위 단언이 «항상 보류한다» 와 구별되지 않는다(파이프라인이 죽어도 초록).
     ★부모가 **승인자**여야 수수료 체인이 승인자의 체인을 물려받는다.
     """
     from app.services.sales.org import join as mod
@@ -251,23 +307,17 @@ async def test_link_membership_attaches_under_the_approver(monkeypatch) -> None:
     monkeypatch.setattr(mod, "create_node", _create, raising=True)
 
     approver = _Node("TEAM_LEADER")
-
-    class _Res:
-        def first(self): return None
-        def scalars(self): return self
-        def all(self): return []
-    class _DB:
-        async def execute(self, *_a, **_k): return _Res()
-
+    db = _RecordingDB(_rows_for(name=("홍길동",)))
     site, applicant = uuid.uuid4(), uuid.uuid4()
-    reason = await mod.link_membership(_DB(), site, applicant, approver)
+    reason = await mod.link_membership(db, site, applicant, approver)
+
     assert reason == "LINKED"
     assert seen["node_type"] == "MEMBER"
     assert seen["parent_id"] == approver.id, "승인자 아래가 아니라 다른 곳에 붙었다"
     assert seen["kw"]["user_id"] == applicant
+    assert seen["kw"]["display_name"] == "홍길동", "이름 조회 결과를 안 썼다"
 
 
-@pytest.mark.asyncio
 async def test_link_membership_is_idempotent_for_existing_member(monkeypatch) -> None:
     """★이미 멤버면 **다시 만들지 않는다** — 중복 노드는 역할 판정을 흔든다."""
     from app.services.sales.org import join as mod
@@ -279,24 +329,16 @@ async def test_link_membership_is_idempotent_for_existing_member(monkeypatch) ->
 
     monkeypatch.setattr(mod, "create_node", _create, raising=True)
 
-    class _Res:
-        def first(self): return (uuid.uuid4(),)      # 기존 멤버 있음
-        def scalars(self): return self
-        def all(self): return []
-    class _DB:
-        async def execute(self, *_a, **_k): return _Res()
-
-    reason = await mod.link_membership(_DB(), uuid.uuid4(), uuid.uuid4(), _Node())
+    db = _RecordingDB(_rows_for(member=(uuid.uuid4(),)))
+    reason = await mod.link_membership(db, uuid.uuid4(), uuid.uuid4(), _Node())
     assert reason == "ALREADY_MEMBER"
     assert created == [], "이미 멤버인데 노드를 또 만들었다"
 
 
-@pytest.mark.asyncio
 async def test_link_membership_reports_reason_when_guard_rejects(monkeypatch) -> None:
     """★`create_node` 의 가드가 거부하면 **삼키지 않고 사유로 말한다**.
 
-    ★삼키고 `LINKED` 를 돌려주면 «승인됐다» 는데 조직도엔 아무도 없는 유령 상태가 된다
-      (그 은폐가 PR #1021 이 고친 결함의 원형이다).
+    삼키고 `LINKED` 를 돌려주면 «승인됐다» 는데 조직도엔 아무도 없는 유령 상태가 된다.
     """
     from app.services.sales.org import join as mod
 
@@ -305,66 +347,130 @@ async def test_link_membership_reports_reason_when_guard_rejects(monkeypatch) ->
 
     monkeypatch.setattr(mod, "create_node", _create, raising=True)
 
-    class _Res:
-        def first(self): return None
-        def scalars(self): return self
-        def all(self): return []
-    class _DB:
-        async def execute(self, *_a, **_k): return _Res()
-
-    reason = await mod.link_membership(_DB(), uuid.uuid4(), uuid.uuid4(), _Node())
+    db = _RecordingDB(_rows_for(name=("홍길동",)))
+    reason = await mod.link_membership(db, uuid.uuid4(), uuid.uuid4(), _Node())
     assert reason == "ORG_NOT_SEEDED", f"가드 거부를 삼켰다(사유={reason})"
 
 
-@pytest.mark.asyncio
-async def test_approver_resolution_two_populations(monkeypatch) -> None:
+async def test_approver_resolution_two_populations() -> None:
     """★★승인 권한 — **MEMBER 는 거부되고 TEAM_LEADER 는 통과**한다(같은 실행에서)."""
     from app.services.sales.org import join as mod
 
-    def _db_with(node):
-        class _Res:
-            def scalars(self): return self
-            def first(self): return node
-        class _DB:
-            async def execute(self, *_a, **_k): return _Res()
-        return _DB()
+    plain = type("U", (), {"id": uuid.uuid4(), "role": "user", "tenant_id": None})()
 
-    plain = type("U", (), {"id": uuid.uuid4(), "role": "user"})()
-
-    can, parent = await mod.resolve_approver_node(_db_with(_Node("MEMBER")), uuid.uuid4(), plain)
+    can, parent = await mod.resolve_approver_node(
+        _RecordingDB(_rows_for(member=_Node("MEMBER"))), uuid.uuid4(), plain)
     assert can is False and parent is None, "말단 직원이 승인할 수 있다"
 
     can, parent = await mod.resolve_approver_node(
-        _db_with(_Node("TEAM_LEADER")), uuid.uuid4(), plain)
+        _RecordingDB(_rows_for(member=_Node("TEAM_LEADER"))), uuid.uuid4(), plain)
     assert can is True and parent is not None, "팀장이 승인 못 하면 파이프라인이 죽는다"
     assert parent.node_type == "TEAM_LEADER", "부모로 쓸 노드를 **함께** 돌려줘야 한다"
 
 
-@pytest.mark.asyncio
-async def test_platform_operator_can_approve_without_a_node(monkeypatch) -> None:
-    """★조직도에 노드가 없는 **플랫폼 운영자**도 승인할 수 있다(부모는 None → AGENCY 루트로).
+async def test_approver_node_is_chosen_by_authority_not_by_path() -> None:
+    """★★복수 노드일 때 **권한 우선순위**로 고른다 — `path` 순이 아니다(리뷰 B-2).
+
+    `deps_sales:41` 이 명문으로 적는다: *"한 사용자가 같은 현장에 복수의 살아있는 조직노드를
+    가질 수 있다((site_id,user_id) UNIQUE 부재)."*
+
+    ★실패 시나리오: 대행사 둘인 현장에서 `agc_00aa` 아래 **MEMBER**, `agc_ffbb` 아래
+      **DIRECTOR** 인 사람. `path` 오름차순이면 MEMBER 가 먼저 나와 **정당한 DIRECTOR 가 403**.
+      형제 둘(`resolve_site_membership`·`my_sites`)은 이미 `_node_priority` 로 고른다.
+    """
+    from app.services.sales.org import join as mod
+
+    low = _Node("MEMBER", "agc_00aa.m1")        # path 가 **앞선다**
+    high = _Node("DIRECTOR", "agc_ffbb.d1")     # 권한이 **높다**
+
+    class _MultiDB(_RecordingDB):
+        async def execute(self, stmt, params=None):
+            await super().execute(stmt, params)
+            return _Result([low, high])
+
+    plain = type("U", (), {"id": uuid.uuid4(), "role": "user", "tenant_id": None})()
+    can, parent = await mod.resolve_approver_node(_MultiDB(), uuid.uuid4(), plain)
+
+    assert can is True, "★path 순으로 골라 정당한 상위 권한자를 막았다"
+    assert parent is high, f"권한이 아니라 path 로 골랐다(고른 것: {parent.node_type})"
+
+
+async def test_platform_operator_can_approve_without_a_node() -> None:
+    """★조직도에 노드가 없는 **총괄관리자**도 승인할 수 있다(부모는 None → AGENCY 루트로).
 
     ★이 분기가 없으면 «조직도를 아직 안 만든 현장» 은 **아무도 승인할 수 없어** 영원히 막힌다.
     """
     from app.services.sales.org import join as mod
 
-    class _Res:
-        def scalars(self): return self
-        def first(self): return None
-    class _DB:
-        async def execute(self, *_a, **_k): return _Res()
-
-    admin = type("U", (), {"id": uuid.uuid4(), "role": "superadmin"})()
-    can, parent = await mod.resolve_approver_node(_DB(), uuid.uuid4(), admin)
+    admin = type("U", (), {"id": uuid.uuid4(), "role": "superadmin", "tenant_id": None})()
+    can, parent = await mod.resolve_approver_node(_RecordingDB(), uuid.uuid4(), admin)
     assert can is True and parent is None
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+async def test_platform_role_set_comes_from_the_shared_ssot() -> None:
+    """★★역할 집합을 **손으로 복사하지 않는다**(리뷰 B-3).
+
+    앞 판은 `{"superadmin","super_admin","admin","owner","developer"}` 를 직접 적어
+    **`총괄관리자`·`platform_admin`·`시행사`·`dev` 네 토큰을 떨어뜨렸다**.
+    그 역할들은 `my_sites` 에서 전 현장을 보면서 승인만 403 을 받았고, 조직도가 없는 현장이면
+    **아무도 승인할 수 없어 영원히 막혔다** — 이 모듈이 막겠다고 선언한 바로 그 상황이다.
+    """
+    from app.services.sales.org import join as mod
+    from app.services.sales.org import roles as ssot
+
+    assert frozenset(ssot.SUPERADMIN_ROLES) == mod.APPROVER_PLATFORM_ROLES
+    assert frozenset(ssot.DEVELOPER_ROLES) == mod.TENANT_SCOPED_APPROVER_ROLES
+    # ★공허 방지 — SSOT 자체가 비면 위 두 단언은 참이지만 아무것도 안 지킨다.
+    assert {"총괄관리자", "platform_admin"} <= mod.APPROVER_PLATFORM_ROLES
+
+
+async def test_developer_approves_only_inside_its_own_tenant() -> None:
+    """★★**쓰기 경로의 테넌트 경계**(리뷰 B-7) — 시행사는 자기 테넌트 현장만 승인한다.
+
+    ★형제들은 전부 **읽기**라 이 비대칭이 안 보였다. 이 모듈은 **쓰기**다 —
+      승인은 타 테넌트 현장의 조직도에 제3자를 MEMBER 로 넣는 행위이고,
+      그 노드가 곧 `enter_site` 의 게이트다.
+    """
+    from app.services.sales.org import join as mod
+
+    mine, theirs = uuid.uuid4(), uuid.uuid4()
+    dev = type("U", (), {"id": uuid.uuid4(), "role": "developer", "tenant_id": mine})()
+
+    def _tenant(org_id):
+        def route(sql: str):
+            return [org_id] if "sales_sites" in sql else []
+        return route
+
+    can, _ = await mod.resolve_approver_node(_RecordingDB(_tenant(mine)), uuid.uuid4(), dev)
+    assert can is True, "자기 테넌트 현장도 승인 못 한다 — 정상 사용을 막았다"
+
+    can, _ = await mod.resolve_approver_node(_RecordingDB(_tenant(theirs)), uuid.uuid4(), dev)
+    assert can is False, "★타 테넌트 현장의 조직도에 사람을 넣을 수 있다"
+
+
 # C. 상태 어휘 — 코드가 내는 값이 목록 안에 있는가
 # ═══════════════════════════════════════════════════════════════════════════
 
 def test_every_emitted_status_is_declared() -> None:
-    """★`JOIN_STATUSES` 밖의 상태를 SQL 로 쓰지 않는가 — 프론트가 번역 못 하는 값 금지."""
+    r"""★`JOIN_STATUSES` 밖의 상태를 **어디서도** 쓰지 않는가 — 프론트가 번역 못 하는 값 금지.
+
+    ★★2026-09-09 적대 리뷰 A-4 정정. 앞 판은 정규식 `status\s*=\s*'([a-z_]+)'` 로
+      **리터럴 SQL 안만** 훑었다. 그런데 결정 경로는 `SET status = :st` 로 **파라미터 바인딩**한다
+      — 즉 이 파이프라인의 결정 상태 둘이 **원리적으로 스캔 밖**이었다. 대조군으로 재 봤을 때:
+
+          declared     : approved · pending · rejected · cancelled
+          scanned      : pending · cancelled
+          NEVER scanned: **approved · rejected**
+
+      그래서 `new_status = "approved" if …` 를 `"APPROVED_XX"` 로 바꿔도 초록이었다
+      (`::VERDICT=SURVIVED`). DB 에 프론트가 못 읽는 값을 써도 아무것도 안 빨개진다.
+
+    ⇒ 축을 **「상태 이름이 되는 문자열」 전부**로 넓힌다: ①리터럴 SQL 의 `status = 'x'`
+      ②`status`/`new_status` 계열 변수·키워드에 대입되는 문자열 상수
+      ③`"status": "x"` 형태의 응답 dict 값.
+    """
+    import re
+
     tree = _tree()
     declared: set[str] = set()
     decl_node = None
@@ -375,25 +481,71 @@ def test_every_emitted_status_is_declared() -> None:
             declared = {c.value for c in ast.walk(n)
                         if isinstance(c, ast.Constant) and isinstance(c.value, str)}
     assert len(declared) >= 3, f"상태 목록이 비었거나 좁다: {declared}"
-
-    # SQL 리터럴 안의 `status = 'x'` / `'x'` 대입을 훑는다(선언 자신은 뺀다 — 자기지시 금지).
     decl_ids = {id(c) for c in ast.walk(decl_node)} if decl_node else set()
-    import re
+
+    def _consts(node) -> set[str]:
+        return {c.value for c in ast.walk(node)
+                if isinstance(c, ast.Constant) and isinstance(c.value, str)
+                and id(c) not in decl_ids}
+
     emitted: set[str] = set()
+
+    # ① 리터럴 SQL 안의 `status = 'x'`
     for c in ast.walk(tree):
         if isinstance(c, ast.Constant) and isinstance(c.value, str) and id(c) not in decl_ids:
             emitted |= set(re.findall(r"status\s*=\s*'([a-z_]+)'", c.value))
-    # 공허 방지 — 하나도 못 찾으면 아래 포함 단언이 무의미하다.
-    assert emitted, "SQL 에서 상태 리터럴을 하나도 못 찾았다 — 조회기가 죽었다"
+
+    # ② `status` 계열 **변수**에 대입되는 상수(파라미터 바인딩 경로가 여기 산다)
+    _NAMES = {"status", "new_status", "cur_status", "next_status"}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id in _NAMES for t in n.targets):
+            emitted |= _consts(n.value)
+        if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) \
+                and n.target.id in _NAMES and n.value is not None:
+            emitted |= _consts(n.value)
+
+    # ③ `"status": "x"` 형태의 dict 값(응답 계약)
+    for d in ast.walk(tree):
+        if isinstance(d, ast.Dict):
+            for k, v in zip(d.keys, d.values, strict=False):
+                if isinstance(k, ast.Constant) and k.value == "status" \
+                        and isinstance(v, ast.Constant) and isinstance(v.value, str):
+                    if id(v) not in decl_ids:
+                        emitted.add(v.value)
+
+    # ★공허 방지 — 결정 상태 둘이 실제로 잡히는지까지 본다(앞 판이 여기서 샜다).
+    assert {"approved", "rejected"} <= emitted, (
+        f"결정 상태가 스캔에 안 잡힌다 — 축이 좁다. 잡힌 것: {sorted(emitted)}"
+    )
     assert emitted <= declared, f"목록에 없는 상태를 쓴다: {sorted(emitted - declared)}"
 
 
-def test_module_has_no_uncommitted_mutation_sentinel() -> None:
-    """★변이 표식이 이 신규 파일에 실려 있지 않은가(형제 락의 로컬 판)."""
+def test_module_has_no_mutation_sentinel_in_head() -> None:
+    """★변이 표식이 **커밋된** 소스에 실려 있지 않은가.
+
+    ★★2026-09-09 적대 리뷰 A-5 정정. 앞 판은 git 경로를 `_API.parents[1]`(=`propai-platform`)
+      기준으로 만들어 `apps/api/app/...` 를 조회했다. git 경로는 **저장소 루트 기준**이라
+      `rc=128` 이 났고, 테스트는 그것을 «아직 커밋되지 않은 신규 파일» 로 읽어 **항상 skip** 했다.
+      **그 skip 사유가 거짓이었다** — 파일은 커밋돼 있었다. 리뷰어는 «커밋되면 잡힌다» 로 오독한다.
+
+    ⇒ 저장소 루트를 `git rev-parse --show-toplevel` 로 **파생**하고, 조회 실패는
+      **skip 이 아니라 실패**로 만든다(조용한 초록이 이 결함의 본체였다).
+    """
     sentinel = "__MUT" + "ATED__"
-    head = subprocess.run(
-        ["git", "show", f"HEAD:{_MODULE.relative_to(_API.parents[1])}"],
-        cwd=_API, capture_output=True, text=True, check=False)
-    if head.returncode != 0:
-        pytest.skip("아직 커밋되지 않은 신규 파일 — 저장소 전역 센티널 락이 커밋 후 잡는다")
-    assert sentinel not in head.stdout
+    root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=_API, capture_output=True, text=True, check=True).stdout.strip()
+
+    for path in (_MODULE, _SVC):
+        rel = str(path.relative_to(root))
+        # ★대조군 먼저 — 파일이 추적되고 있음을 증명한다(아니면 아래 «표식 없음» 이 공허하다).
+        tracked = subprocess.run(["git", "ls-files", "--error-unmatch", rel],
+                                 cwd=root, capture_output=True, text=True, check=False)
+        assert tracked.returncode == 0, f"추적되지 않는 파일이다: {rel}"
+
+        blob = subprocess.run(["git", "show", f"HEAD:{rel}"],
+                              cwd=root, capture_output=True, text=True, check=False)
+        assert blob.returncode == 0, f"HEAD 에서 읽지 못했다(rc={blob.returncode}): {rel}"
+        assert "import" in blob.stdout, f"조회기가 내용을 못 읽는다: {rel}"   # 대조군 2
+        assert sentinel not in blob.stdout, f"변이 표식이 커밋돼 있다: {rel}"

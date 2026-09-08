@@ -47,6 +47,7 @@ from app.api.endpoints.sales.market import _LINKED_REASONS
 # ★판정은 **서비스 층**에 산다(`org/join.py`) — 라우터에 두면 FastAPI 의존 때문에
 #   아무도 태울 수 없다(PR #1021 에서 정확히 그 형태로 데였다). 여기 남는 것은 HTTP 매핑뿐이다.
 from app.services.sales.org.join import link_membership, resolve_approver_node
+from app.services.sales.transition import claim_status_transition
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
 
 site_join_router = APIRouter(tags=["sales-join"])
@@ -184,7 +185,11 @@ async def create_join_request(site_id: uuid.UUID, body: JoinRequestBody,
         SalesOrgNode.active.is_(True),
         SalesOrgNode.deleted_at.is_(None)))).first()
     if already:
-        return {"status": "already_member", "site_id": str(site_id), "request_id": None}
+        # ★`status` 는 **행 상태**의 어휘다(`JOIN_STATUSES`). 「이미 멤버」는 행이 아예 없는
+        #   **처리 결과**라 같은 키에 실으면 두 어휘가 섞인다 — 락이 그 혼선을 짚었다(2026-09-09).
+        #   ⇒ 결과는 전용 필드로 말한다. 행이 없으면 `status` 는 `None` 이다.
+        return {"status": None, "already_member": True,
+                "site_id": str(site_id), "request_id": None}
 
     existing = (await db.execute(text(
         "SELECT id FROM sales_site_join_requests "
@@ -192,15 +197,27 @@ async def create_join_request(site_id: uuid.UUID, body: JoinRequestBody,
         {"s": str(site_id), "u": str(user.id)})).first()
     if existing:
         # ★새로 만들지 않는다. 같은 요청을 두 번 눌러도 대기열이 부풀지 않는다.
-        return {"status": "pending", "site_id": str(site_id),
+        return {"status": "pending", "already_member": False, "site_id": str(site_id),
                 "request_id": str(existing[0]), "idempotent": True}
 
+    # ★`ON CONFLICT DO NOTHING` — SELECT 와 INSERT 사이에 남이 끼어들면(두 탭·두 기기)
+    #   부분 유니크 인덱스가 `IntegrityError` 를 던져 **정당한 재전송이 500** 이 됐다.
+    #   («유일성 제약은 정당한 멱등 재전송을 거부한다» — 저장소가 이미 데인 형태.)
     row = (await db.execute(text(
         "INSERT INTO sales_site_join_requests (site_id, user_id, message) "
-        "VALUES (:s, :u, :m) RETURNING id"),
+        "VALUES (:s, :u, :m) ON CONFLICT DO NOTHING RETURNING id"),
         {"s": str(site_id), "u": str(user.id), "m": body.message})).first()
+    if row is None:
+        # 경쟁에서 졌다 — 남이 만든 그 신청을 **그대로 돌려준다**(터뜨리지 않는다).
+        row = (await db.execute(text(
+            "SELECT id FROM sales_site_join_requests "
+            "WHERE site_id = :s AND user_id = :u AND status = 'pending'"),
+            {"s": str(site_id), "u": str(user.id)})).first()
+        await db.commit()
+        return {"status": "pending", "already_member": False, "site_id": str(site_id),
+                "request_id": str(row[0]) if row else None, "idempotent": True}
     await db.commit()
-    return {"status": "pending", "site_id": str(site_id),
+    return {"status": "pending", "already_member": False, "site_id": str(site_id),
             "request_id": str(row[0]), "idempotent": False}
 
 
@@ -295,10 +312,18 @@ async def decide_join_request(request_id: uuid.UUID, body: DecideBody,
     if cur_status != "pending":
         raise HTTPException(409, f"이미 처리된 신청입니다(현재 상태: {cur_status})")
 
-    await db.execute(text(
-        "UPDATE sales_site_join_requests SET status = :st, decided_by = :by, "
-        "  decided_at = now(), decision_note = :n, updated_at = now() WHERE id = :i"),
-        {"st": new_status, "by": str(user.id), "n": body.note, "i": str(request_id)})
+    # ★★**CAS** — 읽은 상태가 그대로일 때만 바꾼다(적대 리뷰 B-1).
+    #   종전엔 `WHERE id` 만 걸어, 두 승인자가 동시에 눌러도 **둘 다 통과**했고 둘 다
+    #   멤버십 연결로 들어가 `create_node` 가 **두 번** 실행됐다.
+    #   `sales_org_nodes` 에 `(site_id,user_id)` UNIQUE 가 없어(`deps_sales:41`) 조용히 성공한다.
+    claimed = await claim_status_transition(
+        db, "sales_site_join_requests", request_id,
+        expected_status="pending", new_status=new_status,
+        extra_set=", decided_by = :by, decided_at = now(), decision_note = :n",
+        params={"by": str(user.id), "n": body.note})
+    if not claimed:
+        await db.rollback()
+        raise HTTPException(409, "이미 다른 사람이 이 신청을 처리했습니다")
 
     reason = "DECLINED"
     if body.approve:
