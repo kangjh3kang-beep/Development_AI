@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest";
 import {
   LINKED_REASONS,
   MEMBERSHIP_REASONS,
+  SILENT_REASONS,
   membershipNote,
   type MembershipReason,
 } from "../membership-reason";
@@ -53,21 +54,33 @@ describe("membership-reason — 백엔드 SSOT 와의 파생 관계", () => {
 });
 
 describe("membershipNote — 사유마다 다른 말을 하는가", () => {
-  /** 연결 실패/보류 사유 — 이들만 사람에게 문구를 보여야 한다. */
-  const NOT_LINKED = MEMBERSHIP_REASONS.filter(
-    (r) => !(LINKED_REASONS as readonly string[]).includes(r),
+  /** 사람에게 문구를 **보여야 하는** 사유 = 전체 − 의도적으로 조용한 것. */
+  const SPEAKING = MEMBERSHIP_REASONS.filter(
+    (r) => !(SILENT_REASONS as readonly string[]).includes(r),
   );
 
-  it("연결 실패·보류 사유는 **전부** 비어 있지 않은 문구를 낸다", () => {
-    expect(NOT_LINKED.length).toBeGreaterThanOrEqual(4); // 공허 방지
-    for (const r of NOT_LINKED) {
+  it("침묵 목록이 «빠뜨림» 을 위장하지 않는다 — 두 집합이 전체를 정확히 덮는다", () => {
+    // ★`SILENT_REASONS` 를 늘리면 그만큼 SPEAKING 이 줄어든다.
+    //   그 자체가 검토를 강제한다 — 침묵은 **선언해야** 얻는다.
+    expect(SPEAKING.length + SILENT_REASONS.length).toBe(MEMBERSHIP_REASONS.length);
+    expect(SPEAKING.length).toBeGreaterThanOrEqual(4); // 공허 방지
+    // 연결 성공 사유는 반드시 침묵 쪽에 있다.
+    for (const r of LINKED_REASONS) expect(SILENT_REASONS).toContain(r);
+  });
+
+  it("말해야 하는 사유는 **전부** 비어 있지 않은 문구를 낸다", () => {
+    for (const r of SPEAKING) {
       expect(membershipNote(r), `사유 ${r} 가 아무 말도 하지 않는다`).not.toBe("");
     }
   });
 
   it("★그 문구들이 서로 **다르다** — 하나로 뭉치면 나눈 의미가 없다", () => {
-    const notes = NOT_LINKED.map((r) => membershipNote(r));
+    const notes = SPEAKING.map((r) => membershipNote(r));
     expect(new Set(notes).size).toBe(notes.length);
+  });
+
+  it("조용한 사유는 **정말로** 조용하다(문구를 붙였다가 잊는 것도 결함)", () => {
+    for (const r of SILENT_REASONS) expect(membershipNote(r)).toBe("");
   });
 
   it("★★조직도 미시드는 «다시 승인하면 된다» 는 **조치**를 말한다", () => {
@@ -77,10 +90,6 @@ describe("membershipNote — 사유마다 다른 말을 하는가", () => {
     expect(note).toContain("다시 승인");
     // 반대편: 조직도를 안 쓰는 현장은 **조치를 권하지 않는다**(할 일이 없다).
     expect(membershipNote("ORG_TABLE_MISSING")).not.toContain("다시 승인");
-  });
-
-  it("연결 성공 사유는 아무 말도 하지 않는다(정상 흐름을 방해하지 않는다)", () => {
-    for (const r of LINKED_REASONS) expect(membershipNote(r)).toBe("");
   });
 
   it("★모르는 사유도 **말을 한다** — 침묵은 종전 결함 그 자체다", () => {

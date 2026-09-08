@@ -641,7 +641,11 @@ async def decide_application(application_id: uuid.UUID, body: DecideRequest,
         "UPDATE job_applications SET status = :st, updated_at = now() WHERE id = :id"),
         {"st": new_status, "id": str(application_id)})
 
-    membership_reason = "NOT_APPLICABLE"
+    # ★거절은 «해당 없음» 이 아니다 — 기계 변이가 이 줄의 생존으로 짚어 준 자리다(2026-09-08).
+    #   앞 판은 거절에도 `NOT_APPLICABLE`(현장 비연계 공고라 멤버십이 생길 일이 없다)을 실어,
+    #   **필드가 거짓말을 했다.** 화면이 accept 일 때만 읽으니 눈에 안 띄지만,
+    #   로그·감사로 이 값을 보는 쪽에는 «왜 안 붙었나» 가 틀린 답으로 남는다.
+    membership_reason = "DECLINED"
     if body.accept:
         membership_reason = await _link_membership_on_accept(
             db, site_id=row[5], applicant_user_id=row[2], post_kind=row[6], decider=user)
@@ -667,6 +671,7 @@ _MEMBERSHIP_REASONS = (
     "ORG_NOT_SEEDED",         # ★조치 가능 — 조직도를 시드하고 다시 승인하면 된다
     "ORG_TABLE_MISSING",      # 이 현장(설치)은 조직도 자체를 안 쓴다
     "IDEMPOTENT_NO_CHANGE",   # 이미 같은 상태라 결정 자체가 무변경이었다
+    "DECLINED",               # 승인이 아니라 **거절**이다(멤버십을 만들 이유가 없다)
 )
 _LINKED_REASONS = frozenset({"LINKED", "ALREADY_MEMBER"})
 

@@ -24,12 +24,26 @@ export const MEMBERSHIP_REASONS = [
   "ORG_NOT_SEEDED",
   "ORG_TABLE_MISSING",
   "IDEMPOTENT_NO_CHANGE",
+  "DECLINED",
 ] as const;
 
 export type MembershipReason = (typeof MEMBERSHIP_REASONS)[number];
 
 /** 연결된 것으로 치는 사유 — 백엔드 `_LINKED_REASONS` 와 같아야 한다. */
 export const LINKED_REASONS: readonly MembershipReason[] = ["LINKED", "ALREADY_MEMBER"];
+
+/**
+ * ★**의도적으로 말하지 않는** 사유 — 정상 흐름이라 승인자를 방해할 이유가 없다.
+ *
+ * 이 목록을 **명시**하는 이유: 「문구가 비었다」는 두 가지 뜻을 가질 수 있다 —
+ * ①일부러 조용하다 ②**빠뜨렸다**. 구별하지 않으면 새 사유를 추가하고 문구를 안 쓴 실수가
+ * «조용한 사유» 로 위장하고, 그러면 이 모듈이 생기기 전 상태로 조용히 되돌아간다.
+ */
+export const SILENT_REASONS: readonly MembershipReason[] = [
+  "LINKED",
+  "ALREADY_MEMBER",
+  "DECLINED", // 거절은 승인자가 의도한 결과다
+];
 
 const NOTES: Record<MembershipReason, string> = {
   LINKED: "",
@@ -40,6 +54,9 @@ const NOTES: Record<MembershipReason, string> = {
     "승인은 되었지만 이 현장에 조직도가 아직 없어 배치를 보류했습니다 — 조직도를 만든 뒤 다시 승인해 주세요.",
   ORG_TABLE_MISSING: "이 현장은 조직도를 사용하지 않아 멤버십 배치는 건너뛰었습니다.",
   IDEMPOTENT_NO_CHANGE: "이미 처리된 신청이라 변경된 것이 없습니다.",
+  // 거절은 정상 흐름이라 승인자에게 경고를 띄우지 않는다 — 다만 **값은 거짓말하지 않는다**
+  // (로그·감사로 이 필드를 읽는 쪽에는 «해당 없음» 이 아니라 «거절» 로 남아야 한다).
+  DECLINED: "",
 };
 
 /**

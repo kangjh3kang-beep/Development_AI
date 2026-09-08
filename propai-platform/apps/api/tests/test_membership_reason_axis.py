@@ -110,6 +110,67 @@ def test_every_declared_reason_is_reachable() -> None:
     )
 
 
+def test_every_decide_response_carries_the_reason() -> None:
+    """★★**응답 계약 락** — `decide_application` 의 **모든** 반환이 사유를 싣는가.
+
+    ★기계 변이가 짚어 준 자리다(2026-09-08 · 60변이 중 생존 2건이 정확히 여기):
+
+        "membership_reason": membership_reason}        → 문자열 변경 ::VERDICT=SURVIVED
+        "membership_linked": False, "membership_reason": "IDEMPOTENT_NO_CHANGE"  → SURVIVED
+
+    즉 **키 이름을 바꾸거나 멱등 분기의 사유를 지워도** 아무것도 빨개지지 않았다.
+    프론트 테스트는 응답을 **목킹**하므로 백엔드의 실제 키를 태우지 않는다 —
+    저장소가 여러 번 데인 «양쪽을 각각 잠갔는데 사이가 비었다» 그 자리.
+
+    축은 **반환문**이다(파일도, 함수 존재도 아니다).
+    """
+    returns: list[dict[str, ast.expr]] = []
+    for node in ast.walk(_tree()):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "decide_application":
+            for r in ast.walk(node):
+                if isinstance(r, ast.Return) and isinstance(r.value, ast.Dict):
+                    returns.append({
+                        k.value: v
+                        for k, v in zip(r.value.keys, r.value.values, strict=False)
+                        if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                    })
+    # ★공허 진리 가드 — 반환을 하나도 못 찾으면 아래 루프가 통째로 안 돈다.
+    assert len(returns) >= 2, f"`decide_application` 의 dict 반환을 {len(returns)}개만 찾았다"
+
+    declared = set(_declared_reasons())
+    for i, keys in enumerate(returns):
+        assert "membership_reason" in keys, f"{i}번째 반환에 `membership_reason` 이 없다"
+        assert "membership_linked" in keys, f"{i}번째 반환에 `membership_linked` 가 없다"
+        val = keys["membership_reason"]
+        if isinstance(val, ast.Constant):  # 상수로 박힌 분기(멱등 등)
+            assert val.value in declared, (
+                f"{i}번째 반환이 목록에 없는 사유를 박았다: {val.value!r}"
+            )
+
+
+def test_reject_does_not_claim_not_applicable() -> None:
+    """★거절 경로가 «해당 없음» 이라고 **거짓말하지 않는가**.
+
+    앞 판은 `membership_reason = "NOT_APPLICABLE"` 을 기본값으로 두어, **거절**에도
+    «현장 비연계 공고라 멤버십이 생길 일이 없다» 는 뜻의 값이 실렸다.
+    화면은 accept 일 때만 읽으니 안 보이지만, 로그·감사로 이 값을 보는 쪽에는 **틀린 답**이 남는다.
+    """
+    for node in ast.walk(_tree()):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "decide_application":
+            for a in ast.walk(node):
+                if (
+                    isinstance(a, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == "membership_reason" for t in a.targets)
+                    and isinstance(a.value, ast.Constant)
+                ):
+                    assert a.value.value == "DECLINED", (
+                        f"거절 경로의 기본 사유가 {a.value.value!r} 다 — "
+                        "«승인이 아니라 거절이다» 를 말해야 한다."
+                    )
+                    return
+    raise AssertionError("거절 경로의 기본 사유 대입을 찾지 못했다 — 축이 죽었다")
+
+
 def test_linked_flag_is_derived_from_reason() -> None:
     """★`membership_linked` 를 **손으로 계산하지 않는다** — 사유와 갈릴 수 없어야 한다.
 
