@@ -2,9 +2,11 @@
 
 ■ 무엇이 있었나
 `land_price_index._sido_of` 가 축약키(`"전남"`)를 주소에 **부분문자열**로 찾았는데 정식 명칭
-`"전라남도"` 에는 그 축약형이 **연속으로 없다**(한글 음절 단위). 정식 시도 **17개 중 5개 실패**:
-충청북도 · 충청남도 · 전라남도 · 경상북도 · 경상남도.
-(전북·강원·제주는 **특별자치도 개칭** 덕에 우연히 통과했다.)
+`"전라남도"` 에는 그 축약형이 **연속으로 없다**(한글 음절 단위). 정본 표에서 파생한 정식 명칭 **20개 중 6개 실패**(★독립 리뷰 R3 LOW-2 정정 — 종전 산문은
+«17개 중 5개» 라 적었으나 파생 모집단은 20개이고 `"전라북도"` 도 실패한다. **락은 파생형이라
+20개를 다 태운다 — 테스트가 옳고 산문이 틀렸다**):
+충청북도 · 충청남도 · 전라남도 · **전라북도** · 경상북도 · 경상남도.
+(전북**특별자치도**·강원특별자치도·제주특별자치도는 **개칭** 덕에 우연히 통과한다.)
 
 그 `""` 를 받은 `reb_client.rate_series_from_rows` 가 **fail-open** 으로 전국+전 지역 혼합
 시계열을 돌려주고, 그것이 「R-ONE 지가변동률 **실데이터**」로 라벨링돼 감정평가 단가에 곱해졌다.
@@ -368,6 +370,11 @@ def test_time_adjust_actually_uses_the_address() -> None:
         ("경기도 성남시 분당구 1", "경기"),
         ("(우)13561 경기도 성남시 분당구", "경기"),
         ("13561 경기도 성남시 분당구", "경기"),
+        # ★독립 리뷰 R3 MEDIUM-5 가 놓친 표기로 지목한 4형태(실측으로 보강했다).
+        ("우)13561 경기도 성남시", "경기"),      # 한국에서 더 흔한 표기
+        ("[13561] 경기도 성남시", "경기"),
+        ("463-400 경기도 성남시", "경기"),        # 구 6자리 하이픈
+        ("13561, 경기도 성남시", "경기"),
         ("  경기도 성남시", "경기"),
         ("충청남도 천안시 서북구", "충남"),
     ],
@@ -453,7 +460,13 @@ async def test_regional_series_is_labeled_as_that_region(monkeypatch) -> None:
     out = await time_adjust_factor_async("경상남도 창원시 의창구 1")
     assert out["source"] == "R-ONE", out
     assert out.get("scope") == "경남", out
-    assert "경남" in out["rationale"], out["rationale"]
+    # ★★분기를 가르는 단언(독립 리뷰 R3 HIGH-1): 종전 단언 셋이 **양 분기에서 모두 참**이었다 —
+    #   `scope` 는 분기 **밖**에서 계산되고, 대체 라벨도 `{scope}`·`{sido}` 를 보간해 «경남» 을
+    #   담는다. 그래서 `if sido and scope == sido:` 를 `if False:` 로 바꿔도 전부 초록이었다
+    #   (내 산문이 내 단언을 공허하게 만든 형태 — 이 저장소가 이미 기록한 결함이다).
+    #   ⇒ **정직 분기에서만 참인 것**을 단언한다: 대체 문구가 **없어야** 한다.
+    assert "해당 지역 실데이터가 아닙니다" not in out["rationale"], out["rationale"]
+    assert "시계열이 없어" not in out["rationale"], out["rationale"]
 
 
 @pytest.mark.asyncio
@@ -633,6 +646,9 @@ async def test_housing_sibling_does_not_claim_regional_real_data(monkeypatch) ->
     _patch_statbl(monkeypatch, _many_months("경남") + _many_months("전국"))
     ok = await housing_time_adjust("경상남도 창원시 1")
     assert ok["source"] == "R-ONE" and ok.get("scope") == "경남", ok
+    # ★`basis` 까지 본다 — 종전엔 `source`·`scope` 만 봐서 분기를 무력화해도 초록이었다(R3 HIGH-1).
+    assert "해당 지역 실데이터가 아닙니다" not in ok["basis"], ok["basis"]
+    assert "시계열이 없어" not in ok["basis"], ok["basis"]
 
 
 @pytest.mark.asyncio
@@ -764,3 +780,52 @@ async def test_market_precision_demotes_only_on_contradiction(monkeypatch) -> No
     demoted = await _ta.resolve_time_adjustment("서울 강남구 1")
     assert demoted.status == FactStatus.UNKNOWN, demoted.status
     assert "아닙니다" in demoted.limitation, demoted.limitation
+
+
+# ─────────────────────────────────────────────────────────────
+# ★H4 — 배선을 **파생형 소스 락**으로 잠근다(호출부를 손으로 나열하지 않는다)
+#
+#   R2 가 «락이 `land_price_index` 안만 태워 한 층 짧다» 고 지적해 `desk_appraisal()` 층을
+#   잠갔더니, R3 가 **그 바깥 3곳**(다필지 PDF 라우터 · rough_feasibility · avm_vision)에서
+#   같은 변이가 생존함을 실증했다. **한 층씩 따라가면 다음 리뷰가 다음 층을 찾는다.**
+#   ⇒ 축을 «호출부 목록» 이 아니라 **«AST 로 파생한 전 호출부»** 로 올린다:
+#     주소를 받는 진입점들이 **주소를 실제로 넘기는가**(빈 리터럴이 아닌가)를 전수 단언한다.
+#   ★이것은 «불린다» 가 아니라 «무엇을 넘기는가» 를 본다 — 값이 죽으면 잡힌다.
+# ─────────────────────────────────────────────────────────────
+
+_ADDRESS_CONSUMERS = ("desk_appraisal", "time_adjust_factor_async", "housing_time_adjust")
+
+
+def test_every_call_site_passes_a_real_address_not_a_literal() -> None:
+    """★전 호출부(AST 파생)가 `address=` 에 **빈 리터럴을 넘기지 않는다**."""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "app"
+    offenders: list[str] = []
+    seen = 0
+    for py in root.rglob("*.py"):
+        try:
+            tree = ast.parse(py.read_text(encoding="utf-8"))
+        except SyntaxError:  # pragma: no cover - 파싱 불가 파일은 건너뛴다
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            name = getattr(fn, "attr", None) or getattr(fn, "id", None)
+            if name not in _ADDRESS_CONSUMERS:
+                continue
+            seen += 1
+            # 위치인자 첫 번째 또는 address= 키워드
+            arg = next((k.value for k in node.keywords if k.arg == "address"), None)
+            if arg is None and node.args:
+                arg = node.args[0]
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and not arg.value.strip():
+                offenders.append(f"{py.relative_to(root)}:{node.lineno} {name}(address='')")
+    # ★공허 방지 — 호출부를 실제로 찾았는가(0이면 이 락이 무의미하다).
+    assert seen >= 5, f"호출부를 {seen}건만 찾았다 — AST 수집기가 죽었거나 이름이 바뀌었다"
+    assert not offenders, (
+        "주소를 받는 진입점이 **빈 리터럴**을 넘긴다 — 모든 필지가 같은 값을 받게 된다:\n  "
+        + "\n  ".join(offenders)
+    )

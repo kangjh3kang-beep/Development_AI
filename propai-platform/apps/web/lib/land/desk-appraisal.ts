@@ -52,7 +52,9 @@ export type SubjectConsistency = {
   basis: string;
 };
 
-type Stat = { source?: string; pct?: number; basis?: string; rate?: number; factor?: number } | null;
+// ★`scope` = R-ONE 값이 **어느 범위**에서 나왔는가(요청 시·도 / 전국 대체). 표시 문구와 분리된
+//   기계 판독 축이다 — `source` 는 렌더 게이트라 `"R-ONE"` 로 고정돼 있어 이 구분을 못 나른다.
+type Stat = { source?: string; pct?: number; basis?: string; rate?: number; factor?: number; scope?: string } | null;
 
 /**
  * 탁상감정 응답 계약(DeskAppraisalReportClient 의 Result 를 이관 — 변경 없음).

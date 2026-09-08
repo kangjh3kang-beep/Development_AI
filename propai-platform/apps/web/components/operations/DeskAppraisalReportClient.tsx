@@ -570,7 +570,10 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
                 {res.time_adjust_basis && <li>· 시점수정: {res.time_adjust_basis}</li>}
                 {ms.cap_rate?.source === "R-ONE" && <li>· 자본환원율(R-ONE 실측): {ms.cap_rate.pct}% {ms.cap_rate.basis ? `— ${ms.cap_rate.basis}` : ""}</li>}
                 {ms.jeonse_conversion_rate?.source === "R-ONE" && <li>· 전월세전환율(R-ONE 실측): {ms.jeonse_conversion_rate.pct}%</li>}
-                {ms.housing_time_adjust?.source === "R-ONE" && <li>· 주택가격지수 누적변동: {ms.housing_time_adjust.factor}</li>}
+                {/* ★`basis` 를 함께 렌더한다(독립 리뷰 R3 HIGH-3). 종전에는 `factor` 만 찍어,
+                    요청 시·도가 아닌 **전국 대체 계수**가 아무 단서 없이 «주택가격지수 누적변동: 1.0243»
+                    으로 보였다. 바로 위 형제(cap_rate)는 이미 `basis` 를 렌더한다 — 같은 블록 안 비대칭이었다. */}
+                {ms.housing_time_adjust?.source === "R-ONE" && <li>· 주택가격지수 누적변동: {ms.housing_time_adjust.factor}{ms.housing_time_adjust.basis ? ` — ${ms.housing_time_adjust.basis}` : ""}</li>}
                 {!ms.rone_available && <li className="text-[var(--text-hint)]">· 시장통계: R-ONE 통계표 미설정 구간은 근사값 적용(관리자 설정 시 실데이터 전환).</li>}
               </ul>
 

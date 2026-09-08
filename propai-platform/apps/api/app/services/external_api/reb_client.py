@@ -194,6 +194,7 @@ def latest_value_from_rows(
     val_keys = ("DTA_VAL", "VALUE", "DATA_VALUE", "dtaVal")
     time_keys = ("WRTTIME_IDTFR_ID", "WRTTIME_DESC", "WRTTIME", "PRD_DE")
     best: tuple[str, float] | None = None
+    tied: set[float] = set()
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -205,9 +206,30 @@ def latest_value_from_rows(
         except (TypeError, ValueError):
             continue
         tval = str(next((row.get(k) for k in time_keys if row.get(k) not in (None, "")), ""))
-        if best is None or tval >= best[0]:
+        if best is None or tval > best[0]:
             best = (tval, val)
-    return (round(best[1], 4), best[0]) if best else None
+            tied = {round(val, 6)}
+        elif tval == best[0]:
+            # ★같은 시점에 여러 행이 매칭됐다 — 값이 갈리면 **고를 근거가 없다**.
+            tied.add(round(val, 6))
+    if best is None:
+        return None
+    if len(tied) > 1:
+        # ★★독립 리뷰 R3 HIGH-2(라이브 확증 2026-09-08): 후보 필드 집합으로 넓히면서
+        #   **카디널리티 과매칭**이 생겼다. 주택매매가격지수·전월세전환율 표는 한 (지역, 시점)에
+        #   **규모 구분 5행**이 있다(실측: `(서울, 202607)` → 5행). 종전 `tval >= best[0]` 은
+        #   동률에서 **마지막 행이 이겨** 행 순서에 따라 5.4 / 6.6 / 7.9 가 나왔고,
+        #   그 값이 보증금 환산 → NOI → 수익환원가액으로 흘러 화면에 «R-ONE 실측» 으로 찍혔다.
+        #   ⇒ **모호하면 거부한다.** 소비처는 문서화된 기본값으로 떨어지고 그것을 `[기본]` 으로
+        #     표기한다(정직). 값을 임의로 고르는 것보다 낫다.
+        #   ★개선 여지: 표가 «전체» 같은 집계 행을 명시하면 그것을 고를 수 있다 — 다만 그 표기가
+        #     표마다 같다는 근거가 없어(이 PR 이 배운 것) 지금은 거부한다.
+        logger.info(
+            "R-ONE 최신값 모호 — 같은 시점에 값이 다른 행이 여럿(거부)",
+            region=region_sido, wrttime=best[0], values=sorted(tied),
+        )
+        return None
+    return (round(best[1], 4), best[0])
 
 
 def rate_series_from_rows(
@@ -225,7 +247,14 @@ def rate_series_from_rows(
             if not isinstance(row, dict):
                 continue
             itm = str(row.get("ITM_NM") or "")
-            if itm and "변동" not in itm:   # '누계' 등 제외, 변동률만
+            # ★★주석 정정(독립 리뷰 R3 MEDIUM-6): 종전 주석은 *"'누계' 등 제외"* 라 했지만
+            #   `"누계변동률"` 은 `"변동"` 을 **포함해 통과한다** — 거짓 면역 주장이었다(§C-11).
+            #   그러면 한 (지역,시점)에 «당월변동률»·«누계변동률» 두 행이 잡혀 시계열이 배로 늘고
+            #   고유 기간이 모자라 `cumulative_factor` 가 **None** 으로 떨어진다(무고지 폴백).
+            #   ★라이브 `distinct_ITM_NM` 은 표마다 다르다(지가변동률=«변동률» 1종 · 주택지수=«지수»)
+            #     — **미측정 표가 있으므로** 이 필터를 좁히는 것은 별건으로 남긴다(그때 그 표를 재라).
+            #   지금 보장하는 것은 «변동» 을 **포함하지 않는 항목은 제외» 뿐이다.
+            if itm and "변동" not in itm:
                 continue
             # ★★시도 행은 **정확일치**로 고른다(2026-09-08). 종전에는 `region_filter not in
             #   region_txt` 였는데 `region_txt` 에 `CLS_FULLNM`(**계층 경로**)이 섞여 있어

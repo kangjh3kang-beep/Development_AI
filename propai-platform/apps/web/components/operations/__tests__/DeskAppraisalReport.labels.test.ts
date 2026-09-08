@@ -118,4 +118,28 @@ describe("탁상감정 보고서 라벨", () => {
     expect(src).toContain('cap_rate?.source === "R-ONE"');
     expect(src).toContain("!ms.rone_available");
   });
+
+  // ★★독립 리뷰 R3 HIGH-3 회귀 락(2026-09-08)
+  //   백엔드가 「전국 대체」를 scope + basis 로 정직하게 말하도록 고쳤는데, 이 줄은 factor 만
+  //   렌더해 **정직성이 화면에 도달하지 않았다** — 요청 시·도가 아닌 계수가 아무 단서 없이
+  //   「주택가격지수 누적변동: 1.0243」으로 보였다.
+  //   ★바로 위 형제(cap_rate)는 이미 basis 를 렌더한다 — **같은 블록 안의 비대칭**이었다.
+  it("주택가격지수 줄이 basis(정직 고지)를 함께 렌더한다 — 형제와 대칭", () => {
+    const lines = code().split("\n");
+    const line = lines.find((l) => l.includes("housing_time_adjust?.source") && l.includes("<li>"));
+    expect(line, "housing_time_adjust 렌더 줄을 못 찾았다(수집기 사망)").toBeTruthy();
+    expect(line!).toContain("housing_time_adjust.basis");
+    // 대조군 — 형제가 실제로 basis 를 렌더하는가(이 락의 기준점).
+    const sibling = lines.find((l) => l.includes("cap_rate?.source") && l.includes("<li>"));
+    expect(sibling, "형제 줄을 못 찾았다").toBeTruthy();
+    expect(sibling!).toContain("cap_rate.basis");
+  });
+
+  it("Stat 타입이 scope 를 담는다 — 기계 판독 축이 프론트에 도달 가능해야 한다", () => {
+    const ts = fs.readFileSync(
+      path.resolve(__dirname, "..", "..", "..", "lib", "land", "desk-appraisal.ts"),
+      "utf8",
+    );
+    expect(ts).toMatch(/type Stat = \{[^}]*scope\?: string/);
+  });
 });

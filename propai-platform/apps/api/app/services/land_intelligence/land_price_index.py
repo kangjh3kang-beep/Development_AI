@@ -36,7 +36,12 @@ _DEFAULT_RATE = 0.018  # 전국 평균 근사
 #:   괄호 라벨·국가명은 **건드리지 않는다**(정본이 `startswith` 인 이유를 존중한다).
 #:   그래서 `(주)오케이 서울…` 은 여전히 해석되지 않는다 — **그것은 이 PR 이 좁힌 범위이고
 #:   base 대비 회귀다.** 아래 `xfail` 로 초록 안에 드러낸다(숨기지 않는다).
-_ADDR_POSTAL_PREFIX = re.compile(r"^\s*(?:\(\s*우\s*\)\s*)?\d{5,6}\s+(?=\S)")
+#: ★표기 4형태를 더 받는다(독립 리뷰 R3 MEDIUM-5 실측 — 종전 정규식이 놓쳤다):
+#:   `우)13561 …` (한국에서 더 흔하다) · `[13561] …` · `463-400 …`(구 6자리 하이픈) · `13561, …`
+#:   ★과함은 없다: 숫자열·괄호 안 숫자만 벗기므로 **시도명을 품을 수 없다**(반증 시도 실패).
+_ADDR_POSTAL_PREFIX = re.compile(
+    r"^\s*(?:\(\s*우\s*\)|우\s*\)|\[\s*\d{3}-?\d{2,3}\s*\])?\s*(?:\d{3}-\d{3}|\d{5,6})?\s*[,\s]\s*(?=\S)"
+)
 
 
 def _strip_address_prefix_noise(address: str) -> str:
@@ -142,11 +147,17 @@ async def time_adjust_factor_async(address: str = "", base_year: int = 2025) -> 
                             f"(요청 지역{f' {sido}' if sido else ''}의 시계열이 없어 {scope} 값을 적용 — "
                             f"해당 지역 실데이터가 아닙니다)"
                         )
-                        # ★★`source` 는 **"R-ONE" 그대로** 둔다(독립 리뷰 R2 MEDIUM-3).
-                        #   프론트가 `source === "R-ONE"` **정확일치**로 렌더 여부를 정하므로
-                        #   (`DeskAppraisalReportClient.tsx:571-573`), 동적 문자열로 바꾸면
-                        #   **그 줄이 화면에서 통째로 사라진다** — 「고쳤는데 안 보이는」 형태다.
-                        #   ⇒ 정직성은 **표시 문구와 분리된 `scope`** 가 나른다(기계 판독 축).
+                        # ★`source` 는 **"R-ONE" 그대로** 둔다.
+                        #   ★★좌표 정정(독립 리뷰 R3 MEDIUM-1): 종전 주석은 이 생산자의 출력이
+                        #     `DeskAppraisalReportClient.tsx:571-573` 의 렌더 게이트라고 인용했는데
+                        #     **틀렸다.** 이 함수의 출력은 `market_stats.land_time_adjust` 이고
+                        #     **프론트 소비처가 0건**이다(저장소가 `reb_statistics_service.py` 에
+                        #     «land_time_adjust 는 아직 소비처가 없지만» 이라 적어 두었다).
+                        #     실제 효과는 반대다 — `source` 를 바꾸면 `rone_available` 이 False 로
+                        #     떨어져 정직 고지가 **오히려 뜬다**.
+                        #   ⇒ 그래도 `"R-ONE"` 을 유지하는 이유는 **형제와 계약을 맞추기 위함**이다
+                        #     (`reb_statistics_service` 의 같은 주석은 옳다 — 그쪽은 실제 렌더 게이트다).
+                        #     정직성은 표시 문구와 분리된 **`scope`** 와 `rationale` 이 나른다.
                         source = "R-ONE"
                     return {"factor": f, "annual_rate": None, "elapsed_years": None,
                             "rationale": label, "source": source, "scope": scope}
