@@ -36,6 +36,7 @@ MEMBER 101건이 전부 깊이 2 이상 — 대조군이 이 0을 의미있게 �
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 import uuid
@@ -253,6 +254,32 @@ def _tracked_backend_sources() -> tuple[Path, list[str]]:
     return api_root, out
 
 
+def _sql_literals(src: str) -> list[str]:
+    """소스에서 **SQL 이 살 수 있는 문자열 리터럴만** 뽑는다(주석·독스트링 제외).
+
+    ★저장소 규율: *"소스 검사는 주석·문자열을 배제하고 실행되는 줄만 본다."*
+      여기서 «실행되는 줄» 은 곧 **`text("…")` 에 들어가는 리터럴**이다.
+      주석까지 세면 *"raw INSERT 를 쓰지 마라"* 라고 **경고하는 주석**이 위반으로 신고된다 —
+      가드의 위양성도 결함이고, 그러면 다음 사람이 `noqa` 로 이 락을 영구 무력화한다.
+    ★독스트링도 뺀다: 이 PR 의 `create_node` 독스트링이 사고 경위를 SQL 로 적고 있다.
+    """
+    tree = ast.parse(src)
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
+    return [
+        c.value.lower()
+        for c in ast.walk(tree)
+        if isinstance(c, ast.Constant) and isinstance(c.value, str) and id(c) not in docstrings
+    ]
+
+
 def test_no_raw_insert_into_org_nodes_outside_the_service() -> None:
     """★★`sales_org_nodes` 에 **raw INSERT 하는 곳이 없다** — 규칙을 우회하는 생산자 금지.
 
@@ -267,11 +294,15 @@ def test_no_raw_insert_into_org_nodes_outside_the_service() -> None:
     mentions: list[str] = []
     offenders: list[str] = []
     for rel in tracked:
-        src = (api_root / rel).read_text(encoding="utf-8").lower()
-        if "sales_org_nodes" not in src:
+        raw = (api_root / rel).read_text(encoding="utf-8")
+        if "sales_org_nodes" not in raw:
+            continue
+        # ★주석·독스트링을 걷어내고 **SQL 리터럴만** 본다(위양성 차단 — 함수 독스트링 참조).
+        lits = _sql_literals(raw)
+        if not any("sales_org_nodes" in s for s in lits):
             continue
         mentions.append(rel)
-        if "insert into sales_org_nodes" in src:
+        if any("insert into sales_org_nodes" in " ".join(s.split()) for s in lits):
             offenders.append(rel)
 
     # ★대조군 먼저 — 이게 비면 아래 «위반 0» 은 «파일을 못 읽었다» 와 같은 값이다.
@@ -303,8 +334,9 @@ def test_org_membership_queries_exclude_soft_deleted() -> None:
         raw = (api_root / rel).read_text(encoding="utf-8")
         if "sales_org_nodes" not in raw:
             continue
-        # SQL 문자열을 조회문 단위로 자른다(대소문자·줄바꿈 무시).
-        flat = " ".join(raw.lower().split())
+        # ★한 파일의 SQL 리터럴을 이어 붙인다 — 여러 줄로 쪼갠 문자열이 **한 조회문**이기 때문.
+        #   주석·독스트링은 `_sql_literals` 가 이미 걷어냈다.
+        flat = " ".join(" ".join(_sql_literals(raw)).split())
         for chunk in flat.split("from sales_org_nodes")[1:]:
             head = chunk[:400]           # 그 조회문의 WHERE 절이 사는 범위
             if "active = true" not in head:
