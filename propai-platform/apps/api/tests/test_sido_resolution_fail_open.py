@@ -1289,3 +1289,27 @@ async def test_market_stats_carries_every_rone_backed_statistic(monkeypatch) -> 
     empty = await get_market_stats("서울특별시 강남구 1")
     assert not any(empty.get(k) for k in _RONE_BACKED_STATS), empty
     assert empty.get("rone_available") is False, empty.get("rone_available")
+
+
+@pytest.mark.asyncio
+async def test_region_resolved_tells_the_truth_about_address_parsing(monkeypatch) -> None:
+    """★`region_resolved` 가 **실제 해석 여부**를 말한다(R5 LOW-1 봉합의 잠금).
+
+    ★이 락은 **처방을 넣고 잠그지 않아** 변이가 생존한 것을 보고 뒤늦게 붙였다
+      (`"region_resolved": True` 고정 → 80 passed ::VERDICT=SURVIVED).
+      필드를 만든 커밋에서 같이 잠갔어야 했다(§A-1 — 나중은 오지 않는다).
+    """
+    from app.services.land_intelligence.reb_statistics_service import get_market_stats
+
+    _patch_statbl(monkeypatch, [])
+    _patch_rone(monkeypatch, [])
+
+    resolved = await get_market_stats("서울특별시 강남구 역삼동 1")
+    assert resolved["region_resolved"] is True, resolved
+    assert resolved["region"] == "서울", resolved
+
+    # ★반대 모집단 — 시·도를 해석할 수 없는 주소는 그 사실을 말해야 한다.
+    #   `region` 은 여전히 "전국" 이다(기존 소비처 계약) — 그래서 **별도 필드**가 필요했다.
+    unresolved = await get_market_stats("zzz없는지역 123")
+    assert unresolved["region_resolved"] is False, unresolved
+    assert unresolved["region"] == "전국", unresolved
