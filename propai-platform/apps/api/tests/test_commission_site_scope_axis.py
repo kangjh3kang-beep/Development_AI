@@ -101,3 +101,63 @@ def test_two_populations_are_different() -> None:
     assert "split_id" in fns["set_holdback"] and "site_id" in fns["set_holdback"]
     # 특이도: 외부 id 를 안 받는 함수는 site_id 를 **요구받지 않는다**(위양성 방지).
     assert "run_due_payouts" in fns  # site_id 는 갖지만 그것은 외부 id 가 아니다
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★행위 축 — 관문이 **실제로 거부하는가**
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# 위 세 검사는 «시그니처에 site_id 가 있는가» 를 본다. 그것만으로는
+# **관문의 판정을 죽이는 변이**가 통과한다(실측):
+#
+#     _assert_split_in_site: if row is None:  →  if False:
+#         ::VERDICT=SURVIVED
+#
+# ⇒ 시그니처는 **선언**이고 거부는 **행위**다. 둘을 각각 잠근다.
+
+import sys  # noqa: E402
+
+import pytest  # noqa: E402
+
+# ★`extension.py` 는 `datetime.UTC`(3.11+)를 임포트한다. 로컬 셸이 3.10 이면 **임포트 자체가**
+#   실패한다(AST 검사는 임포트가 필요 없어 통과한다 — 그래서 이 축만 조건부다).
+#   ★**skip 이 아니라 이유를 남긴다** — 조용한 skip 은 「돌았는데 통과」와 구별되지 않는다.
+_NEEDS_311 = pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="extension.py 가 datetime.UTC(3.11+)를 임포트한다 — CI(3.12)에서 실행된다",
+)
+
+
+class _Res:
+    def __init__(self, row): self._row = row
+    def first(self): return self._row
+
+
+class _DB:
+    """`_assert_split_in_site` 가 쓰는 것만: `execute(...).first()`."""
+
+    def __init__(self, row): self._row = row
+    async def execute(self, *_a, **_k): return _Res(self._row)
+
+
+@_NEEDS_311
+@pytest.mark.asyncio
+async def test_gate_rejects_split_from_another_site() -> None:
+    """★남의 현장 split → **거부**(조회 결과가 비면 거부한다)."""
+    from app.services.sales.commission import extension as ext
+
+    with pytest.raises(ValueError) as ei:
+        await ext._assert_split_in_site(_DB(None), "site-A", "split-of-B")
+    assert "현장" in str(ei.value)
+
+
+@_NEEDS_311
+@pytest.mark.asyncio
+async def test_gate_allows_own_site_split() -> None:
+    """★★**반대편 모집단** — 내 현장 split 은 **통과**한다.
+
+    이것이 없으면 위 단언이 «항상 거부한다» 와 구별되지 않는다(정상 운영을 막는 위양성).
+    """
+    from app.services.sales.commission import extension as ext
+
+    await ext._assert_split_in_site(_DB(("split-1",)), "site-A", "split-1")  # 예외가 나면 실패
