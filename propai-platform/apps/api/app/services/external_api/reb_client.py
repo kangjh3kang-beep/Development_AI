@@ -219,6 +219,10 @@ def latest_value_from_rows(
         matched = aggregate
 
     best: tuple[str, float] | None = None
+    # ★이 초기화는 **읽히지 않는다**(기계 변이 «줄삭제» 생존 = 등가 · 2026-09-08).
+    #   `tied` 는 아래에서 `best` 와 **항상 같은 분기에서 함께** 대입되고, 끝까지 `best is
+    #   None` 이면 그전에 반환한다. 남기는 이유는 타입과 의도를 읽는 사람에게 보이기 위함이다
+    #   — 구멍이 아니라 방어이므로 여기 적어 둔다(변이 점수 부풀리기 방지).
     tied: set[float] = set()
     for row in matched:
         raw = next((row.get(k) for k in val_keys if row.get(k) not in (None, "")), None)
