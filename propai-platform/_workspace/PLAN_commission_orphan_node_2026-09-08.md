@@ -80,5 +80,6 @@ C1~C6 이 **서로 독립**이라 각각 `git revert` 가능하다.
 | 항목 | 왜 아직 못 잠갔나 |
 |---|---|
 | `test_router_shares_the_service_hierarchy_object` | 개발 환경 python 3.10 에서 라우터 모듈이 `datetime.UTC`(3.11+) 의존을 끌고 와 **수집 불가** → `skipif` · **CI(3.12)에서만** 실행. 같은 축을 임포트 없이 잠그는 AST 락이 옆에 있으므로 **무잠금은 아니다** |
-| 승인 경로의 **DB 통합 테스트** | 조직 트리는 postgres+ltree 가 필요한데 로컬에 없다. 현재 락은 전부 **단위/파생형**이라 «실제 ltree path 가 올바르게 붙는가» 는 **미측정** |
+| 승인 경로의 **DB 통합 테스트** | 조직 트리는 postgres+ltree 가 필요한데 로컬에 없다. 현재 락은 전부 **단위/파생형**이라 «실제 ltree path 가 올바르게 붙는가» 는 **미측정**. ★기계 변이 생존 15건 중 **8건이 이 축**(SQL 리터럴)이다 — 대역은 SQL 을 해석하지 않으므로 **락을 더 써도 못 잡는다**. 사유는 `market.py` 의 「변이 생존을 설명한다」 블록에 적었다 |
+| `test_contract_create_actually_validates_the_member_node` | **로컬에서 한 번도 실행되지 않았다.** 이 저장소는 개발 환경 python 3.10 에서 `app/crud/base.py` 를 **파싱조차 못 한다**(3.11+ 문법). `datetime.UTC` 셰임으로 우회를 시도했으나 SyntaxError 라 원리적으로 불가 ⇒ **CI(3.12)에서 처음 실행된다**. 같은 축을 임포트 없이 보는 `test_router_wiring_is_declared_in_source` 와 서비스 층 행위 락 `test_resolve_member_node_is_one_value_flow` 가 로컬에서 돌아 이 부채를 덮는다 |
 | `_REGISTER_MATRIX`(직속 등록 권한) | 위계 서열표는 SSOT 로 옮겼으나 **등록 권한 매트릭스는 아직 라우터에 있다.** `create_node` 는 그것을 보지 않는다 — 즉 **라우터를 안 거치는 경로는 권한 매트릭스를 우회**한다. 이번 승인 경로는 자체 관리자 검사를 하므로 돈은 안 새지만, **축은 같은 형태**다 |

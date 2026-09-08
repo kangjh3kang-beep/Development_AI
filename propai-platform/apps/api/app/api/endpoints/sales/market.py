@@ -663,6 +663,26 @@ async def decide_application(application_id: uuid.UUID, body: DecideRequest,
 #
 #   ★이 튜플이 **사유의 SSOT** 다 — 프론트(`lib/sales-app/membership-reason.ts`)가 여기서 파생하고,
 #   `tests/test_membership_reason_axis.py` 가 «함수가 내는 값 ⊆ 이 목록» 을 AST 로 잠근다.
+#
+# ══ 변이 생존을 **설명한다**(2026-09-08 · 4차 실행 60변이 중 생존 15건) ══════════════════
+#   도구가 요구하는 대로, 남은 생존이 «구멍» 인지 «태울 수 없는 것» 인지 여기에 적는다.
+#   26 → 22 → 18 → **15** 로 줄였고, 남은 15건은 두 부류뿐이다:
+#
+#   ① **SQL 문자열 리터럴 8건**(이 파일의 `sales_org_nodes` 조회들 · `nlevel(path)` 정렬 등)
+#      — 이 술어들의 의미는 **Postgres+ltree 가 있어야** 갈린다. 대역(fake db)은 SQL 을
+#        해석하지 않으므로 문자열을 바꿔도 결과가 같다. 즉 **락을 더 써도 못 잡는다.**
+#      ⇒ 계획서 §5 「부채」 표에 «승인 경로 DB 통합 테스트 부재 = 미측정» 으로 올려 뒀다.
+#        정직한 상태는 «잠갔다» 가 아니라 **«이 축은 아직 안 재 봤다»** 다.
+#      ★그래도 **구조는 잠갔다**: 소프트삭제 조건 누락(`test_org_membership_queries_...`)과
+#        raw INSERT 재등장(`test_no_raw_insert_into_org_nodes_...`)은 조회문 단위로 잡힌다.
+#
+#   ② **사용자 안내·로그 문구 4건**(아래 `logger.warning` 두 줄 포함)
+#      — 저장소 규율이 명시한다: *"산문까지 단언하지 마라 — 계약이 아니라 표현이라
+#        다듬을 때마다 깨지는 취약한 락이 된다."* 계약은 **사유 코드**(`_MEMBERSHIP_REASONS`)로
+#        이미 잠겨 있고, 문구는 그 코드의 **표시**일 뿐이다.
+#      ★단 «문구가 서로 달라야 한다» 는 **속성**이라 프론트에서 잠갔다
+#        (`membership-reason.test.ts` — 같은 문구로 뭉개면 빨개진다).
+# ═══════════════════════════════════════════════════════════════════════════════════
 _MEMBERSHIP_REASONS = (
     "LINKED",                 # 새 MEMBER 노드를 만들어 붙였다
     "ALREADY_MEMBER",         # 이미 이 현장의 active 멤버다(멱등)
