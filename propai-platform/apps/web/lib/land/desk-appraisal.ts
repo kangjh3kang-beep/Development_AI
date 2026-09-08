@@ -91,6 +91,8 @@ export type DeskAppraisalResult = {
   complex_note?: string | null;
   market_stats?: {
     region?: string;
+    /** ★주소에서 시·도를 실제로 해석했는가. false 면 `region` 의 "전국" 은 **해석 결과가 아니라 기본값**이다. */
+    region_resolved?: boolean;
     rone_available?: boolean; cap_rate?: Stat; jeonse_conversion_rate?: Stat; housing_time_adjust?: Stat;
     land_price_trend?: {
       monthly?: { period: string; rate: number }[];

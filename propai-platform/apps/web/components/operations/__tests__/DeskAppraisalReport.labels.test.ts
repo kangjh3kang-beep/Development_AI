@@ -161,19 +161,35 @@ describe("탁상감정 보고서 라벨", () => {
       expect(line).toBe("· 자본환원율(R-ONE 실측): 4.5%");
     });
 
-    it("★scope 가 요청 지역과 다르면 **화면이 그렇게 말한다**(기계 판독 축의 실소비)", () => {
+    // ★★독립 리뷰 R5 MEDIUM-3(2026-09-08): 이 락은 종전에 **`cap_rate` 로** scope 분기를 태웠다.
+    //   그런데 `commercial_cap_rate`·`jeonse_conversion_rate` 는 `scope` 키를 **한 번도 싣지 않는다**
+    //   (전국 대체를 안 하므로 실을 이유가 없다) — 즉 그 조합은 **라이브에서 발생 불가**였고,
+    //   실제로 대체가 일어나는 유일한 통계(`housing_time_adjust`)는 태워지지 않았다.
+    //   함수는 잠겨 있었지만 «실소비를 잠갔다» 는 라벨이 과장이었다. ⇒ 발생 가능한 조합으로 옮긴다.
+    it("★scope 가 요청 지역과 다르면 **화면이 그렇게 말한다**(실제로 대체가 일어나는 통계로)", () => {
       const substituted = build({
-        cap_rate: { source: "R-ONE", pct: 4.5, basis: "상업용 실측", scope: "전국" },
+        housing_time_adjust: { source: "R-ONE", factor: 1.0243, basis: "주택지수 실측", scope: "전국" },
       });
-      const line = substituted.find((l) => l.startsWith("· 자본환원율"))!;
+      const line = substituted.find((l) => l.startsWith("· 주택가격지수"))!;
       expect(line).toContain("범위 전국");
       expect(line).toContain("실데이터가 아닙니다");
 
       // ★두 모집단을 가른다 — 같은 지역이면 그 경고가 **뜨면 안 된다**.
       const own = build({
-        cap_rate: { source: "R-ONE", pct: 4.5, basis: "상업용 실측", scope: "서울" },
+        housing_time_adjust: { source: "R-ONE", factor: 1.0243, basis: "주택지수 실측", scope: "서울" },
       });
-      expect(own.find((l) => l.startsWith("· 자본환원율"))!).not.toContain("실데이터가 아닙니다");
+      expect(own.find((l) => l.startsWith("· 주택가격지수"))!).not.toContain("실데이터가 아닙니다");
+    });
+
+    it("★시·도 미해석이면 화면이 **그 사실을 말한다**(R5 LOW-1 — 전국 == 전국 침묵 봉합)", () => {
+      const unresolved = buildMarketBasisLines({
+        market_stats: { region: "전국", region_resolved: false, rone_available: true },
+      } as never);
+      expect(unresolved.some((l) => l.includes("시·도를 해석하지 못해"))).toBe(true);
+
+      // ★위양성 축 — 해석에 성공했으면 그 줄이 **뜨면 안 된다**.
+      const resolved = build({});
+      expect(resolved.some((l) => l.includes("시·도를 해석하지 못해"))).toBe(false);
     });
 
     it("★R-ONE 미가용이면 근사값 고지가 뜬다", () => {

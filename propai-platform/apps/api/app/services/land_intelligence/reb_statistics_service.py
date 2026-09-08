@@ -196,8 +196,16 @@ async def get_market_stats(address: str = "", base_year: int | None = None) -> d
     cap = await commercial_cap_rate(address)
     jeonse = await jeonse_conversion_rate(address)
     trend = await land_price_trend(address)          # 월별·연도별 지가변동률 추이
+    _region = _sido_of(address)
     return {
-        "region": _sido_of(address) or "전국",
+        "region": _region or "전국",
+        # ★★독립 리뷰 R5 LOW-1(2026-09-08): 주소에서 시·도를 **해석하지 못했는데** `region` 이
+        #   `"전국"` 으로 채워지면, 프론트의 «`scope != region` 이면 대체값» 판정이 `전국 == 전국`
+        #   이라 **조용히 침묵**한다. 그때 정직성을 나르는 것은 백엔드 산문 하나뿐인데,
+        #   프론트는 «백엔드 문구를 안 믿어도 성립한다» 고 선언한다 — 그 선언이 이 경우 깨졌다.
+        #   ⇒ **해석 여부를 기계 필드로 분리**한다(모름을 유효값으로 표현하지 않는다).
+        #     `region` 자체는 기존 소비처 계약이라 바꾸지 않는다.
+        "region_resolved": bool(_region),
         "land_time_adjust": land_ta,                 # 토지 시점수정(지가변동률)
         "land_price_trend": trend,                   # 월별/연도별 통계분석(시계열)
         "housing_time_adjust": housing,              # 건물/주택 시점수정(주택가격지수)

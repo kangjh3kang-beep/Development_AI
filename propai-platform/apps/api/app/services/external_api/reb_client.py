@@ -167,6 +167,42 @@ async def fetch_land_price_changes(months: int = 24) -> list[dict[str, Any]] | N
 _AGGREGATE_CLS_NM = "전체"
 
 
+def _period_of(row: dict[str, Any], time_keys: tuple[str, ...]) -> str:
+    """행의 작성시점 문자열(없으면 빈 문자열)."""
+    return str(next((row.get(k) for k in time_keys if row.get(k) not in (None, "")), ""))
+
+
+def narrow_to_period_aggregate(
+    rows: list[dict[str, Any]], time_keys: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """(시점)별로 집계행(`CLS_NM == "전체"`)이 있으면 **그 시점은 집계행만** 남긴다.
+
+    ★★공용 헬퍼다(독립 리뷰 R5 HIGH-3). 종전에는 이 좁히기가 `latest_value_from_rows`
+      **한 함수 안**에만 있었고, 같은 표 모양을 받는 형제 `rate_series_from_rows` 에는 없었다.
+      그 결과 규모 구분 5행 표에서 시계열이 **5배**로 늘고, `trend_from_rows` 의 연간 합계가
+      실제 6.0% 대신 **30.0%** 로 찍혔다(리뷰어 실측). 이 PR 의 표제 결함
+      («경기 yearly 2024 = +80.68%»)과 **같은 산수**다 — 처방을 한 자리에만 넣은 것이 원인이다.
+      ⇒ 판정을 **한 곳**에 두고 두 추출기가 함께 쓴다(저장소 §전역 전파방지).
+
+    ★★**시점 단위**로 판정한다(독립 리뷰 R5 MEDIUM-2). 표 전체에 걸쳐 한 번에 거르면,
+      최신 시점에만 집계행이 없을 때 그 시점 행이 **통째로 사라져** 한 달 묵은 값이 조용히
+      «최신» 인 척 반환된다(실측: base 는 그 경우 거부했는데 좁히기가 `(5.0, '202607')` 을 냈다).
+      시점별로 판정하면 집계행 없는 시점은 **원래 행을 그대로** 유지하고, 값이 갈리면
+      호출부의 카디널리티 거부가 받아 낸다.
+
+    ★집계 표기가 없는 표(상업용수익률 — `CLS_NM` 이 **상권명**)에서는 **무동작**이다.
+      `region_sido` 는 시도 축약키라 `"전체"` 와 절대 같아질 수 없으므로 정당한 행을 버리지 않는다.
+    """
+    by_period: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_period.setdefault(_period_of(row, time_keys), []).append(row)
+    out: list[dict[str, Any]] = []
+    for group in by_period.values():
+        agg = [r for r in group if str(r.get("CLS_NM") or "").strip() == _AGGREGATE_CLS_NM]
+        out.extend(agg or group)
+    return out
+
+
 def latest_value_from_rows(
     rows: list[dict[str, Any]], region_sido: str = ""
 ) -> tuple[float, str] | None:
@@ -204,19 +240,24 @@ def latest_value_from_rows(
     #   집계 행을 스스로 갖고 있다. 라이브 실측(주택매매가격지수 `A_2024_00615` · 전 2,210행):
     #     · `(GRP_NM=서울, 202607)` → 5행 = `전체` / `40㎡이하` / `40㎡초과 60㎡이하` /
     #       `60㎡초과 85㎡이하` / `85㎡초과` — 값이 100.66 / 100.34 / 101.11 / 102.25 / 105.22
-    #     · **(지역,시점) 조합 442개 전부**에 `CLS_NM="전체"` 가 **정확히 1행**씩 있었다(예외 0)
+    #     · 그 응답 안의 **(지역,시점) 조합 442개 전부**에 `CLS_NM="전체"` 가 **정확히 1행**(예외 0)
+    #   ★★그 «전부» 의 조건(독립 리뷰 R5 MEDIUM-5 — 조건 없는 단정은 참일 때도 검증 불가다):
+    #     ① 그것은 **한 표**(`A_2024_00615`)의 관측이다. 다른 표에 일반화한 것이 아니다.
+    #     ② 그것은 **`pIndex="1"` 단일 페이지** 위의 전수다(이 클라이언트는 페이징을 안 한다).
+    #        내 census 는 2,210행 = 442 × 5 로 그 표를 덮었지만, 프로덕션은 `size=480` 으로
+    #        부르므로 **약 22%** 만 본다. 어느 22% 인지는 API 정렬에 달렸고 **그 정렬은 미측정**이다
+    #        (형제 주석이 `A_2024_00903` 에 대해 «오래된순» 이라고 이미 적어 두었다).
+    #     ⇒ 그래서 좁히기는 «집계행이 **있을 때만**» 걸고, 없으면 그 시점은 원래 행을 유지해
+    #       카디널리티 거부가 받아 내게 했다. 페이지가 잘려도 **거짓 값이 아니라 거부**가 된다.
     #   ⇒ 집계 행이 **실제로 있을 때만** 그 행으로 좁힌다. 거부는 그대로 **뒤에 남긴다**
     #     (집계 표기가 없는 표에서는 좁히기가 무동작이고, 그때 거부가 받아 낸다).
     #   ★없는 표기를 가정하지 않는다 — 상업용수익률 표는 `CLS_NM` 이 **상권명**이라 `전체` 가
     #     없고, 그 표에서는 이 좁히기가 아무 일도 하지 않는다(실측: `distinct_CLS_NM` =
     #     `강남`·`광복동`·`금호지구`… — 규모 구분이 아니다).
-    matched = [
-        row for row in rows
-        if isinstance(row, dict) and region_sido in row_region_names(row)
-    ]
-    aggregate = [row for row in matched if str(row.get("CLS_NM") or "").strip() == _AGGREGATE_CLS_NM]
-    if aggregate:
-        matched = aggregate
+    matched = narrow_to_period_aggregate(
+        [row for row in rows if isinstance(row, dict) and region_sido in row_region_names(row)],
+        time_keys,
+    )
 
     best: tuple[str, float] | None = None
     # ★이 초기화는 **읽히지 않는다**(기계 변이 «줄삭제» 생존 = 등가 · 2026-09-08).
@@ -271,9 +312,11 @@ def rate_series_from_rows(
 
     def _collect(region_filter: str | None) -> list[tuple[str, float]]:
         out: list[tuple[str, float]] = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
+        # ★★형제에도 같은 좁히기를 적용한다(독립 리뷰 R5 HIGH-3). 안 하면 규모 구분 5행 표에서
+        #   시계열이 5배가 되고 `trend_from_rows` 의 연간 합계가 그대로 5배로 찍힌다.
+        for row in narrow_to_period_aggregate(
+            [r for r in rows if isinstance(r, dict)], time_keys
+        ):
             itm = str(row.get("ITM_NM") or "")
             # ★★주석 정정(독립 리뷰 R3 MEDIUM-6): 종전 주석은 *"'누계' 등 제외"* 라 했지만
             #   `"누계변동률"` 은 `"변동"` 을 **포함해 통과한다** — 거짓 면역 주장이었다(§C-11).

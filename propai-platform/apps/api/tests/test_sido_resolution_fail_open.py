@@ -1151,13 +1151,141 @@ def test_index_typed_table_should_yield_a_time_adjust_factor() -> None:
     """지수형 표만 있는 상태에서도 시점수정 계수가 나와야 한다(미구현 — strict xfail)."""
     from app.services.external_api.reb_client import cumulative_factor_from_rows
 
+    # ★★픽스처는 **라이브 모양**이어야 한다(독립 리뷰 R5 MEDIUM-4).
+    #   종전 픽스처는 (지역,시점)당 **1행**이었다. 그것을 보고 구현하는 사람은 «집계행만 오는 표»
+    #   를 가정하게 되고, 실제 표에서는 **규모 5행**을 받아 5배 팽창한 시계열로 계산한다
+    #   — 이 PR 이 방금 고친 결함(R5 HIGH-3)과 **같은 뿌리**다. 부채 픽스처가 다음 결함의 씨앗이 된다.
     rows = [
-        {"GRP_NM": "서울", "CLS_NM": "전체", "ITM_NM": "지수",
-         "DTA_VAL": 100.0 + i * 0.1, "WRTTIME_IDTFR_ID": f"2024{i:02d}"}
+        {"GRP_NM": "서울", "CLS_NM": cls, "ITM_NM": "지수",
+         "DTA_VAL": base + i * 0.1 + offset, "WRTTIME_IDTFR_ID": f"{yr}{i:02d}"}
+        for yr, base in (("2024", 100.0), ("2025", 101.2))
         for i in range(1, 13)
-    ] + [
-        {"GRP_NM": "서울", "CLS_NM": "전체", "ITM_NM": "지수",
-         "DTA_VAL": 101.2 + i * 0.1, "WRTTIME_IDTFR_ID": f"2025{i:02d}"}
-        for i in range(1, 13)
+        for offset, cls in enumerate(_SIZE_CLASSES)
     ]
+    # ★공허 방지 — 픽스처가 실제로 다행인가(1행이면 이 부채의 취지가 사라진다).
+    assert len(rows) == 24 * len(_SIZE_CLASSES), len(rows)
     assert cumulative_factor_from_rows(rows, "서울") is not None
+
+
+# ─────────────────────────────────────────────────────────────
+# ★R5 HIGH-3 / MEDIUM-2 — 좁히기를 **공용 헬퍼**로 빼고 **시점 단위**로 판정한다
+#
+#   HIGH-3: 좁히기를 `latest_value_from_rows` **한 함수에만** 넣었더니, 같은 표 모양을 받는
+#           형제 `rate_series_from_rows` 가 그대로였다. 리뷰어 실측 —
+#             규모 5행 × 24개월 → series **120** · cumulative **None** · yearly **30.0%**
+#           정답은 series 24 · cumulative 1.1272 · yearly **6.0%**. 이 PR 의 표제 결함
+#           («경기 yearly 2024 = +80.68%»)과 **같은 산수**다. `trend_from_rows` 는 저장소
+#           **참조 0건**이라 아무도 안 보고 있었다.
+#   MEDIUM-2: 표 전체에 걸쳐 한 번에 걸렀더니, 최신 시점에만 집계행이 없을 때 그 시점이
+#           **통째로 사라져** 한 달 묵은 값이 «최신» 인 척 반환됐다(base 는 거부했다).
+#           ⇒ **시점 단위**로 판정한다.
+# ─────────────────────────────────────────────────────────────
+
+
+def _size_series_rows(region: str, periods: list[str], rate: float = 0.5) -> list[dict]:
+    """규모 구분 5행 × N개월 — 라이브 표 모양(지역=GRP_NM · 규모=CLS_NM)."""
+    return [
+        {"GRP_NM": region, "CLS_NM": cls, "ITM_NM": "변동률",
+         "DTA_VAL": rate, "WRTTIME_IDTFR_ID": t}
+        for t in periods for cls in _SIZE_CLASSES
+    ]
+
+
+_TWO_YEARS = [f"2024{m:02d}" for m in range(1, 13)] + [f"2025{m:02d}" for m in range(1, 13)]
+
+
+def test_size_split_rows_do_not_inflate_the_series() -> None:
+    """★규모 5행이 시계열을 **5배로 부풀리지 않는다**(형제 추출기도 좁히기를 받는다)."""
+    from app.services.external_api.reb_client import rate_series_from_rows
+
+    series = rate_series_from_rows(_size_series_rows("서울", _TWO_YEARS), "서울")
+    assert len(series) == len(_TWO_YEARS), (
+        f"시계열이 {len(series)}건 — 규모 구분 행이 그대로 들어왔다(기대 {len(_TWO_YEARS)})"
+    )
+
+
+def test_size_split_rows_do_not_inflate_the_yearly_trend() -> None:
+    """★화면이 그리는 연간 변동률이 **부풀지 않는다** — 여기가 사용자가 보는 자리다."""
+    from app.services.external_api.reb_client import trend_from_rows
+
+    tr = trend_from_rows(_size_series_rows("서울", _TWO_YEARS, rate=0.5), "서울", 24)
+    yearly = {y["year"]: y["rate"] for y in tr.get("yearly", [])}
+    assert yearly, "연간 통계가 비었다(수집기 사망)"
+    # 월 0.5% × 12개월 = 6.0%. 규모 5행이 새면 30.0% 가 된다(리뷰어 실측값).
+    assert yearly.get("2024") == 6.0, f"연간 변동률이 부풀었다: {yearly}"
+    assert yearly.get("2025") == 6.0, f"연간 변동률이 부풀었다: {yearly}"
+
+
+def test_size_split_rows_still_yield_a_cumulative_factor() -> None:
+    """★부풀리기를 막느라 **정당한 계수까지 죽이지 않는다**(위양성 축)."""
+    from app.services.external_api.reb_client import cumulative_factor_from_rows
+
+    got = cumulative_factor_from_rows(_size_series_rows("서울", _TWO_YEARS), "서울", 24)
+    assert got == 1.1272, f"누적계수가 안 나온다(고유 기간 부족으로 거부됐나): {got}"
+
+
+def test_missing_aggregate_at_the_latest_period_rejects_not_returns_stale() -> None:
+    """★최신 시점에 집계행이 없으면 **거부**한다 — 구값을 최신인 척 내보내지 않는다."""
+    from app.services.external_api.reb_client import latest_value_from_rows
+
+    rows = [
+        {"GRP_NM": "서울", "CLS_NM": "전체", "DTA_VAL": 5.0, "WRTTIME_IDTFR_ID": "202607"},
+        {"GRP_NM": "서울", "CLS_NM": "40㎡이하", "DTA_VAL": 4.0, "WRTTIME_IDTFR_ID": "202607"},
+        {"GRP_NM": "서울", "CLS_NM": "40㎡이하", "DTA_VAL": 8.0, "WRTTIME_IDTFR_ID": "202608"},
+        {"GRP_NM": "서울", "CLS_NM": "85㎡초과", "DTA_VAL": 9.0, "WRTTIME_IDTFR_ID": "202608"},
+    ]
+    assert latest_value_from_rows(rows, "서울") is None, (
+        "최신 시점에 집계행이 없는데 한 달 묵은 값을 «최신»으로 돌려줬다"
+    )
+    # ★두 모집단을 가른다 — 최신 시점에도 집계행이 있으면 **그 값을 채택**한다.
+    ok = [*rows, {"GRP_NM": "서울", "CLS_NM": "전체", "DTA_VAL": 7.0, "WRTTIME_IDTFR_ID": "202608"}]
+    assert latest_value_from_rows(ok, "서울") == (7.0, "202608")
+
+
+# ─────────────────────────────────────────────────────────────
+# ★R5 MEDIUM-1 — 감시자 락은 「값이 망가지는」 축만 봤다. **「호출이 사라지는」 축**은 무잠금이었다
+#
+#   리뷰어 실측: `cap = await commercial_cap_rate(address)` → `cap = None`
+#     → `75 passed, 7 xfailed` ::VERDICT=SURVIVED
+#   자본환원율 조회를 **통째로 끊어도** 전 락이 초록이었다(desk_appraisal 이 조용히 기본값으로
+#   떨어진다). 원인은 `_WIRED_CONSUMER_FLOOR = 2` 인데 실제 발화가 **7** 이라는 것 —
+#   ★내가 바로 그 위 주석에 «하한을 여유 있게 넘는 것은 모집단이 옳다는 증거가 아니다» 라고
+#     써 놓고 새 하한에서 같은 것을 했다.
+#
+#   ★★하한을 올리는 것만으로는 못 잡는다 — **호출부가 사라지면 파생 집합도 같이 줄어든다.**
+#     그래서 축을 «몇 개가 불렸나» 가 아니라 **«무엇이 응답에 실렸나»**(효과)로 옮긴다.
+# ─────────────────────────────────────────────────────────────
+
+# R-ONE 이 값을 줄 때 `get_market_stats` 가 **반드시 실어야 하는** 통계들.
+# ★목록이 아니라 **계약**이다 — 하나라도 조용히 빠지면 화면은 그 자리에 문서화된 기본값을
+#   그리면서 아무 말도 하지 않는다(사용자는 R-ONE 을 봤다고 믿는다).
+_RONE_BACKED_STATS = ("housing_time_adjust", "cap_rate", "jeonse_conversion_rate", "land_price_trend")
+
+
+@pytest.mark.asyncio
+async def test_market_stats_carries_every_rone_backed_statistic(monkeypatch) -> None:
+    """★R-ONE 이 값을 주면 **네 통계가 전부 응답에 실린다** — 하나라도 끊기면 잡힌다."""
+    from app.services.land_intelligence.reb_statistics_service import get_market_stats
+
+    # 규모 구분 5행 × 24개월 — 라이브 표 모양 그대로(집계행 포함).
+    # ★값 2.5 는 네 통계의 sane 범위를 **동시에** 만족하도록 고른 것이다
+    #   (cap 1.0~12.0 · 전월세 2.0~12.0 · 누적계수 0.5~2.0 → 1.025**24 = 1.81).
+    #   한 픽스처로 넷을 태우려면 그 교집합 안에 있어야 한다.
+    rows = _size_series_rows("서울", _TWO_YEARS, rate=2.5)
+    _patch_statbl(monkeypatch, rows)
+    _patch_rone(monkeypatch, rows)   # land_price_trend 는 다른 통로(fetch_land_price_changes)를 탄다
+    ms = await get_market_stats("서울특별시 강남구 1")
+
+    missing = [k for k in _RONE_BACKED_STATS if not ms.get(k)]
+    assert not missing, (
+        f"R-ONE 이 값을 주는데 응답에서 빠진 통계가 있다 — 그 자리는 화면에서 조용히 "
+        f"기본값이 된다: {missing} / 실린 키={sorted(k for k, v in ms.items() if v)}"
+    )
+    assert ms.get("rone_available") is True, ms.get("rone_available")
+
+    # ★두 모집단을 가른다 — R-ONE 이 아무것도 못 주면 그 사실이 응답에 드러나야 한다.
+    _patch_statbl(monkeypatch, [])
+    _patch_rone(monkeypatch, [])
+    empty = await get_market_stats("서울특별시 강남구 1")
+    assert not any(empty.get(k) for k in _RONE_BACKED_STATS), empty
+    assert empty.get("rone_available") is False, empty.get("rone_available")

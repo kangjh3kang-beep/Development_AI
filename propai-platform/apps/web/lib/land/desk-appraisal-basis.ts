@@ -67,6 +67,13 @@ export function buildMarketBasisLines(res: DeskAppraisalResult): string[] {
     lines.push(withBasis(`· 주택가격지수 누적변동: ${housing.factor}`, housing, ms.region));
   }
 
+  // ★주소에서 시·도를 해석하지 못했으면 그 사실을 말한다(독립 리뷰 R5 LOW-1).
+  //   그때 `region` 은 "전국" 이지만 그것은 **해석 결과가 아니라 기본값**이라,
+  //   위 `scope !== region` 판정이 «전국 == 전국» 으로 조용히 침묵한다.
+  if (ms.region_resolved === false) {
+    lines.push("· 지역 해석: 주소에서 시·도를 해석하지 못해 전국 값을 적용했습니다(이 지역 실데이터가 아닙니다).");
+  }
+
   if (!ms.rone_available) {
     lines.push("· 시장통계: R-ONE 통계표 미설정 구간은 근사값 적용(관리자 설정 시 실데이터 전환).");
   }
