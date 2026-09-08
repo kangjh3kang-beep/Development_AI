@@ -462,7 +462,14 @@ class MolitClient(BaseAPIClient):
                     "dong": str(g("umdNm", "법정동", "")),
                     "jibun": str(g("jibun", "지번", "")),
                     "build_year": _to_int(g("buildYear", "건축년도", 0)),
-                    # 토지 매매(getRTMSDataSvcLandTrade) 전용 — 지목/용도지역(없으면 빈값)
+                    # ★★2026-09-08 정정(사용자 신고③) — 종전 주석은 *"토지 매매
+                    #   (getRTMSDataSvcLandTrade) **전용**"* 이었다. **거짓이다.**
+                    #   이 파싱은 `prop_type` 게이팅이 **없어** 전 유형에서 돈다. 그리고 그것이
+                    #   옳다 — 상업업무용(`getRTMSDataSvcNrgTrade`)은 실제로 `용도지역`을 준다
+                    #   (라이브 증거: 신고 스크린샷의 건물 거래에 `용도지역 근린상업`이 찍혔다).
+                    #   ★그래서 결함은 **필드가 아니라 「무엇의 거래인지 안 적은 것」**이었다.
+                    #     이 주석을 근거로 «건물엔 안 온다»고 판단하면 틀린다(§C-10).
+                    #   없으면 빈값(무날조).
                     "jimok": str(g("jimok", "지목", "")),
                     "land_use": str(g("landUse", "용도지역", "")),
                     # ★★2026-08-06 실측으로 추가 — 원천이 주는데 **우리가 버리던** 필드.

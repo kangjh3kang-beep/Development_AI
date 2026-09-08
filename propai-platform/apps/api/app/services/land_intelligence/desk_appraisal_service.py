@@ -15,6 +15,15 @@ from typing import Any
 
 import structlog
 
+from app.services.land_intelligence import market_multiplier as _mm
+
+# ★공시지가기준법 산정식 템플릿 — 표시 문구를 상수로 꺼내 테스트가 **리터럴로 못 박게** 한다.
+#   이 문자열은 감정평가 제출문서(PDF·DOCX)의 「근거」 칸으로 그대로 나간다.
+PUB_METHOD_RATIONALE_TEMPLATE = (
+    "개별공시지가 {op:,}원/㎡ × 시점수정 {time_adjust} × 접도 {road_f}({road_label})"
+    " × 면적 {area_fac} × 형상 {shape_f}({shape_label})"
+    " × 그밖의요인 {other_factor}({other_rationale})"
+)
 from app.services.land_intelligence.land_price_estimator import _market_multiplier
 from app.services.market.land_dong_stats import stats_note as land_stats_note
 from app.utils.pnu import lawd_cd_from_pnu
@@ -164,8 +173,8 @@ def _subject_consistency(subject: dict[str, Any] | None) -> dict[str, Any]:
         conflicts.append({
             "field_a": f"지목 {jimok}", "field_b": f"용도지역 {zone}",
             "note": ("지목이 「대」가 아닌데 도시지역 용도가 지정돼 있습니다. "
-                     "지목 미변경 상태일 수 있으며(정상), 그때 평가는 **현황과 공부 중 "
-                     "무엇을 기준으로 했는지**를 밝혀야 합니다."),
+                     "지목 미변경 상태일 수 있으며(정상), 그때 평가는 현황과 공부 중 "
+                     "무엇을 기준으로 했는지를 밝혀야 합니다."),
         })
     # ★독립 리뷰 적발(MEDIUM-10) — 화이트리스트가 5개뿐이라 `도로 ↔ 도로` 처럼
     #   **자기 자신과 충돌**했다("공부상 지목과 현황 이용이 다릅니다" — 같은데도).
@@ -173,14 +182,14 @@ def _subject_consistency(subject: dict[str, Any] | None) -> dict[str, Any]:
     if jimok and usage and jimok not in _DAE_JIMOK and usage != jimok:
         conflicts.append({
             "field_a": f"지목 {jimok}", "field_b": f"이용상황 {usage}",
-            "note": ("공부상 지목과 현황 이용이 다릅니다. 감정평가는 **현황 기준**이 "
+            "note": ("공부상 지목과 현황 이용이 다릅니다. 감정평가는 현황 기준이 "
                      "원칙이므로 이 차이가 가액에 반영됐는지 확인이 필요합니다."),
         })
     return {
         "ok": not conflicts,
         "conflicts": conflicts,
         # ★검증하지 못한 것을 값 안에 적는다 — 이 판정을 결론으로 쓰지 않게.
-        "basis": ("지목·용도지역·이용상황 조합 점검(실무 관례 기준 · **법적 근거 미확인** — "
+        "basis": ("지목·용도지역·이용상황 조합 점검(실무 관례 기준 · 법적 근거 미확인 — "
                   "틀렸다는 판정이 아니라 확인 요청입니다)."),
     }
 
@@ -221,7 +230,7 @@ def _assemble_methods(
             # ★참고값이 **있으면** 함께 싣는다 — 없는 척하지 않는다. 다만 채택 아님을 명시.
             "reference_unit_price": (land_stats or {}).get("unit_price_per_sqm"),
             "reference_note": (
-                "법정동·지목 층화 실거래(참고) — **개별 필지 위치가 반영되지 않았습니다.** "
+                "법정동·지목 층화 실거래(참고) — 개별 필지 위치가 반영되지 않았습니다. "
                 "지역요인까지만 반영된 값이라 개별요인 보정 전이며, 채택 단가에 쓰지 않습니다."
             ) if (land_stats or {}).get("unit_price_per_sqm") else None,
         })
@@ -502,6 +511,16 @@ async def desk_appraisal(
 
     # ── 1) 공시지가기준법 ──
     other_factor, other_rationale = _market_multiplier(address)   # 그 밖의 요인(기타요인) 보정
+    # ★그밖의요인의 **출처를 기계 판독 가능하게** 함께 싣는다(2026-09-07 · 독립 리뷰 R2 MEDIUM).
+    #   그밖의요인은 가액을 직접 곱하는 계수이므로, 그 값이 «실거래로 검증된 것이 아니다» 라는
+    #   사실은 표시 문구가 아니라 **코드**로 남아야 한다(문구를 다듬어도 안 죽게).
+    # ★★범위를 정확히 적는다(독립 리뷰 R3 LOW-1 — 종전 주석은 과장이었다):
+    #   이 코드는 **API payload 까지만** 간다. PDF 어댑터(`report/render/appraisal_adapter.py`)는
+    #   `methods[].rationale` **문자열만** 읽으므로 `factor_provenance` 는 **PDF 에 실리지 않는다**
+    #   (실측: 렌더 모델 문자열 87건에 `UNVERIFIED_PRESET` 0건 · 한정어 문구는 rationale 경유로 실림).
+    #   ⇒ PDF 표면의 정직성은 **짧은형 한정어**가 지키고, 이 코드는 **기계 소비처용**이다.
+    #     (그 소비처는 아직 0건 — `test_provenance_has_a_consumer` 에 부채로 노출돼 있다.)
+    other_factor_provenance = _mm.PROVENANCE_UNVERIFIED_PRESET
     road_f, road_label = _road_factor(road_side)
     area_fac, area_label = _area_factor(area_f)
     shape_f, shape_label = _shape_factor(irregularity)
@@ -514,7 +533,19 @@ async def desk_appraisal(
             "개별요인_접도": road_f, "개별요인_면적": area_fac, "개별요인_형상": shape_f,
             "그밖의요인": other_factor,
         },
-        "rationale": f"개별공시지가 {int(op):,}원/㎡ × 시점수정 {time_adjust} × 접도 {road_f}({road_label}) × 면적 {area_fac} × 형상 {shape_f}({shape_label}) × 그밖의요인 {other_factor}({other_rationale})",
+        # ★자유 리터럴을 쓰지 않고 **모듈 템플릿 상수**에서 조립한다(독립 리뷰 R4 HIGH).
+        #   종전에는 f-string 리터럴이라 어떤 락의 모집단에도 없었고, 앞에 거짓 출처를
+        #   **덧붙이는** 변이가 974건 전부를 통과했다 — 그리고 그 문자열은 **제출문서
+        #   (DOCX word/document.xml · PDF)에 도달**한다(리뷰어 실측). 한 문단 안에
+        #   «국토교통부 실거래 검증» 과 «실거래 미검증» 이 나란히 찍히는 상태였다.
+        "rationale": PUB_METHOD_RATIONALE_TEMPLATE.format(
+            op=int(op), time_adjust=time_adjust, road_f=road_f, road_label=road_label,
+            area_fac=area_fac, shape_f=shape_f, shape_label=shape_label,
+            other_factor=other_factor, other_rationale=other_rationale,
+        ),
+        # ★요인별 출처 코드(가산) — 표시 문구와 분리된 안정 식별자. 현재는 그밖의요인만 싣는다
+        #   (다른 요인은 이 PR 범위 밖 · 각자 근거 체계가 다르다).
+        "factor_provenance": {"그밖의요인": other_factor_provenance},
     }
 
     # ── 2) 거래사례비교법 ──
@@ -591,7 +622,7 @@ async def desk_appraisal(
             "독립된 평가 주체의 교차검증이 아니라 같은 산식의 가정 변동입니다."
             if cmp_unit_price > 0 else
             "가정 민감도 — 그밖의요인 ±5% 를 편 결정적 범위입니다. 거래사례를 확보하지 못해 "
-            "공시지가 기준 경로 하나만 계산했으며, 이는 **교차검증이 아닙니다**."
+            "공시지가 기준 경로 하나만 계산했으며, 이는 교차검증이 아닙니다."
         ),
     }
 
