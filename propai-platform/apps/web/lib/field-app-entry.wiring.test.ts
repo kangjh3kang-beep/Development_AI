@@ -229,14 +229,33 @@ describe("남은 부채 — 이 축이 못 보는 것", () => {
  * ★★**탐지 축을 따로 잠근다**(저장소 §가드는 3축 — 탐지·특이도·배선).
  *
  * 위 describe 는 «오늘 위반이 0건» 을 단언한다. 그런데 **판정 함수를 약화시켜도 그것은 초록이다**
- * — 위반 파일이 없으니 무엇으로 재도 0이기 때문이다. 실제로 변이로 실증했다:
+ * — 위반 파일이 없으니 무엇으로 재도 0이기 때문이다.
  *
- *     includes("shouldInterceptFieldAppClick(") → includes("shouldInterceptFieldAppClick")
- *         ::VERDICT=SURVIVED          ← 「호출 형태」를 「이름 존재」로 되돌려도 안 잡힌다
- *     FIELDAPP_ROUTES.some(...)        → line.includes("/sales/sites")
- *         ::VERDICT=SURVIVED          ← 라우트 파생을 리터럴 하나로 되돌려도 안 잡힌다
+ * ## ★내가 이 자리에서 두 번 틀렸다 (2026-09-08)
  *
- * ⇒ **판정 함수를 합성 입력으로 직접 태운다.** 그러면 약화가 곧 빨강이 된다.
+ * **1차**: 탐지 테스트를 만들고 «이제 잡힌다» 고 적었는데 **거짓이었다.**
+ *   내가 넣은 변이가 **잡히도록 보장된 것**이었기 때문이다 —
+ *   ①탐지 테스트의 **사본**(`const CALL = "…"`)을 바꿨고(락의 판정식이 아니라)
+ *   ②라우트를 **매칭 0인 문자열**로 바꿨다(등가 리터럴이 아니라).
+ *   ★**사람이 고른 변이는 사람이 못 본 층을 비껴간다** — 적대 리뷰가 **같은 자리에 정확한 변이**를
+ *     넣어 둘 다 `SURVIVED` 임을 실증했다.
+ *
+ * **2차 봉합**: 두 축을 각각 구조로 고쳤다.
+ *   ①`CALL_SHAPE` **모듈 상수 하나**를 락과 탐지 테스트가 **같이** 쓴다(사본 금지).
+ *   ②`fieldAppRouteSegments(base)`·`isFieldAppHrefLine(line, routes)` 를 **인자화**하고
+ *     **픽스처 디렉토리**(`__fixtures__/fieldapp-routes/(fieldapp)/probe/page.tsx`)로 태운다.
+ *     ★그 전에는 파생 결과가 프로덕션 리터럴 `"/sales/sites"` 와 **완전히 같아서**
+ *       「파생판」과 「리터럴판」이 **원리적으로 구별 불가**였다 — 차가 0인 픽스처는 잠금이 아니다.
+ *
+ * 재판정(적대 리뷰가 넣은 **그 변이**로):
+ *
+ *     CALL_SHAPE: "shouldInterceptFieldAppClick(" → "shouldInterceptFieldAppClick"
+ *         ::VERDICT=CAUGHT     (이전 SURVIVED)
+ *     routes.some((r) => line.includes(r))        → line.includes("/sales/sites")
+ *         ::VERDICT=CAUGHT     (이전 SURVIVED)
+ *
+ * ★그 과정에서 함정 하나 더: `Array.prototype.some(fn)` 은 `(el, idx, arr)` 를 넘겨
+ *   **`idx` 가 기본 인자를 덮는다.** 화살표로 감싸야 한다.
  */
 describe("★탐지 축 — 판정 함수가 실제로 무엇을 가르는가", () => {
   it("★라우트 집합이 **디렉토리에서 파생**된다 — 리터럴이면 픽스처를 못 읽는다", () => {
