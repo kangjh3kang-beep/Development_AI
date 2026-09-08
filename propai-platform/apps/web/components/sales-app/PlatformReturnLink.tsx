@@ -41,7 +41,7 @@ export default function PlatformReturnLink({ locale }: { locale: string }) {
   return (
     <Link
       href={`/${locale}`}
-      className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3.5 text-xs font-black text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)] active:scale-95"
+      className="__MUTATED__"
     >
       <ArrowLeft className="size-4" aria-hidden /> 플랫폼으로
     </Link>
