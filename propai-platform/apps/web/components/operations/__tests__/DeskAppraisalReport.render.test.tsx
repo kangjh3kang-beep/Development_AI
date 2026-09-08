@@ -51,8 +51,20 @@ function result(overrides: Record<string, unknown> = {}) {
     confidence: 0.7,
     confidence_basis: "단일 출처 추정",
     range_per_sqm: { low: 1_900_000, high: 2_100_000 },
-    methods: [],
+    methods: [
+      { method: "공시지가기준법", applicable: true, unit_price: 2_000_000, rationale: "표준지 대비 보정" },
+      // ★미적용 방법은 단가가 **없다** — 화면이 그것을 0 으로 그리면 안 된다.
+      { method: "거래사례비교법", applicable: false, unit_price: null, why_not: "인근 실거래 표본 부족" },
+      { method: "수익환원법", applicable: false, unit_price: null, why_not: "임대료 정보 미입력" },
+    ],
     weight_note: "공시지가기준법 단독 채택",
+    cross_check: { firms: [1_950_000, 2_050_000], mean: 2_000_000, cv_pct: 2.5,
+                   min: 1_950_000, max: 2_050_000, note: "이는 교차검증이 아닙니다" },
+    subject_consistency: {
+      ok: false,
+      conflicts: [{ field_a: "지목", field_b: "이용상황", note: "전(田) ↔ 상업용으로 표시" }],
+      basis: "표시 조합 규칙 대조",
+    },
     time_adjust_basis: "R-ONE 지가변동률 서울 실데이터",
     market_stats: {
       region: "서울",
@@ -117,5 +129,53 @@ describe("탁상감정 §Ⅵ 렌더 락", () => {
     await renderAndRun(fallback);
     await waitFor(() => expect(screen.getByText(/시점수정: R-ONE/)).toBeTruthy());
     expect(screen.queryByText(/자본환원율\(R-ONE 실측\)/)).toBeNull();
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // ★R5 HIGH-2 를 **끝까지** 적용한다 — 「형제 grep 락 5건」 중 basis 관련만 바꾸고 넘어갔다가
+  //   측정하니 나머지도 그대로 뚫렸다(둘 다 SURVIVED 실측):
+  //     `{false && res.subject_consistency && …}`          → 물건표시 정합 배지 소멸
+  //     `const hasPrice = true`                            → 미적용 방법 단가를 0 으로 그림
+  //   ★«처방을 지적된 자리에만 적용하면 형제 축이 그대로 남는다» 를 이 PR 에서만 **여섯 번째**로
+  //     밟았다. 지적이 «5건» 이라고 세어 줬는데도 한 건만 고쳤다.
+  // ─────────────────────────────────────────────────────────────
+
+  it("★물건표시 정합을 «확인 요청»으로 **화면에 그린다**(판정 아님)", async () => {
+    await renderAndRun(result());
+    await waitFor(() => expect(screen.getByText(/확인이 필요한 표시 조합/)).toBeTruthy());
+    expect(screen.getByText(/전\(田\) ↔ 상업용으로 표시/)).toBeTruthy();
+    // ★단정하는 낱말을 쓰지 않는다 — 이 규칙의 법적 근거는 미확인이다.
+    expect(screen.queryByText(/틀렸습니다|오류입니다/)).toBeNull();
+  });
+
+  it("★위양성 축 — 정합이 ok 면 그 배지는 **뜨지 않는다**", async () => {
+    const ok = result({ subject_consistency: { ok: true, conflicts: [], basis: "표시 조합 규칙 대조" } });
+    await renderAndRun(ok);
+    await waitFor(() => expect(screen.getByText(/시점수정: R-ONE/)).toBeTruthy());
+    expect(screen.queryByText(/확인이 필요한 표시 조합/)).toBeNull();
+  });
+
+  it("★미적용 방법의 단가를 **0 으로 그리지 않는다** — 사유를 그린다", async () => {
+    await renderAndRun(result());
+    await waitFor(() => expect(screen.getByText("인근 실거래 표본 부족")).toBeTruthy());
+    expect(screen.getByText("임대료 정보 미입력")).toBeTruthy();
+    // 미적용 두 건은 단가 칸이 «—» 여야 한다(0 이 아니다).
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(/^0$/)).toBeNull();
+  });
+
+  it("★「교차검증」 제목은 **적용된 방법이 2개 이상일 때만** 쓴다", async () => {
+    // 적용 1개 — 제목은 «교차검증 아님» 이어야 한다.
+    await renderAndRun(result());
+    await waitFor(() => expect(screen.getByText(/교차검증 아님/)).toBeTruthy());
+  });
+
+  it("★위양성 축 — 적용이 2개면 「교차검증」이라고 말해도 된다", async () => {
+    const two = result();
+    (two.methods as Record<string, unknown>[])[1].applicable = true;
+    (two.methods as Record<string, unknown>[])[1].unit_price = 2_050_000;
+    await renderAndRun(two);
+    await waitFor(() => expect(screen.getByText(/방법 간 교차검증/)).toBeTruthy());
+    expect(screen.queryByText(/교차검증 아님/)).toBeNull();
   });
 });
