@@ -254,16 +254,33 @@ describe("위치 미확인 실거래 — 목록 배선(2026-08-21)", () => {
     expect(src.slice(i, i + 1400)).toContain("위치 미확인");
   });
 
-  it("★사유를 말한다 — 왜 지도에 없는지 설명 없이 목록만 두지 않는다", () => {
-    const src = scan("components/map/SatongMultiMap.tsx");
+  /**
+   * ★★2026-09-08 — 이 두 락은 **고정 길이 창**(`slice(i, i+1400)` · `i+1800`)을 썼다.
+   *   신고③ PR 이 그 블록에 **유형 배지 6줄**을 더하자 「생략」이 창 밖으로 밀려 **빨개졌다**
+   *   (실측: 앵커→「생략」 거리 **2201자** > 창 1800). 계약은 그대로인데 락이 깨진 것이므로
+   *   ***깨진 쪽은 락이다*** — 코드를 되돌리지 않고 **락의 경계를 구조에서 파생**시킨다.
+   *   ★그리고 「못 찾으면 판정 거부」를 **단언 앞에** 둔다 — 앵커가 사라지면 창 방식은
+   *     `slice(-1, …)` 로 **엉뚱한 구간을 검사하며 통과**할 수 있다.
+   */
+  const unlocatedBlock = (src: string): string => {
     const i = src.indexOf("unlocatedMarketGroups.length > 0");
-    expect(src.slice(i, i + 1400)).toContain("지번을 가려");
+    expect(i, "위치 미확인 목록 블록의 시작 앵커가 없다 — 조회기 사망(리팩토링됐나?)").toBeGreaterThan(-1);
+    // 블록의 끝 = 그 목록을 닫는 컨테이너. 없으면 파일 끝까지(창을 임의로 자르지 않는다).
+    const end = src.indexOf("UNLOCATED_LIST_LIMIT}개 그룹", i);
+    const j = end > -1 ? end + 400 : src.length;
+    const block = src.slice(i, j);
+    // ★공허 진리 가드 — 블록이 비면 아래 `toContain` 이 전부 «없어서 실패」가 아니라
+    //   «검사 대상이 없음」이 된다. 최소 크기를 단언해 그 구별을 남긴다.
+    expect(block.length, "블록이 너무 짧다 — 경계 파생이 빗나갔다").toBeGreaterThan(800);
+    return block;
+  };
+
+  it("★사유를 말한다 — 왜 지도에 없는지 설명 없이 목록만 두지 않는다", () => {
+    expect(unlocatedBlock(scan("components/map/SatongMultiMap.tsx"))).toContain("지번을 가려");
   });
 
   it("★절단을 조용히 하지 않는다 — 목록 상한 초과분을 건수로 고지한다", () => {
-    const src = scan("components/map/SatongMultiMap.tsx");
-    const i = src.indexOf("unlocatedMarketGroups.length > 0");
-    const block = src.slice(i, i + 1800);
+    const block = unlocatedBlock(scan("components/map/SatongMultiMap.tsx"));
     expect(block).toContain("UNLOCATED_LIST_LIMIT");
     expect(block).toContain("생략");
   });
