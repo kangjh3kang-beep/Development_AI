@@ -18,13 +18,15 @@ from app.services.sales.contract.service import (
 )
 from app.services.sales.org.overview import TeamOverviewResponse, team_overview
 from app.services.sales.org.service import (
+    _ORG_RANK,
     OrgCrossSiteError,
     OrgCycleError,
     OrgNodeNotFoundError,
+    ancestors_path,
+    assert_hierarchy,
     create_node,
     move_subtree,
     seed_default_org,
-    ancestors_path,
 )
 from app.services.sales.pricing.engine import (
     apply_group_pricing,
@@ -56,10 +58,10 @@ _REGISTER_MATRIX = {
     "MEMBER": {"TEAM_LEADER"},
 }
 
-# 조직 위계 서열(작을수록 상위) — add_node 부모-자식 위계 검증·프론트 addable 판정 공용.
-_ORG_RANK = {
-    "AGENCY": 0, "SUBAGENCY": 1, "GM_DIRECTOR": 2, "DIRECTOR": 3, "TEAM_LEADER": 4, "MEMBER": 5,
-}
+# ★조직 위계 서열은 **서비스 층이 SSOT** 다(2026-09-08 · `org/service.py`).
+#   여기서 이름만 다시 내보낸다 — 라우터를 안 거치는 생산자(`create_node`)도 같은 표를 봐야 하는데,
+#   종전엔 이 파일에만 있어서 위계 판정이 **라우터 두 벌**로만 존재했다.
+#   (`sales_actions._ORG_RANK` 를 보는 기존 테스트는 이 재수출로 그대로 산다.)
 
 # 자주 쓰는 역할 집합(시그니처 길이·중복 축소). require_role(*상수) 로 전개.
 # ★SUPERADMIN 포함(2026-07-23): 매트릭스는 총괄관리자(SUPERADMIN)의 대행사 지정을 허용하는데
@@ -121,11 +123,12 @@ async def add_node(body: dict, db: AsyncSession = Depends(get_db),
             SalesOrgNode.deleted_at.is_(None)))).scalar_one_or_none()
         if parent is None:
             raise HTTPException(404, "상위(부모) 노드를 찾을 수 없습니다")
-        p_rank = _ORG_RANK.get(parent.node_type)
-        n_rank = _ORG_RANK.get(ntype)
-        if p_rank is None or n_rank is None or p_rank >= n_rank:
-            raise HTTPException(
-                400, f"{parent.node_type} 아래에 {ntype}을(를) 둘 수 없습니다(직속 위계 위반).")
+        # ★판정은 서비스 층 한 곳에서 한다(`create_node` 도 같은 것을 부른다).
+        #   여기서 먼저 부르는 이유는 **응답 코드**다 — 서비스는 ValueError 를, API 는 400 을 낸다.
+        try:
+            assert_hierarchy(parent.node_type, ntype)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
         my_path = getattr(ctx, "org_path", None) or ""
         parent_path = str(parent.path)
         if my_path and not (parent_path == my_path or parent_path.startswith(my_path + ".")):
@@ -374,11 +377,14 @@ async def move_node(node_id: uuid.UUID, body: dict, db: AsyncSession = Depends(g
     node_path, parent_path = str(node.path), str(new_parent.path)
     if parent_path == node_path or parent_path.startswith(node_path + "."):
         raise HTTPException(422, "자기 자신 또는 하위 노드 아래로는 이동할 수 없습니다(순환)")
-    p_rank = _ORG_RANK.get(new_parent.node_type)
-    n_rank = _ORG_RANK.get(node.node_type)
-    if p_rank is None or n_rank is None or p_rank >= n_rank:
+    # ★판정은 같은 함수, 문구만 이동 맥락으로 바꾼다(사용자는 «둘 수 없다» 가 아니라 «옮길 수 없다» 를 본다).
+    try:
+        assert_hierarchy(new_parent.node_type, node.node_type)
+    except ValueError as e:
         raise HTTPException(
-            400, f"{new_parent.node_type} 아래로 {node.node_type}을(를) 이동할 수 없습니다(직속 위계 위반).")
+            400,
+            f"{new_parent.node_type} 아래로 {node.node_type}을(를) 이동할 수 없습니다(직속 위계 위반).",
+        ) from e
     my_path = getattr(ctx, "org_path", None) or ""
     if my_path:
         for p in (node_path, parent_path):

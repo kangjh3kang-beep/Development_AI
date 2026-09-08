@@ -36,7 +36,10 @@ MEMBER 101건이 전부 깊이 2 이상 — 대조군이 이 0을 의미있게 �
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -115,7 +118,7 @@ async def test_create_node_allows_child_member(monkeypatch) -> None:
     parent = _FakeNode(node_type="AGENCY", path="a1", site_id=site)
 
     class _Res:
-        def scalar_one_or_none(self_inner): return parent
+        def scalar_one_or_none(self): return parent
 
     class _DB:
         def add(self, _obj): pass
@@ -137,6 +140,252 @@ async def test_create_node_allows_child_member(monkeypatch) -> None:
     assert node.node_type == "MEMBER"
     # 부모 path 를 상속한다 — 체인이 대행사에서 시작한다는 뜻이다.
     assert str(node.path).startswith("a1.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 생성 층 (2) — **위계**도 생성 함수가 강제하는가 (2026-09-08 적대 리뷰 M1)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# ★M1 의 지적: 루트 규칙만 `create_node` 로 내리고 **위계 규칙은 라우터에 남겨 뒀다.**
+#   그래서 «두 생산자가 정반대 규칙을 갖는다» 는 이 PR 의 논지가 **절반만** 실행됐다.
+#   실측(파생형 — `_ORG_RANK` 소비처 전수)으로 위계 판정은 `actions.py` 안에 **두 벌**이었다:
+#   `add_node`(생성) · `move_node`(이동). `org/service.py` 는 `app.api.endpoints` 를
+#   **0회** 임포트하므로, 그 표를 서비스 층으로 옮겨야 순환 없이 공유된다.
+
+
+def _parent_child_db(monkeypatch, svc, parent):
+    """부모 조회는 `parent` 를 돌려주고, 노드 생성만 가로채는 최소 대역."""
+    class _Res:
+        def scalar_one_or_none(self): return parent
+
+    class _DB:
+        def add(self, _obj): pass
+        async def flush(self): pass
+        async def execute(self, *_a, **_k): return _Res()
+
+    real = svc.SalesOrgNode
+
+    class _Ctor(real):  # type: ignore[misc,valid-type]
+        def __new__(cls, **kw):
+            return _FakeNode(**kw)
+
+    monkeypatch.setattr(svc, "SalesOrgNode", _Ctor, raising=True)
+    return _DB()
+
+
+async def test_create_node_rejects_member_under_member(monkeypatch) -> None:
+    """★**부모 MEMBER + 자식 MEMBER → 거부** — 리뷰가 지정한 한 줄.
+
+    라우터를 안 거치는 생산자(`market._link_membership_on_accept`)는 승인자의 노드를 부모로
+    삼는다. 승인자가 **말단 MEMBER** 여도 라우터 검증을 안 거치므로 종전엔 그대로 통과했고,
+    `MEMBER → MEMBER` 사슬이 만들어져 배분 단계가 어긋난다.
+    """
+    from app.services.sales.org import service as svc
+
+    site = uuid.uuid4()
+    parent = _FakeNode(node_type="MEMBER", path="a1.t1.m1", site_id=site)
+    db = _parent_child_db(monkeypatch, svc, parent)
+
+    with pytest.raises(ValueError) as ei:
+        await svc.create_node(db, site, "MEMBER", parent_id=parent.id)
+    # ★사유가 사람에게 도달하는가 — 두 타입이 모두 문구에 실려야 어느 조합이 막혔는지 안다.
+    assert "MEMBER" in str(ei.value)
+    assert "위계" in str(ei.value)
+
+
+async def test_create_node_allows_member_under_team_leader(monkeypatch) -> None:
+    """★★**반대편 모집단** — 정상 위계(TEAM_LEADER → MEMBER)는 **통과한다**.
+
+    이것이 없으면 위 단언이 «모든 부모-자식을 막는다» 와 구별되지 않는다
+    (`assert_hierarchy` 를 무조건 raise 로 바꿔도 초록이 된다).
+    """
+    from app.services.sales.org import service as svc
+
+    site = uuid.uuid4()
+    parent = _FakeNode(node_type="TEAM_LEADER", path="a1.t1", site_id=site)
+    db = _parent_child_db(monkeypatch, svc, parent)
+
+    node = await svc.create_node(db, site, "MEMBER", parent_id=parent.id)
+    assert node.node_type == "MEMBER"
+    assert str(node.path).startswith("a1.t1.")
+
+
+async def test_create_node_rejects_inverted_hierarchy(monkeypatch) -> None:
+    """★같은 서열뿐 아니라 **역전**(팀장 아래 대행사)도 막힌다 — `>=` 의 두 변."""
+    from app.services.sales.org import service as svc
+
+    site = uuid.uuid4()
+    parent = _FakeNode(node_type="TEAM_LEADER", path="a1.t1", site_id=site)
+    db = _parent_child_db(monkeypatch, svc, parent)
+
+    with pytest.raises(ValueError):
+        await svc.create_node(db, site, "AGENCY", parent_id=parent.id)
+
+
+async def test_create_node_rejects_unknown_node_type(monkeypatch) -> None:
+    """★미등재 타입은 **fail-closed** — 서열표에 없으면 통과가 아니라 거부다.
+
+    `_ORG_RANK.get()` 이 `None` 을 주는데 그것을 «비교 불가라 통과» 로 처리하면
+    오타 하나로 위계 전체가 꺼진다.
+    """
+    from app.services.sales.org import service as svc
+
+    site = uuid.uuid4()
+    parent = _FakeNode(node_type="AGENCY", path="a1", site_id=site)
+    db = _parent_child_db(monkeypatch, svc, parent)
+
+    with pytest.raises(ValueError):
+        await svc.create_node(db, site, "MEMBERR", parent_id=parent.id)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 생성 층 (3) — **생산자가 하나뿐인가** (계획서 §5 «노드 생성 단일화» 의 실체)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _tracked_backend_sources() -> tuple[Path, list[str]]:
+    """`git ls-files` 파생 — 새 파일이 생겨도 자동으로 모집단에 들어온다."""
+    api_root = Path(__file__).resolve().parents[1]
+    out = subprocess.run(
+        ["git", "ls-files", "--", "app/*.py"],
+        cwd=api_root, capture_output=True, text=True, check=True,
+    ).stdout.split()
+    return api_root, out
+
+
+def test_no_raw_insert_into_org_nodes_outside_the_service() -> None:
+    """★★`sales_org_nodes` 에 **raw INSERT 하는 곳이 없다** — 규칙을 우회하는 생산자 금지.
+
+    이 PR 의 결함은 «규칙 있는 생산자와 규칙 없는 생산자가 공존했다» 였다.
+    위 행위 락들은 `create_node` 를 태우므로, **누군가 다시 raw INSERT 를 쓰면 전부 초록**이다.
+
+    ★**대조군 없는 «0건» 은 근거가 아니다**(저장소 규율). 같은 조회기로
+      «반드시 있어야 할 것»(`sales_org_nodes` 라는 이름 자체)을 먼저 세어, 조회기 생존을 증명한다.
+    """
+    api_root, tracked = _tracked_backend_sources()
+
+    mentions: list[str] = []
+    offenders: list[str] = []
+    for rel in tracked:
+        src = (api_root / rel).read_text(encoding="utf-8").lower()
+        if "sales_org_nodes" not in src:
+            continue
+        mentions.append(rel)
+        if "insert into sales_org_nodes" in src:
+            offenders.append(rel)
+
+    # ★대조군 먼저 — 이게 비면 아래 «위반 0» 은 «파일을 못 읽었다» 와 같은 값이다.
+    assert len(mentions) >= 5, f"조회기가 죽었다 — `sales_org_nodes` 언급 {len(mentions)}건"
+
+    allowed = {"app/services/sales/org/service.py"}
+    assert not (set(offenders) - allowed), (
+        "조직 노드를 **생성 함수를 거치지 않고** 만드는 곳이 있다: "
+        f"{sorted(set(offenders) - allowed)}\n"
+        "  ★`create_node()` 를 쓰라 — 루트 규칙·위계 규칙이 거기에 있다.\n"
+        "  raw INSERT 는 그 둘을 **전부 우회**하고, 그러면 수수료 RESIDUAL 이 신입에게 꽂힌다."
+    )
+
+
+def test_org_membership_queries_exclude_soft_deleted() -> None:
+    """★소프트 삭제된 노드가 «현재 멤버» 로 세어지지 않는가 — 계획서 §5 넷째 줄의 실체.
+
+    `active = true` 만 보면 **삭제된 노드가 active 인 채로 남아 있는 행**이 멤버로 잡힌다
+    (탈퇴 처리는 `deleted_at` 을 찍고 `active` 를 안 내리는 경로가 있다).
+    ⇒ `sales_org_nodes` 를 `active = true` 로 거르는 **모든** SQL 이 `deleted_at IS NULL` 도 건다.
+
+    ★축은 **파일이 아니라 조회문**이다 — 파일 단위로 세면 한 파일에 5개 중 4개만 고쳐도 초록이다.
+    """
+    api_root, tracked = _tracked_backend_sources()
+
+    checked = 0
+    offenders: list[str] = []
+    for rel in tracked:
+        raw = (api_root / rel).read_text(encoding="utf-8")
+        if "sales_org_nodes" not in raw:
+            continue
+        # SQL 문자열을 조회문 단위로 자른다(대소문자·줄바꿈 무시).
+        flat = " ".join(raw.lower().split())
+        for chunk in flat.split("from sales_org_nodes")[1:]:
+            head = chunk[:400]           # 그 조회문의 WHERE 절이 사는 범위
+            if "active = true" not in head:
+                continue
+            checked += 1
+            if "deleted_at is null" not in head:
+                offenders.append(f"{rel} :: …{head[:120]}…")
+
+    # ★공허 진리 가드 — 태운 조회문이 0이면 아래 단언은 아무것도 말하지 않는다.
+    assert checked >= 3, f"검사 대상 조회문이 너무 적다({checked}) — 조회기 또는 축이 죽었다"
+    assert not offenders, (
+        "`active = true` 만 보고 **소프트 삭제를 안 거르는** 조직 조회가 있다:\n"
+        + "\n".join(f"  - {o}" for o in offenders)
+    )
+
+
+def test_hierarchy_table_is_defined_exactly_once() -> None:
+    """★★**SSOT 락(정의 수)** — 위계 서열표가 저장소에 **한 벌**인가.
+
+    M1 의 근본은 «규칙이 두 곳에 복사됐다» 였다. 위 행위 락들은 `create_node` 만 태우므로,
+    누군가 라우터에 표를 **다시 복사해도** 전부 초록이다 — 그리고 두 표가 갈리는 순간 재발한다.
+
+    ★**임포트가 아니라 AST 로** 판정하는 이유: 라우터 모듈은 무거운 의존을 끌고 와
+      개발 환경(python 3.10)에서 수집조차 안 된다. 임포트에 의존하면 이 락은
+      **CI 에서만 도는 락**이 되고, 그건 재발이 로컬에서 조용해진다는 뜻이다.
+      AST 는 **소스만** 보므로 어디서든 돈다.
+    ★모집단은 `git ls-files` 파생이다 — 새 파일에 표를 복사해도 자동으로 들어온다.
+    """
+    import ast
+    import subprocess
+    from pathlib import Path
+
+    api_root = Path(__file__).resolve().parents[1]
+    tracked = subprocess.run(
+        ["git", "ls-files", "--", "app/*.py"],
+        cwd=api_root, capture_output=True, text=True, check=True,
+    ).stdout.split()
+
+    # ★공허 진리 가드 — 모집단이 비면 아래 «정의 1개» 가 «파일을 못 읽었다» 와 구별되지 않는다.
+    assert len(tracked) > 100, f"백엔드 소스 수집이 비정상적으로 적다: {len(tracked)}"
+
+    definitions: list[str] = []
+    for rel in tracked:
+        src = (api_root / rel).read_text(encoding="utf-8")
+        # 값싼 1차 거름 — 이름이 없는 파일은 파싱하지 않는다.
+        if "_ORG_RANK" not in src:
+            continue
+        for node in ast.walk(ast.parse(src)):
+            targets = (
+                node.targets if isinstance(node, ast.Assign)
+                else [node.target] if isinstance(node, ast.AnnAssign) else []
+            )
+            if any(isinstance(t, ast.Name) and t.id == "_ORG_RANK" for t in targets):
+                definitions.append(rel)
+
+    assert definitions == ["app/services/sales/org/service.py"], (
+        "위계 서열표(`_ORG_RANK`)의 정의가 서비스 층 한 곳이 아니다 — "
+        "두 생산자가 서로 다른 규칙을 갖게 된다.\n"
+        f"  실제 정의 위치: {definitions}\n"
+        "  ★라우터는 `from app.services.sales.org.service import _ORG_RANK` 로 **가져다 쓴다**."
+    )
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="라우터 모듈이 `datetime.UTC`(3.11+)를 쓰는 의존을 끌고 온다 — CI(3.12)에서 실행된다. "
+           "★위 `test_hierarchy_table_is_defined_exactly_once` 가 임포트 없이 같은 축을 잠그므로 "
+           "이 스킵이 무잠금을 뜻하지 않는다.",
+)
+async def test_router_shares_the_service_hierarchy_object() -> None:
+    """★**동일성 락** — 라우터가 보는 표가 서비스 층의 **바로 그 객체**인가(사본이 아닌가).
+
+    위 AST 락은 «정의가 하나» 를 잠그고, 이것은 «그 하나가 실제로 소비된다» 를 잠근다.
+    (정의를 지우고 라우터 안에서 딕셔너리 리터럴을 인라인해도 AST 락은 초록이 될 수 있다.)
+    """
+    from app.api.endpoints.sales import actions as router
+    from app.services.sales.org import service as svc
+
+    assert router._ORG_RANK is svc._ORG_RANK
+    # ★공허 방지 — 표가 비면 위 동일성은 참이지만 아무것도 안 지킨다.
+    assert svc._ORG_RANK["AGENCY"] < svc._ORG_RANK["MEMBER"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -210,10 +459,10 @@ class _RecordingDB:
 
     async def execute(self, *_a, **_k):
         class _R:
-            def scalar_one_or_none(self_inner): return None
-            def scalars(self_inner): return self_inner
-            def all(self_inner): return []
-            def first(self_inner): return None
+            def scalar_one_or_none(self): return None
+            def scalars(self): return self
+            def all(self): return []
+            def first(self): return None
         return _R()
 
 

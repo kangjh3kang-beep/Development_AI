@@ -56,11 +56,29 @@
 C1~C6 이 **서로 독립**이라 각각 `git revert` 가능하다.
 ★C1 만 되돌리면 고아 노드가 다시 생길 수 있으나 C2 가 **배분을 거부**하므로 돈은 안 샌다(이중 가드).
 
-## 5. 잠금 — **두 모집단이 서로 다른 결과를 낸다**
+## 5. 잠금 — **실재하는 테스트 이름으로 적는다**
 
-| 락 | 통과해야 | 막혀야 |
-|---|---|---|
-| 노드 생성 단일화 | `create_node` 경유 승인 → 부모 있는 노드 | raw INSERT 를 되살리는 변이 → **CAUGHT** |
-| 고아 배분 거부 | 정상 체인(AGENCY 루트) → **정상 배분** | 고아 루트 → **거부**(차가 0이면 잠금 아님) |
-| 보류금 현장 스코프 | 내 현장 보류금 → 해제됨 | **남의 현장 보류금 → 거부** |
-| 멤버십 판정 | active + 미삭제 | `deleted_at IS NOT NULL AND active=true` → **거부**(행을 **실제로 만들어** 태운다) |
+★**2026-09-08 정정(적대 리뷰 B2)**: 이 절의 앞 판은 락 4개를 **산문으로 선언**했고,
+그중 **3개는 대응하는 테스트가 없었다.** 계획서가 선언한 잠금이 실제로 존재하는지는
+저장소 규율(계획 게이트 §C)이 요구하는 것인데, 그것을 내가 어겼다.
+⇒ 이제 **파일::함수** 로 적는다. 이름을 댈 수 없는 줄은 **부채**라고 쓴다.
+
+| 무엇을 지키나 | 통과해야(모집단 A) | 막혀야(모집단 B) | 실재하는 락 |
+|---|---|---|---|
+| **루트는 AGENCY 만** | 부모 없는 `AGENCY` · 부모 있는 `MEMBER` | 부모 없는 `MEMBER` | `apps/api/tests/test_commission_orphan_node_integrity.py::test_create_node_{allows_orphan_agency,allows_child_member,rejects_orphan_non_agency}` |
+| **위계도 생성 함수가 강제** | `TEAM_LEADER → MEMBER` | `MEMBER → MEMBER` · 역전 · 미등재 타입 | 같은 파일 `::test_create_node_{allows_member_under_team_leader,rejects_member_under_member,rejects_inverted_hierarchy,rejects_unknown_node_type}` |
+| **위계 규칙이 한 벌** | 서비스 층 1곳 정의 | 라우터가 표를 **재정의** | 같은 파일 `::test_hierarchy_table_is_defined_exactly_once`(AST·어디서나) + `::test_router_shares_the_service_hierarchy_object`(동일성·CI 3.11+) |
+| **생산자가 하나** | `create_node` 경유 | `INSERT INTO sales_org_nodes` 재등장 | 같은 파일 `::test_no_raw_insert_into_org_nodes_outside_the_service` (대조군 = `sales_org_nodes` 언급 ≥5) |
+| **고아 배분 거부** | 정상 체인(AGENCY 루트) → 배분 | 고아 루트 → 거부 | 같은 파일 `::test_split_commission_{allows_normal_chain,rejects_orphan_root}` — ★**원문 `split_commission` 을 부른다**(대역 아님) |
+| **보류금 현장 스코프** | 내 현장 split | 남의 현장 split | `apps/api/tests/test_commission_site_scope_axis.py::test_gate_{allows_own_site_split,rejects_split_from_another_site}` + 시그니처 축 3건 |
+| **소프트 삭제 제외** | `active=true AND deleted_at IS NULL` | `active=true` 만 보는 조회 | `test_commission_orphan_node_integrity.py::test_org_membership_queries_exclude_soft_deleted` (축 = **조회문**, 파일 아님) |
+| **보류 사유가 구별된다** | 사유 7종이 서로 다른 문구 | 사유를 한 값으로 뭉갬 | `apps/api/tests/test_membership_reason_axis.py`(4건) + `apps/web/lib/sales-app/__tests__/membership-reason.test.ts`(8건) |
+| **사유가 화면까지 도달** | `ORG_NOT_SEEDED` → 조치 문구 렌더 | `LINKED` → 문구 없음 | `apps/web/components/sales-app/__tests__/job-market-decide-reason-render.test.tsx`(4건) — ★**호출이 아니라 DOM 을 태운다** |
+
+### ★부채 (무잠금 — 초록 안에서 보이게 둔다)
+
+| 항목 | 왜 아직 못 잠갔나 |
+|---|---|
+| `test_router_shares_the_service_hierarchy_object` | 개발 환경 python 3.10 에서 라우터 모듈이 `datetime.UTC`(3.11+) 의존을 끌고 와 **수집 불가** → `skipif` · **CI(3.12)에서만** 실행. 같은 축을 임포트 없이 잠그는 AST 락이 옆에 있으므로 **무잠금은 아니다** |
+| 승인 경로의 **DB 통합 테스트** | 조직 트리는 postgres+ltree 가 필요한데 로컬에 없다. 현재 락은 전부 **단위/파생형**이라 «실제 ltree path 가 올바르게 붙는가» 는 **미측정** |
+| `_REGISTER_MATRIX`(직속 등록 권한) | 위계 서열표는 SSOT 로 옮겼으나 **등록 권한 매트릭스는 아직 라우터에 있다.** `create_node` 는 그것을 보지 않는다 — 즉 **라우터를 안 거치는 경로는 권한 매트릭스를 우회**한다. 이번 승인 경로는 자체 관리자 검사를 하므로 돈은 안 새지만, **축은 같은 형태**다 |

@@ -79,6 +79,27 @@ def rewrite_subtree_path(old: str, new_parent_path: str, path: str) -> str:
     return ".".join([*new_parent_path.split("."), *remainder])
 
 
+# ★조직 위계 서열(작을수록 상위) — **여기가 SSOT 다**(2026-09-08).
+#   종전엔 `endpoints/sales/actions.py` 에 있었고 위계 판정이 **라우터에 두 벌**로 복사돼 있었다
+#   (`add_node` 생성 · `move_node` 이동). 그래서 라우터를 안 거치는 생산자는 위계를 안 봤다.
+#   ★서비스 층에 두면 라우터가 임포트하는 방향이 되어 **순환이 없다**(반대는 순환이다).
+_ORG_RANK = {
+    "AGENCY": 0, "SUBAGENCY": 1, "GM_DIRECTOR": 2, "DIRECTOR": 3, "TEAM_LEADER": 4, "MEMBER": 5,
+}
+
+
+def assert_hierarchy(parent_type: str, child_type: str) -> None:
+    """부모가 자식보다 **상위**인지 — 판정을 한 곳에 둔다.
+
+    ★위반이면 `ValueError` 를 던진다(라우터가 400 으로 매핑). 미등재 타입은 **거부**한다
+      (fail-closed — `_REGISTER_MATRIX` 의 «미등재 node_type 은 403» 과 같은 방향).
+    """
+    p = _ORG_RANK.get(str(parent_type))
+    c = _ORG_RANK.get(str(child_type))
+    if p is None or c is None or p >= c:
+        raise ValueError(f"{parent_type} 아래에 {child_type}을(를) 둘 수 없습니다(직속 위계 위반).")
+
+
 async def create_node(db: AsyncSession, site_id, node_type, parent_id=None, **kw) -> SalesOrgNode:
     """org 노드 생성. parent_id 가 있으면 그 부모의 path 를 상속해 자식 path 를 만든다.
 
@@ -111,6 +132,11 @@ async def create_node(db: AsyncSession, site_id, node_type, parent_id=None, **kw
         raise ValueError(
             "부모 없이 만들 수 있는 것은 대행사(AGENCY) 노드뿐입니다 — "
             f"'{node_type}' 는 상위 노드를 지정해야 합니다(수수료 배분 체인이 대행사에서 시작한다)")
+    # ★★위계도 **여기서** 강제한다(2026-09-08 적대 리뷰 M1).
+    #   종전엔 루트 규칙만 생성 함수로 내리고 위계는 라우터에 남겨 뒀다 — 그래서
+    #   «두 생산자가 정반대 규칙을 갖는다» 는 이 PR 의 논지를 **절반만** 실행한 셈이었다.
+    if parent is not None:
+        assert_hierarchy(parent.node_type, node_type)
     node = SalesOrgNode(site_id=site_id, node_type=node_type, parent_id=parent_id, path="tmp", **kw)
     db.add(node)
     await db.flush()
