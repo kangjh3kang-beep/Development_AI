@@ -1267,6 +1267,65 @@ export function marketPopupHtml(
   ].join("");
 }
 
+/** `buildMarketMarker` 가 쓰는 Leaflet 최소 계약(구조적 타이핑 — 전체를 끌어오지 않는다). */
+type MarketMarkerLeaflet = {
+  circleMarker: (latlng: [number, number], options: Record<string, unknown>) => {
+    bindPopup: (html: string, opts?: Record<string, unknown>) => unknown;
+  };
+};
+
+/**
+ * 실거래 마커 하나를 만든다 — 팝업·색·라벨을 **한 `entry` 에서** 얻는다.
+ *
+ * ★★2026-09-09 — 이 함수가 생긴 이유(#1018 적대 리뷰 MAJOR-6 의 미해결분):
+ *   마커의 **유형 동일성**이 무잠금이었다. 호출부에서 `const { type, … } = entry` 를
+ *   `const type = "apt"` 로 바꿔치기하면 **모든 마커가 「아파트」라고 말하는데 2412건이 초록**
+ *   이었다(SURVIVED 실측). 그 배선이 Leaflet effect 안의 **지역변수**라 태울 수 없었다.
+ *
+ * ★처방은 «락을 더 만드는 것»이 아니라 **바꿔치기할 지역변수를 없애는 것**이다:
+ *   유형 문자열이 아니라 **`entry` 를 통째로** 받는다. 그러면 팝업이 말하는 유형과 마커 색이
+ *   **같은 인자에서** 나오므로 그 짝이 이 함수 안에서 잠긴다.
+ *
+ * ★그리고 이제 **진짜 Leaflet 으로 행위 검증**된다 — #1024 가 목이 필요 없음을 실증했다
+ *   (`leaflet` 이 의존성에 선언돼 있고 jsdom 에서 그대로 돈다).
+ *
+ * ★`addTo(group)` 과 `bounds.extend` 는 **effect 에 남긴다** — 레이어·경계는 effect 관심사다.
+ */
+export function buildMarketMarker(
+  L: MarketMarkerLeaflet,
+  item: SatongMarketGroup,
+  entry: { type: string; color: string },
+  opts: { kind: "trade" | "rent"; permanent: boolean; pyeongFirst: boolean },
+): unknown {
+  const radius = Math.min(18, 7 + Math.round(Math.sqrt(Math.max(1, item.count)) * 1.5));
+  const marker = L.circleMarker([item.lat, item.lon], {
+    radius,
+    color: "#ffffff",
+    weight: 2,
+    fillColor: entry.color,
+    fillOpacity: 0.9,
+    // ★U6 근본수정: L.Path(circleMarker) 기본 bubblingMouseEvents=true 라 점 클릭이
+    //   지도 click으로 번져 필지선택(현 팝오버)이 함께 발동했다. 점 클릭 = 정보 팝업만.
+    bubblingMouseEvents: false,
+  }).bindPopup(marketPopupHtml(item, opts.kind, entry.type), { maxWidth: 300 });
+
+  // 정보 상시화(2026-07-17): 라벨에 평균가를 병기 — hover 없이도 핵심값이 보이게.
+  // ★평당가는 **서버가 준 값**을 쓴다(여기서 나눗셈하지 않는다 — 산식이 세 곳에 흩어져 있었고
+  //   그중 이 자리만 반올림 규약이 없어 허위 정밀도를 찍었다). 면적 결측이면 서버가 `null` 을
+  //   주고 평당을 **생략**한다(0 을 찍지 않는다).
+  const priceTag = composeMarketPriceTag({
+    kind: opts.kind,
+    totalText: item.avg_price_10k ? won(item.avg_price_10k) : null,
+    perPyeong10k: item.price_per_pyeong_10k,
+    pyeongFirst: opts.pyeongFirst,
+  });
+  bindSatongLabel(marker as never, `${item.name || "실거래"}${priceTag}`, {
+    permanent: opts.permanent,
+    offsetY: radius,
+  });
+  return marker;
+}
+
 function presalePopupHtml(item: SatongPresaleItem): string {
   const status = item.status || "미정";
   const url = item.url && /^https?:\/\//.test(item.url) ? item.url : "";
@@ -2934,50 +2993,29 @@ export function SatongMultiMap({
     //   유형별 서브슬롯(labelPlan[`market:${type}`])으로 공평 배분(P3 — 한 유형이 전역 라벨
     //   버짓을 독식하지 않게).
     for (const entry of marketRenderPlan) {
-      const { type, color: typeColor, groups } = entry;
-      const typeLabelLimit = labelPlan[`market:${type}`] ?? 0;
+      const typeLabelLimit = labelPlan[`market:${entry.type}`] ?? 0;
       cappedTotal += entry.cappedCount;
       let typeShown = 0;
 
-      groups.forEach((item) => {
+      entry.groups.forEach((item) => {
         const ordinal = typeShown;
         typeShown += 1;
         marketCount += 1;
-        const radius = Math.min(18, 7 + Math.round(Math.sqrt(Math.max(1, item.count)) * 1.5));
-        const marker = L.circleMarker([item.lat, item.lon], {
-          radius,
-          color: "#ffffff",
-          weight: 2,
-          fillColor: typeColor,
-          fillOpacity: 0.9,
-          // ★U6 근본수정: L.Path(circleMarker) 기본 bubblingMouseEvents=true 라 점 클릭이
-          //   지도 click으로 번져 필지선택(현 팝오버)이 함께 발동했다. 점 클릭 = 정보 팝업만.
-          bubblingMouseEvents: false,
-        })
-          .bindPopup(marketPopupHtml(item, kind, type), { maxWidth: 300 })
-          .addTo(group);
-        // 정보 상시화(2026-07-17): 라벨에 평균가를 병기 — hover 없이도 핵심값이 보이게(jootek 가격 pill).
-        // ★R1 #2: 팝업과 동일 공용 포맷터 won() 재사용 — 억미만 "0.4억" 어색 표기·라벨/팝업 불일치 제거.
-        // 총액/평당 토글(실거래 unit-price 컨트롤 — jootek '총액/평당' 패리티): 평당가는
-        // avg_price_10k(만원)/평(avg_area_m2/3.305785). 면적 결측 시 총액 폴백(정직).
-        // ★총액·평당 **병기**(사용자 요청 2026-09-04). 종전엔 either/or 라 한쪽을 보려면
-        //   다른 쪽을 포기해야 했다.
-        //   ★평당가는 **서버가 준 값**을 쓴다 — 여기서 나눗셈하지 않는다. 산식이 세 곳에
-        //     흩어져 있었고(정본 realtx `per_pyeong_10k` · nearby_map 집계 내부 · 이 인라인),
-        //     그중 이 자리만 반올림 규약이 없어 허위 정밀도(4자리)를 찍고 있었다.
-        //   ★면적 결측이면 서버가 `null` 을 준다 → 평당을 **생략**한다(0 을 찍지 않는다).
-        // `unit-price` 컨트롤은 이제 **어느 쪽을 앞에 둘지**를 정한다(둘 다 항상 표시).
-        const priceTag = composeMarketPriceTag({
+        // ★★유형·색·팝업을 **한 `entry` 에서** 얻는다(#1018 MAJOR-6). 종전엔 여기서
+        //   `const { type, color: typeColor } = entry` 로 풀어 썼고, 그 지역변수를
+        //   `"apt"` 로 바꿔치기하면 **모든 마커가 「아파트」인데 2412건이 초록**이었다.
+        //   `entry` 를 통째로 넘겨 **바꿔치기할 지역변수를 없앤다** — 동일성은
+        //   `buildMarketMarker` 안에서 진짜 Leaflet 으로 검증된다.
+        const marker = buildMarketMarker(L, item, entry, {
           kind,
-          totalText: item.avg_price_10k ? won(item.avg_price_10k) : null,
-          perPyeong10k: item.price_per_pyeong_10k,
+          permanent: ordinal < typeLabelLimit,
           pyeongFirst: pricePerPyeongOn,
-        });
-        bindSatongLabel(marker, `${item.name || "실거래"}${priceTag}`, { permanent: ordinal < typeLabelLimit, offsetY: radius });
+        }) as { addTo: (g: unknown) => unknown };
+        marker.addTo(group);
         bounds.extend([item.lat, item.lon]);
       });
 
-      if (typeShown) byType[type] = typeShown;
+      if (typeShown) byType[entry.type] = typeShown;
     }
     setMarketTypeCounts(byType);
 
