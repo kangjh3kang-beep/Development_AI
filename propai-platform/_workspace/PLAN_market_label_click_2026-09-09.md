@@ -28,7 +28,7 @@
 | P4 | 라벨이 이벤트를 받나 | `globals.css` | `.leaflet-tooltip.satong-tooltip { pointer-events: none }` |
 | P5 | 지도 클릭이 무엇을 하나 | `SatongMultiMap.tsx` | `map.on("click") → setClickMenu(...)` = **필지 선택 팝오버** |
 | P6 | 그 가드 | 같은 곳 | `if (readOnly) return;` 뿐이고 **신고 화면은 그 prop 을 안 넘긴다**(`grep -c readOnly SatongMapShell.tsx` = **0**) |
-| P7 | ★`bindTooltip(..., {interactive:true})` 가 듣나 | **Leaflet 1.9.4 원문** | ★**아니다.** `Tooltip` 블록(`leaflet-src.js:10642~10870`)에 **`interactive` 언급 0건**이고 `Tooltip._initLayout` 도 안 본다. ⇒ 그 옵션은 **아무 효과가 없다** |
+| P7 | ★`bindTooltip(..., {interactive:true})` 가 듣나 | **Leaflet 1.9.4 원문 + 실행** | ★★**듣는다 — 초판이 거짓이었다.** 옵션은 부모 `DivOverlay` 에 있다(`:9776-9778` 선언 · `:9875-9877` 소비 · `Tooltip = DivOverlay.extend`·`onAdd` 위임). 초판은 **`Tooltip` 블록만** 조회해 «0건»을 봤다 — 그 범위로는 **상속 구현을 원리적으로 못 본다**(§26). ★형제 증거가 바로 옆: `leaflet.css:592-595` `.leaflet-tooltip.leaflet-interactive{cursor:pointer;pointer-events:auto}` |
 | P8 | 그럼 전파 경로는 있나 | 같은 원문 | **있다** — `Tooltip.onAdd` 이 `this.addEventParent(this._source)` 를 부른다 |
 | P9 | ★★**라벨 클릭이 실제로 지도 클릭을 발화하나** | **jsdom + 진짜 Leaflet 실행** | ★**그렇다 — 발화 1회.** 툴팁 DOM 에 `click` 을 디스패치하니 `map.on("click")` 이 **1회** 불렸다 |
 | P10 | ★jsdom 에서 진짜 Leaflet 이 도나 | 탐침 테스트 | ★**돈다.** 맵·`circleMarker`·`bindPopup`·`bindTooltip`(permanent) 전부 생성·조회됐다 |
@@ -54,6 +54,39 @@
 
 ⇒ **결과는 같고 경로는 다르다.** 그래서 락은 «지도 click 이 발화하는가/않는가»(결과)를 재고,
 `pointer-events` 자체는 **CSS 계약**으로만 다룬다(jsdom 이 못 재는 축임을 명시).
+
+---
+
+### ★★1-c. 처방을 **71줄에서 한 줄로** 바꿨다 (적대 리뷰 REJECT · MAJOR 4건)
+
+P7 이 뒤집히자 초판의 근거가 통째로 무너졌다. 직접 태운 결과:
+
+| 입력 | map click | 팝업 | 클래스 |
+|---|---|---|---|
+| 마커 라벨(팝업 **有**) | **0** | **열림** | `leaflet-interactive` 부착 |
+| 앵커 라벨(팝업 **無**) | **1** ✔ | — | 미부착 |
+
+⇒ `interactive: !!marker.getPopup?.()` **한 줄**이 초판의 71줄보다 낫다. 그리고:
+
+| 리뷰 지적 | 결과 |
+|---|---|
+| **MAJOR-2** 라벨이 **측정점 수집·필지 선택까지 삼킨다** | ★**원천 소멸**(앵커는 map click 1회 유지). 초판은 무조건 삼켰고 **내 락이 그 상실을 «그게 옳다» 며 계약으로 굳히고 있었다** |
+| **MAJOR-3** 팬 후 클릭이 팝업을 연다 | ★**자동 보호** — Leaflet 의 `_draggableMoved` 가드가 **컨테이너 리스너 안**이다(`:4475-4478`). 생 DOM 핸들러는 그 밖이었다 |
+| **MAJOR-4** 「두 모집단」이 **공허**(`map.fire` 합성 발화) | **실제 DOM 클릭**으로 교체 — 리뷰어 변이가 **CAUGHT** 로 뒤집혔다 |
+| MINOR-1·2 무잠금 2건 | 코드가 사라져 **소멸** |
+| MINOR-4 커서 어포던스 | Leaflet CSS 가 `cursor:pointer` 를 **공짜로** 준다 |
+
+★**CSS 명시도 함정**(실측): Leaflet 의 `.leaflet-tooltip.leaflet-interactive` 와 우리
+`.leaflet-tooltip.satong-tooltip` 은 **명시도가 같아(0,2,0) 소스 순서가 승부를 가른다** —
+globals.css 가 나중이면 우리 `none` 이 이겨 **조용히 무력화**된다.
+→ `.leaflet-tooltip.satong-tooltip.leaflet-interactive`(0,3,0)로 **순서 비의존**으로 못 박았다.
+
+★**내 픽스처가 프로덕션과 달랐다** — 실제 마커 10곳이 전부 `bubblingMouseEvents:false` 를 쓰는데
+초판 픽스처는 안 썼다. 동형화했다(***내가 잰 것이 사용자가 실제로 쓰는 그것인가***).
+
+★**hover 라벨은 못 닫았다 — 부채로 남긴다**: `interactive` 는 설정되고 열린 직후 클래스도 붙는데
+**클릭 시점 target 에는 그 클래스가 없어** map click 1회가 난다(계측). **원인 미규명**이고
+«hover 라벨을 실제로 클릭할 수 있는가»도 **미측정**이다. `it.todo` 로 초록 안에 뒀다.
 
 ---
 
