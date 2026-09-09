@@ -50,6 +50,82 @@ verdict_exit() {
   if [ "${OBS:-0}" -eq 1 ]; then echo "판정: ★관측 이상 — 위반은 아니나 **이상 없음도 아니다** (exit 4)"; exit 4; fi
   echo "판정: 이상 없음 — 모든 프로브 생존 (exit 0)"; exit 0
 }
+# ── 델타 축(★락이 실물로 태운다 — 그래서 `--verdict-lib` 게이트 **위**에 둔다) ──
+#   ★2026-09-09: 종전 `runtime_delta` 는 게이트 **아래**에 있어 테스트가 꺼낼 수 없었다.
+#     그러면 사람은 파이프라인을 테스트에 **복사**하게 되고, 형제 락이 그것을 명문으로 금지한다
+#     (*"사본을 태우지 않는다 — 프로덕션 분기를 통째로 되돌려도 락이 초록"*, #905 실측).
+runtime_delta() {  # $1=배포된 sha, $2..=경로들 → 런타임 변경 파일 수
+  local base="$1"; shift
+  [ -z "$base" ] && { echo "?"; return; }
+  # ★거짓 초록 봉합(2026-09-09 실측): base 가 로컬에 없으면 `git diff` 가 fatal 이고
+  #   `2>/dev/null` 이 그것을 삼켜 grep 입력이 0줄 → **`0` → "✅ 수렴"** 으로 읽혔다.
+  #   실측: `deadbeef..origin/main` → 0 / 대조군 유효 sha → 2. 「배포 안 됨」이 「수렴」으로 뒤집힌다.
+  git cat-file -e "${base}^{commit}" 2>/dev/null || { echo "?"; return; }
+  git diff --name-only "$base..origin/main" -- "$@" 2>/dev/null \
+    | grep -vcE '(__tests__|\.test\.|\.spec\.|vitest\.config|/tests/|test_)'
+}
+
+# 델타가 **주석·독스트링만**인지 판정한다 → `yes` / `no` / `unknown`
+#   ★줄 접두 필터(`^[-+]\s*#`)를 쓰지 않는다 — 실측으로 틀렸다: 파이썬 **독스트링 본문**을
+#     코드로 세고(정답 1 ↔ 측정 3), 반대로 `*) …;;`·`//`·셔뱅 같은 **실행 줄을 주석으로 버린다**.
+#     그래서 **AST** 로 판정한다(주석은 AST 에 없고, 독스트링은 명시적으로 제거한다).
+#   ★`.py` 가 아닌 변경이 하나라도 있거나, 수정(M) 이외 상태(추가·삭제·이름변경·모드)가 있거나,
+#     python3 가 없거나 파싱이 실패하면 **`unknown`** 이다 — 그때는 **강등하지 않는다**(안전한 쪽).
+comment_only_delta() {  # $1=배포된 sha, $2..=경로들
+  local base="$1"; shift
+  [ -z "$base" ] && { echo "unknown"; return; }
+  git cat-file -e "${base}^{commit}" 2>/dev/null || { echo "unknown"; return; }
+  command -v python3 >/dev/null 2>&1 || { echo "unknown"; return; }
+  local files
+  files=$(git diff --name-only --diff-filter=M "$base..origin/main" -- "$@" 2>/dev/null \
+          | grep -vE '(__tests__|\.test\.|\.spec\.|vitest\.config|/tests/|test_)')
+  local all
+  all=$(git diff --name-only "$base..origin/main" -- "$@" 2>/dev/null \
+        | grep -vE '(__tests__|\.test\.|\.spec\.|vitest\.config|/tests/|test_)')
+  [ -z "$all" ] && { echo "unknown"; return; }              # 변경 없음은 이 함수가 답할 질문이 아니다
+  [ "$files" != "$all" ] && { echo "unknown"; return; }     # 추가·삭제·rename·모드가 섞였다
+  echo "$all" | grep -qvE '\.py$' && { echo "unknown"; return; }   # .py 아닌 것이 있다
+  BASE_REV="$base" python3 - $all <<'PYEOF' 2>/dev/null || echo unknown
+import ast, os, subprocess, sys
+base = os.environ["BASE_REV"]
+def blob(rev, path):
+    r = subprocess.run(["git", "show", f"{rev}:{path}"], capture_output=True)
+    return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else None
+def norm(src):
+    if src is None:
+        return None
+    tree = ast.parse(src)                      # SyntaxError 면 밖에서 unknown 이 된다
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if isinstance(body, list) and body:
+            first = body[0]
+            if (isinstance(first, ast.Expr)
+                    and isinstance(getattr(first, "value", None), ast.Constant)
+                    and isinstance(first.value.value, str)):
+                body.pop(0)                    # 독스트링 제거
+    return ast.dump(tree, include_attributes=False)
+for path in sys.argv[1:]:
+    if norm(blob(base, path)) != norm(blob("origin/main", path)):
+        print("no"); break
+else:
+    print("yes")
+PYEOF
+}
+# 델타 판정을 **순수 함수**로 꺼낸다 → `converged` / `obs` / `viol`
+#   ★왜 꺼냈나: ⑤-2 블록 안에 인라인으로 두면 그것을 태우려면 보드·SSH·네트워크가 전부 살아야 해서
+#     **아무도 안 태운다.** 그러면 락은 «소스에 `OBS=1` 이라는 문자열이 있는가» 로 내려앉고,
+#     그건 이 저장소가 «존재를 잠그면 행위는 안 잠긴다» 로 이미 값을 치른 형태다.
+#   인자: $1=web델타 $2=api델타 $3=컨테이너입력델타 $4=web주석만(yes/no/unknown) $5=api주석만
+delta_verdict() {
+  local wd="$1" ad="$2" cd_="$3" cow="$4" coa="$5"
+  if [ "$wd" = "0" ] && [ "$ad" = "0" ] && [ "$cd_" = "0" ]; then echo "converged"; return; fi
+  # 컨테이너 입력(Dockerfile·requirements)이 바뀌면 강등하지 않는다 — 재빌드가 필요하다
+  if [ "$cd_" != "0" ]; then echo "viol"; return; fi
+  if { [ "$ad" = "0" ] || [ "$coa" = "yes" ]; } && { [ "$wd" = "0" ] || [ "$cow" = "yes" ]; }; then
+    echo "obs"; return
+  fi
+  echo "viol"
+}
 if [ "${1:-}" = "--verdict-lib" ]; then return 0 2>/dev/null || exit 0; fi
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # ★cd 이전에 확정한다
@@ -85,17 +161,23 @@ printf "   origin/main %s │ 158 web %s │ 168 api %s\n" "$MAIN" "${SWPUB:-★
 #   ★가드의 위양성도 결함이다 — 정상 운영을 실패로 찍으면 곧 무시당한다.
 WSHA=$(echo "$SWPUB" | grep -oE '[0-9a-f]{8}$')
 ASHA=$(echo "$API"   | grep -oE '[0-9a-f]{8}$')
-runtime_delta() {  # $1=배포된 sha, $2..=경로들 → 런타임 변경 파일 수
-  local base="$1"; shift
-  [ -z "$base" ] && { echo "?"; return; }
-  git diff --name-only "$base..origin/main" -- "$@" 2>/dev/null \
-    | grep -vcE '(__tests__|\.test\.|\.spec\.|vitest\.config|/tests/|test_)'
-}
+# (runtime_delta 는 위 판정 구역으로 옮겼다 — 락이 실물을 태울 수 있도록)
 WD=$(runtime_delta "$WSHA" propai-platform/apps/web/ propai-platform/packages/)
 AD=$(runtime_delta "$ASHA" propai-platform/apps/api/ propai-platform/apps/worker/)
-CD=$(git diff --name-only "${ASHA:-HEAD}..origin/main" 2>/dev/null | grep -cE 'Dockerfile|docker-compose|requirements.*\.txt')
+# ★CD 도 같은 거짓 초록을 갖는다 — base 가 로컬에 없으면 grep 입력이 0줄이라 **0** 이 나온다.
+if [ -n "${ASHA:-}" ] && ! git cat-file -e "${ASHA}^{commit}" 2>/dev/null; then
+  CD="?"
+else
+  CD=$(git diff --name-only "${ASHA:-HEAD}..origin/main" 2>/dev/null | grep -cE 'Dockerfile|docker-compose|requirements.*\.txt')
+fi
 printf "   런타임 델타 — web %s파일 · api %s파일 · 컨테이너입력 %s파일\n" "$WD" "$AD" "$CD"
-if [ "$WD" = "?" ] || [ "$AD" = "?" ]; then
+if [ "$WD" = "?" ] || [ "$AD" = "?" ] || [ "$CD" = "?" ]; then
+  # ★`3` 의 희소성을 지킨다(c8 리뷰 2026-09-09): 이제 **fetch 지연만으로도** 여기 올 수 있다.
+  #   상시 3 이 되면 3 이 무시되고 그때 진짜 검사기 사망이 묻힌다 — 그래서 **어느 3 인지 말한다.**
+  for _sha in "$WSHA" "$ASHA"; do
+    [ -n "$_sha" ] && ! git cat-file -e "${_sha}^{commit}" 2>/dev/null \
+      && echo "   ★배포 sha ${_sha} 가 **로컬 저장소에 없다** — `git fetch origin` 후 다시 보라(fetch 지연·스쿼시·미머지 빌드)."
+  done
   echo "   ★배포 sha 조회 실패 — 수렴 여부를 **모른다**."; DEAD=1
 elif [ "$WD" -eq 0 ] && [ "$AD" -eq 0 ] && [ "$CD" -eq 0 ]; then
   echo "   ✅ 수렴 — 굽지 않아도 되는 상태(sha 가 달라도 런타임은 최신)"
@@ -299,8 +381,21 @@ else
     echo "$REQ" | sed 's/^/   /' | cut -c1-150
     # 요청이 있는데 아직 구울 것이 남아 있으면 미처리로 본다
     if [ "${WD:-0}" != "0" ] || [ "${AD:-0}" != "0" ] || [ "${CD:-0}" != "0" ]; then
-      echo "   ★★미처리 — 위 요청이 있는데 **런타임 델타가 남아 있다**(web ${WD} · api ${AD})"
-      VIOL=1
+      # ★2026-09-09: 「파일이 바뀌었다」와 「런타임이 바뀐다」는 다른 명제다. 주석·독스트링만 바뀐
+      #   델타를 **위반(2)** 으로 내면 상시 빨강이 되고, 상시 빨강은 곧 무시된다(#868 이 이미 치른 값).
+      #   그렇다고 **0(이상 없음)** 으로 내리지 않는다 — 컨테이너 소스는 여전히 git 과 갈려 있고
+      #   이 저장소는 컨테이너 소스를 표식으로 grep 한다(이 파일 자신이 그렇게 한다).
+      #   ⇒ 있는 칸을 쓴다: **관측 이상(4)**. 「위반은 아니나 이상 없음도 아니다」.
+      CO_API=$(comment_only_delta "$ASHA" propai-platform/apps/api/ propai-platform/apps/worker/)
+      CO_WEB=$(comment_only_delta "$WSHA" propai-platform/apps/web/ propai-platform/packages/)
+      if [ "$(delta_verdict "${WD:-0}" "${AD:-0}" "${CD:-0}" "$CO_WEB" "$CO_API")" = "obs" ]; then
+        echo "   ★관측 이상 — 위 요청의 델타는 **주석·독스트링만**이다(web ${WD} · api ${AD} · AST 판정)"
+        echo "     런타임 동작 변화 0. 다만 **컨테이너 소스는 git 과 갈려 있다** — 다음 배포가 해소한다."
+        OBS=1
+      else
+        echo "   ★★미처리 — 위 요청이 있는데 **런타임 델타가 남아 있다**(web ${WD} · api ${AD} · 주석만? api=${CO_API} web=${CO_WEB})"
+        VIOL=1
+      fi
     else
       echo "   → 런타임 델타 0 이므로 위 요청은 **처리됨**으로 본다"
     fi
