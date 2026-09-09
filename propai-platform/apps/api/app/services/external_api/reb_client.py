@@ -412,8 +412,14 @@ def rate_series_from_rows(
             #   그래서 부분문자열 매칭은 **같은 달의 수십 개 하위지역**을 한 시계열로 모았고,
             #   소비처는 그것을 「그 지역 24개월」로 읽어 ∏(1+r/100) 로 곱했다
             #   (라이브: 경기 `yearly 2024 = +80.68%` — 월 최대 0.267%로는 물리적으로 불가).
-            if region_filter and region_filter not in row_region_names(row):
-                continue
+            #
+            # ★★중복 판정 제거(자기적용 변이 2026-09-09): R6 에서 지역 필터를 위 `candidates`
+            #   목록으로 옮기면서 **여기 있던 같은 검사를 안 지웠다.** 기능상 무해했지만
+            #   **변이 검증을 눈멀게 했다** — 한쪽만 바꾸면 다른 쪽이 막아 «등가» 로 나오고,
+            #   그래서 «정확일치» 라는 이 함수의 핵심 계약이 **어느 쪽으로도 안 잠겨** 있었다
+            #   (실측: `:391` 만 부분문자열로 약화 → `::VERDICT=SURVIVED`).
+            #   ★이 파일이 스스로 «판정 규칙은 **한 자리**에 둔다» 고 적어 뒀는데 두 자리로 만들었다.
+            #   ⇒ 판정은 `candidates` 한 곳에만 둔다.
             raw = next((row.get(k) for k in val_keys if row.get(k) not in (None, "")), None)
             try:
                 rate = float(raw)
