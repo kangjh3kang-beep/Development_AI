@@ -90,70 +90,11 @@ export interface BindSatongLabelOptions {
  * @param text    라벨 텍스트(원문 — textContent로 안전하게 삽입, 이스케이프 불필요)
  * @param opts    permanent/offsetY
  */
-/** 라벨 클릭 처리를 위해 필요한 최소 계약(구조적 타이핑 — Leaflet 전체를 끌어오지 않는다). */
+/** 라벨 호스트의 최소 계약(구조적 타이핑 — Leaflet 전체를 끌어오지 않는다). */
 type SatongLabelHost = {
   bindTooltip: (content: unknown, options: unknown) => unknown;
-  on?: (type: string, fn: (e: unknown) => void) => unknown;
-  getTooltip?: () => { getElement?: () => HTMLElement | undefined } | undefined;
   getPopup?: () => unknown;
-  openPopup?: () => unknown;
 };
-
-/**
- * 라벨(툴팁) DOM 에 클릭 처리를 건다 — **지도로 새지 않게** 하고, 팝업이 있으면 **그것을 연다**.
- *
- * ★★2026-09-09 사용자 신고③의 **나머지 절반**: *"토지로 필지로 표시되고 **인식되는건가**"*.
- *   #1018 이 「표시」를 고쳤고(유형 배지) 여기서 「인식」을 고친다.
- *
- * ★실측(jsdom + **진짜 Leaflet 1.9.4**): 툴팁 DOM 에 `click` 을 디스패치하면
- *   `map.on("click")` 이 **1회 발화**한다. 그리고 그 핸들러는 `setClickMenu(...)` =
- *   **필지 선택 팝오버**를 연다(`SatongMultiMap.tsx`). 가드는 `readOnly` 뿐인데 신고 화면은
- *   그 prop 을 **안 넘긴다**(0건). ⇒ 가격 라벨을 누르면 **엉뚱한 필지 선택이 열린다.**
- *
- * ★**`bindTooltip(..., { interactive: true })` 는 쓰지 않는다 — 효과가 없다.**
- *   Leaflet 1.9.4 원문 `Tooltip` 블록(`leaflet-src.js:10642~10870`)에 **`interactive` 언급이 0건**
- *   이고 `Tooltip._initLayout` 도 그 옵션을 보지 않는다(실측). 그래서 **DOM 에 직접** 건다.
- *
- * ★브라우저와 jsdom 의 **경로가 다르다**(정직 표기):
- *   · 브라우저 — `pointer-events:none` 이면 라벨이 클릭을 **안 받고** 아래(지도)로 통과
- *   · jsdom    — `pointer-events` 를 **무시**하고 라벨이 받아 **버블링**
- *   **결과는 같다**(지도 click 발화). 그래서 이 함수는 **양쪽 모두** 막도록
- *   `stopPropagation` + `preventDefault` 를 걸고, CSS 는 `pointer-events: auto` 로 둔다
- *   (브라우저에서 라벨이 **클릭을 받아야** 이 핸들러가 산다).
- */
-function bindClickToLabelEl(host: SatongLabelHost): void {
-  const el = host.getTooltip?.()?.getElement?.();
-  if (!el) return;
-  const marked = el as HTMLElement & { __satongClickBound?: boolean };
-  if (marked.__satongClickBound) return; // 중복 바인딩 금지(툴팁은 열릴 때마다 이 경로를 탄다)
-  marked.__satongClickBound = true;
-  el.addEventListener("click", (ev: MouseEvent) => {
-    // ★항상 삼킨다 — 팝업이 없어도(측정·선택 앵커) **지도로 새면 안 된다**.
-    ev.stopPropagation();
-    ev.preventDefault();
-    // ★팝업이 있으면 연다. **호출부별 분기를 두지 않는다**(목록은 곧 상한) —
-    //   «팝업을 가졌는가»를 물어서 가른다.
-    // ★★`getPopup?.()` 가드를 지우는 변이는 **SURVIVED 이고 그 생존은 등가다** —
-    //   Leaflet 의 `openPopup` 이 `if (this._popup) {…}` 로 시작해 팝업이 없으면 **무동작**이다
-    //   (`leaflet-src.js:10517-10518` 원문 확인). 즉 Leaflet 호스트에서는 가르는 입력이 없다.
-    //   ★그래도 남긴다: 이 함수의 인자는 **구조적 타입**(`SatongLabelHost`)이라 Leaflet 이 아닌
-    //     호스트도 받을 수 있고, 그때 «팝업이 없는데 여는» 호출이 무해하다는 보장이 없다.
-    //     §변이 규율 — **설명할 수 없는 생존만 구멍**이다. 사유를 여기 적고 점수용 단언은 만들지 않는다.
-    if (typeof host.openPopup === "function" && host.getPopup?.()) host.openPopup();
-  });
-}
-
-function attachLabelClick(host: SatongLabelHost): void {
-  if (typeof host.on !== "function") return;
-  // 툴팁 DOM 은 **열린 뒤에야** 존재하므로 열림마다 건다(hover 라벨은 매번 새로 만들어진다).
-  host.on("tooltipopen", () => bindClickToLabelEl(host));
-  // ★★그리고 **이미 열려 있는 경우**를 함께 처리한다 — 그것이 이 함수의 첫 판을 죽였다:
-  //   `permanent: true` 는 마커가 이미 지도에 있으면 `bindTooltip` 이 **즉시** 툴팁을 열어
-  //   `tooltipopen` 이 **이 리스너를 달기 전에** 발화한다(실측: 상시 라벨 3케이스 전부 실패,
-  //   hover 케이스만 통과 — 그 비대칭이 원인을 가리켰다).
-  //   ★한쪽만 걸면 반대쪽이 무제한이 된다(§D-19) — 두 경로를 **한 쌍**으로 건다.
-  bindClickToLabelEl(host);
-}
 
 export function bindSatongLabel(
   marker: SatongLabelHost,
@@ -163,14 +104,36 @@ export function bindSatongLabel(
   // 내용은 텍스트 노드로만 — HTML 주입(XSS) 여지 제거. 박스 스타일은 .satong-tooltip CSS 담당.
   const el = typeof document !== "undefined" ? document.createElement("span") : null;
   const content: unknown = el ? ((el.textContent = text), el) : text;
-  const bound = marker.bindTooltip(content, {
+  // ★★2026-09-09 사용자 신고③의 **나머지 절반**: *"토지로 필지로 표시되고 **인식되는건가**"*.
+  //   종전엔 라벨이 클릭을 **안 받고 아래 지도로 통과**시켜 `map.on("click")` 이
+  //   **필지 선택 팝오버**를 열었다(실측: jsdom + 진짜 Leaflet 로 map click **발화 1회**).
+  //   가격 라벨을 눌렀는데 엉뚱한 필지가 선택되는 것이 사용자가 말한 「인식」이다.
+  //
+  // ★**팝업이 있을 때만** interactive 로 만든다. Leaflet 이 그때
+  //   ①`leaflet-interactive` 클래스를 붙여 CSS 로 `pointer-events:auto` + `cursor:pointer` 를 주고
+  //   ②컨테이너를 interactive target 으로 등록하며
+  //   ③`Tooltip.onAdd` 의 `addEventParent(this._source)` 로 클릭을 **마커로 전파**해 팝업을 연다.
+  //   (`leaflet-src.js:9776-9778` 옵션 선언 · `:9875-9877` 소비 · `leaflet.css:592-595` 스타일)
+  //
+  // ★★**팝업이 없는 라벨(측정 면적·누적거리·선택 필지 앵커)은 그대로 둔다.** 실측:
+  //   interactive 인데 팝업이 없으면 `listens('click')` 이 거짓이라 **map click 이 정상 발화**한다
+  //   — 즉 켜도 안전하지만, 켜면 `cursor:pointer` 가 붙어 **누를 게 있다는 거짓 어포던스**가 된다.
+  //   그래서 «누를 것이 있는 라벨만» 클릭 가능하게 한다.
+  //
+  // ★내 초판은 이 옵션을 **효과 없다고 단정하고** DOM 에 핸들러를 손수 71줄 붙였다. 거짓이었다 —
+  //   `Tooltip` **블록만** 조회해 «언급 0건»을 봤는데, 옵션은 부모 `DivOverlay` 에 있어
+  //   그 범위로는 **상속 구현을 원리적으로 못 본다**(§26 위음성 — 패턴이 아니라 범위가 틀렸다).
+  //   ★형제 증거가 바로 옆에 있었다: `leaflet.css` 에 `.leaflet-tooltip.leaflet-interactive` 규칙이
+  //     실재한다 — Leaflet 이 인터랙티브 툴팁을 지원하지 않으면 **있을 이유가 없는 규칙**이다(§29).
+  //   그리고 손수 붙인 핸들러는 **측정 모드 클릭 수집과 앵커의 필지 선택까지 함께 삼켰다.**
+  const interactive = !!marker.getPopup?.();
+  return marker.bindTooltip(content, {
     permanent: opts.permanent,
     direction: "top",
     offset: [0, -(opts.offsetY ?? 8)],
     className: "satong-tooltip",
+    interactive,
   });
-  attachLabelClick(marker);
-  return bound;
 }
 
 /**
