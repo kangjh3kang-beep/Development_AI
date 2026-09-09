@@ -463,12 +463,33 @@ class ActiveFlagOut(BaseModel):
     updated_by: str | None = None
 
 
+class HealBlockedOut(BaseModel):
+    """게이트가 **막은** 치유 1건(`heal_blocked` 이벤트).
+
+    ★왜 이 모델이 생겼나(2026-09-09): `healing_rules` 는 게이트가 후보를 막을 때
+      `platform_events` 에 `heal_blocked` 를 **넣고 있었는데**(`healing_rules.py:71,291`),
+      그것을 **읽는 경로가 하나도 없었다**(라우터 언급 0건 · 대조군 `heal-log` 6건).
+      그래서 «게이트가 막고 있다» 와 «막을 후보가 없다» 가 **같은 관측(침묵)** 이었다.
+      이 저장소가 반복해 데인 형태다 — ***침묵은 성공이 아니다.***
+    """
+
+    action_type: str | None = None
+    reason: str | None = None
+    trigger_key: str | None = None
+    created_at: datetime | None = None
+
+
 class HealLogOut(BaseModel):
     """GET /growth/heal-log 응답(프론트 계약)."""
 
     actions: list[HealActionOut]
     active_flags: list[ActiveFlagOut]
     total: int
+    #: ★막힌 치유는 **`actions` 에 섞지 않는다.** 섞으면 기존 소비처의 «실행된 액션 수»가
+    #:   조용히 부풀고, 이 저장소에는 «두 필드가 함께 부풀면 정합성 검사가 눈이 먼다» 는
+    #:   실측 전례가 있다. 별도 배열 + 별도 계수로 둔다(기존 필드 의미 불변).
+    blocked: list[HealBlockedOut] = []
+    blocked_total: int = 0
 
 
 class RollbackResult(BaseModel):
@@ -553,7 +574,50 @@ async def heal_log(
         for fr in flag_rows
     ]
 
-    return HealLogOut(actions=actions, active_flags=active_flags, total=int(total))
+    # ── 게이트가 막은 것(`heal_blocked`) — **같은 필터**를 걸어 대칭으로 노출한다.
+    #    ★`actions` 와 `total` 은 건드리지 않는다(위 필드 주석 참조).
+    bwhere = ["event_type = 'heal_blocked'"]
+    bparams: dict = {}
+    if action_type:
+        bwhere.append("payload->>'action_type' = :at")
+        bparams["at"] = action_type
+    if since is not None:
+        bwhere.append("created_at >= :since")
+        bparams["since"] = since
+    bwhere_sql = " AND ".join(bwhere)
+
+    blocked_total = (await db.execute(
+        text(f"SELECT COUNT(*) FROM platform_events WHERE {bwhere_sql}"), bparams
+    )).scalar() or 0
+
+    bparams["limit"] = limit
+    bparams["offset"] = offset
+    brows = (await db.execute(text(
+        "SELECT payload, created_at FROM platform_events "
+        f"WHERE {bwhere_sql} ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
+    ), bparams)).fetchall()
+
+    blocked: list[HealBlockedOut] = []
+    for br in brows:
+        bpl = br[0]
+        if isinstance(bpl, str):
+            try:
+                bpl = _json.loads(bpl)
+            except Exception:  # noqa: BLE001
+                bpl = {}
+        bpl = bpl or {}
+        bp = bpl.get("params") if isinstance(bpl.get("params"), dict) else {}
+        blocked.append(HealBlockedOut(
+            action_type=bpl.get("action_type"),
+            reason=bpl.get("reason"),
+            trigger_key=(bp or {}).get("trigger_key"),
+            created_at=br[1],
+        ))
+
+    return HealLogOut(
+        actions=actions, active_flags=active_flags, total=int(total),
+        blocked=blocked, blocked_total=int(blocked_total),
+    )
 
 
 @router.post("/heal/{action_id}/rollback", response_model=RollbackResult)
