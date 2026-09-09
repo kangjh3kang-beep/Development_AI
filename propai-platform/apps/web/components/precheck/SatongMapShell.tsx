@@ -4211,7 +4211,7 @@ export function SatongMapShell({
                 data-testid="open-building-overview"
                 disabled={selectedParcels.length === 0}
                 onClick={() => setOverviewOpen(true)}
-                className="mt-2 justify-self-start rounded-lg border border-[var(--line)] px-3 py-1.5 text-xs font-bold text-[var(--text-secondary)] disabled:opacity-40"
+                className="mt-2 min-h-11 justify-self-start rounded-lg border border-[var(--line)] px-3 py-1.5 text-xs font-bold text-[var(--text-secondary)] disabled:opacity-40"
               >
                 건축개요 입력{buildingOverview ? " (입력됨)" : ""}
               </button>

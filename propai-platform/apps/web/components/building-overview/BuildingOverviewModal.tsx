@@ -88,6 +88,10 @@ export function BuildingOverviewModal({ open, intake, initial, onSave, onCancel 
     setO((p) => ({ ...p, [k]: parseNum(s) }));
 
   const body = (
+    // ★백드롭 z 는 **계약값 `SATONG_CONTENT_Z.appModal`(=800)** 이다. 임의의 큰 수가 아니다 —
+    //   지도 공존 화면에서 오버레이(380~500)·ContextHeader(600)·네비 플라이아웃(700)이
+    //   백드롭을 관통한 사고가 그 상수를 만들었고, 이 모달이 바로 그 화면에서 열린다.
+    //   (`layer-ladder.contract` 가 지도 폐포에서 백드롭을 **파생으로** 모아 이 값을 강제한다.)
     // ★`role="dialog"`·`aria-modal` 은 **백드롭**에, 트랩 ref 는 **본체**에 — 형제 3표면이
     //   전부 이 모양이고(ConfirmDeleteModal·LandShareModal·ConsentModal), 계약 락이
     //   `role=dialog` 요소를 백드롭으로 보고 **그 안에 트랩 컨테이너가 따로 있는지**를 관측한다.
@@ -96,7 +100,7 @@ export function BuildingOverviewModal({ open, intake, initial, onSave, onCancel 
       role="dialog"
       aria-modal="true"
       aria-label="건축개요 입력"
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-[800] flex items-center justify-center bg-black/50 p-4"
     >
       <div
         ref={dialogRef}
