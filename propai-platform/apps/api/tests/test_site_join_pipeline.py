@@ -767,3 +767,78 @@ def test_reapproval_retries_membership_instead_of_short_circuiting() -> None:
     assert "not body.approve" in src, (
         "승인/거절을 가르지 않는다 — 거절 재시도에서도 멤버십 연결을 태우게 된다"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# F. 라우터의 술어 — 임포트 없이 **AST 로** 잠근다 (R2 리뷰 J-2)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ★★라우터 5문 중 4문이 **테스트 참조 0** 이었고, 리뷰 변이 2종이 생존했다:
+#
+#     cancel 의 `AND user_id = :u` 삭제        ::VERDICT=SURVIVED  ← **IDOR**(남의 신청 취소)
+#     discover 의 soft-delete 필터 무력화       ::VERDICT=SURVIVED  ← 삭제된 현장이 목록에
+#
+#   라우터는 개발 환경(python 3.10)에서 임포트 자체가 불가하다(PEP 695 의존).
+#   그래서 **판정은 서비스 층으로 내리는 것이 정답**이지만, 이 두 자리는 **한 문장짜리 SQL 계약**이라
+#   옮길 본체가 없다 — 대신 **그 문장의 술어**를 AST 로 잠근다(주석·독스트링 제외).
+
+
+def _executed_sql(fn_name: str) -> list[str]:
+    """그 함수가 `text(...)` 로 실행하는 SQL — **실행 리터럴만**(독스트링 제외)."""
+    fn = _fn(fn_name)
+    out: list[str] = []
+
+    def flatten(node) -> str | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            a, b = flatten(node.left), flatten(node.right)
+            return None if a is None or b is None else a + b
+        return None
+
+    for call in ast.walk(fn):
+        if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                and call.func.id == "text" and call.args):
+            raw = flatten(call.args[0])
+            if raw:
+                out.append(" ".join(raw.split()))
+    return out
+
+
+def test_cancel_is_scoped_to_the_owner_and_pending() -> None:
+    """★★취소는 **본인의 대기 중 신청만** 건드린다 — 소유자 술어가 빠지면 IDOR 다.
+
+    빠지면 아무나 `request_id` 만 알면 **남의 신청을 취소**할 수 있고,
+    부분 유니크 인덱스 때문에 그 사람은 **재신청도 못 하게 된다.**
+    """
+    stmts = [s for s in _executed_sql("cancel_join_request") if s.lower().startswith("update")]
+    assert len(stmts) == 1, f"취소의 UPDATE 를 {len(stmts)}개 찾았다 — 축이 죽었다"
+    sql = stmts[0].lower()
+    where = sql.split(" where ", 1)
+    assert len(where) == 2, f"WHERE 가 없다: {sql}"
+    assert "user_id" in where[1], f"★소유자로 묶지 않는다 — 남의 신청을 취소할 수 있다: {sql}"
+    assert "status = 'pending'" in where[1], "이미 처리된 신청까지 뒤집는다"
+    assert "returning" in sql, "몇 행을 바꿨는지 모르면 «취소 못 함» 을 구별할 수 없다"
+
+
+def test_discover_excludes_deleted_sites() -> None:
+    """★삭제된 현장이 발견 목록에 뜨지 않는다 — 신청할 수 없는 곳을 권하면 안 된다.
+
+    ★축은 **`select(SalesSite)` 의 `.where()` 인자**다(파일 grep 아님 —
+      `deleted_at` 이라는 낱말은 이 파일에 여러 번 나온다).
+    """
+    fn = _fn("discover_sites")
+    found = False
+    for call in ast.walk(fn):
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "where"):
+            continue
+        base = ast.unparse(call.func.value)
+        if "SalesSite" not in base:
+            continue
+        found = True
+        conds = " ".join(ast.unparse(a) for a in call.args)
+        assert "SalesSite.deleted_at" in conds, (
+            f"현장 조회가 소프트 삭제를 안 거른다: {conds}"
+        )
+    assert found, "`select(SalesSite).where(...)` 를 못 찾았다 — 축이 죽었다"
