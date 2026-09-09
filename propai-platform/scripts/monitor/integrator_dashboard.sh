@@ -172,6 +172,12 @@ else
 fi
 printf "   런타임 델타 — web %s파일 · api %s파일 · 컨테이너입력 %s파일\n" "$WD" "$AD" "$CD"
 if [ "$WD" = "?" ] || [ "$AD" = "?" ] || [ "$CD" = "?" ]; then
+  # ★`3` 의 희소성을 지킨다(c8 리뷰 2026-09-09): 이제 **fetch 지연만으로도** 여기 올 수 있다.
+  #   상시 3 이 되면 3 이 무시되고 그때 진짜 검사기 사망이 묻힌다 — 그래서 **어느 3 인지 말한다.**
+  for _sha in "$WSHA" "$ASHA"; do
+    [ -n "$_sha" ] && ! git cat-file -e "${_sha}^{commit}" 2>/dev/null \
+      && echo "   ★배포 sha ${_sha} 가 **로컬 저장소에 없다** — `git fetch origin` 후 다시 보라(fetch 지연·스쿼시·미머지 빌드)."
+  done
   echo "   ★배포 sha 조회 실패 — 수렴 여부를 **모른다**."; DEAD=1
 elif [ "$WD" -eq 0 ] && [ "$AD" -eq 0 ] && [ "$CD" -eq 0 ]; then
   echo "   ✅ 수렴 — 굽지 않아도 되는 상태(sha 가 달라도 런타임은 최신)"
