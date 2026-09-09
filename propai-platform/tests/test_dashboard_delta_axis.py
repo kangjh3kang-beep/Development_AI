@@ -144,6 +144,24 @@ def test_non_python_change_is_unknown(tmp_path: Path):
     assert _call("comment_only_delta", d, base, "pkg/") == "unknown"
 
 
+def test_non_python_that_happens_to_parse_is_still_unknown(tmp_path: Path):
+    """★확장자 검사가 **판별력을 갖는** 픽스처.
+
+    앞 케이스(`.ts`)는 AST 파싱이 어차피 실패해 `unknown` 이 나온다 — 즉 확장자 검사를
+    **지워도 같은 답**이라 그 분기를 잠그지 못한다(손 변이로 SURVIVED 실측, 2026-09-09).
+
+    `requirements.txt` 는 **파이썬으로 파싱된다**(`foo==1` 은 유효한 식이고 `#` 는 주석이다).
+    확장자 검사가 없으면 «주석만 바뀐 requirements» 가 `yes` 로 분류돼 **강등**되는데,
+    의존성 파일은 **재빌드가 필요하다**. 그래서 이 픽스처가 그 분기를 실제로 가른다.
+    """
+    d = tmp_path / "req"
+    d.mkdir()
+    base = _mk_repo(d,
+                    {"pkg/requirements.txt": "# 새 주석\nfoo==1\n"},
+                    {"pkg/requirements.txt": "# 옛 주석\nfoo==1\n"})
+    assert _call("comment_only_delta", d, base, "pkg/") == "unknown"
+
+
 def test_added_file_is_unknown(tmp_path: Path):
     """추가·삭제·rename 은 줄이 0이어도 배포가 필요할 수 있다 → 강등 금지."""
     d = tmp_path / "add"
