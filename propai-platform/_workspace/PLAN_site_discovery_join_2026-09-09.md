@@ -103,7 +103,7 @@ development_type · status` + **내 관계**(`membership`: `none|pending|active`
 |---|---|---|---|
 | **라우터가 실제로 붙는다** | `include_router` 인자에 있다 | 파일만 만들고 등록 누락 | `apps/api/tests/test_site_join_pipeline.py::test_module_is_registered_on_the_sales_router` |
 | **승인이 `create_node` 를 경유** | 호출 노드 존재 | raw INSERT 재등장 | 같은 파일 `::test_approval_goes_through_create_node_not_raw_insert` (축 = **함수의 호출 노드·실행 리터럴**) |
-| **테넌트 식별자 미노출** | 축소 필드 | `organization_id` 를 실음 | 같은 파일 `::test_discover_does_not_leak_the_tenant_identifier` (축 = **응답 dict 키**) |
+| **테넌트 식별자 미노출** | 축소 필드 | `organization_id` 를 **읽어** 실음 | 같은 파일 `::test_discover_does_not_read_the_tenant_column_into_the_response` (축 = **값의 출처**(`ast.Attribute`) — 「응답 dict 키」는 R1 A-3 가 **기각한** 축이다) |
 | **사유 어휘 공유** | `market` 에서 임포트 | 이 모듈에서 재정의 | 같은 파일 `::test_reason_vocabulary_is_shared_with_the_hiring_approval` |
 | **순환 임포트 금지** | `market` 이 `site_join` 을 안 봄 | 반대 방향 발생 | 같은 파일 `::test_no_import_cycle_market_does_not_depend_on_join` |
 | **승인 권한이 좁다** | `AGENCY`·`TEAM_LEADER` 포함 | `MEMBER` 포함 | 같은 파일 `::test_member_cannot_approve` + 행위 `::test_approver_resolution_two_populations` |
@@ -123,32 +123,29 @@ PR #1021 에서는 판정이 라우터에 있어 행위 락 7건이 전부 CI �
 이번에는 판정을 **처음부터 서비스 층**(`app/services/sales/org/join.py`)에 두어
 **행위 락 7건이 전부 로컬에서 돈다.** 「태울 수 있는 자리에 두는 것」이 락 설계의 일부다.
 
-### 변이 검증 (실측 · 2026-09-09 적대 리뷰 **후**)
+### 변이 검증 (실측 · **R2 리뷰 후**)
 
-★**앞 판의 「손 변이 8/8 CAUGHT」 는 무효였다.** 독립 리뷰가 같은 코드에 **6종을 넣어 6/6
-SURVIVED** 를 실증했다. 내가 고른 변이는 스텁이 실제로 태우는 **순수 로직**만 건드렸고,
-리뷰어는 스텁이 **통째로 무시하는 SQL 술어**를 건드렸다 — **또 「잡히도록 보장된 변이」를 골랐다.**
+★**R1 후에 적은 「5/5 CAUGHT」는 참이었지만 충분하지 않았다.** 그 5건은 전부 리뷰어가
+**지목한 좌표**였고, 같은 클래스의 **형제 좌표**는 그대로였다 — R2 가 6종을 넣어
+**6/6 SURVIVED** 를 냈다. 「지적된 자리만 고친다」의 **6연속** 재발이다.
 
 | 축 | 결과 |
 |---|---|
-| **리뷰어 변이 재판정** | M-A(현장격리 술어 삭제) · M-B(AGENCY→SUBAGENCY) · M-C(응답 키만 바꿔 테넌트 노출) · M-D(권한→path 정렬 회귀) · M-E(목록 밖 상태) → **5/5 CAUGHT** |
-| CAS 변이 | 조건 제거 · 경쟁 패배를 True 로 · 화이트리스트 fail-open → **3/3 CAUGHT** |
-| 프론트 변이 | 필터 뒤집기 · 응답 버리고 도색 · 배지/버튼 동일화 → 3/3 CAUGHT |
-| 백엔드 락 | `test_site_join_pipeline` **16 passed · skip 0** · `test_transition_atomicity` 6 passed |
-| 프론트 락 | 17 passed(패널 9 + 배선 8) |
-
-★**「고쳤다」와 「고친 것을 잠갔다」는 다른 명제다** — B-1 을 고친 직후 변이를 넣었더니
-`::VERDICT=UNDECIDED`(참조한 테스트 파일이 **없었다**). 그래서 `test_transition_atomicity.py` 를
-만들었다. 그리고 그 판정이 한 번 더 `UNDECIDED` 였는데, 원인은 코드가 아니라 **내 명령 형태**였다
-(테스트 명령을 인용부호로 묶어 한 실행파일 이름이 됐다 → rc=127). **판정 불가는 실패가 아니다.**
+| **R2 변이 재판정** | M1(인가 게이트 현장격리) · M2(soft-delete) · M10(cancel IDOR) · M11(삭제 현장 노출) · M14(목록 밖 사유) · M15(상수 거짓 게이트) · M16(decide 경로 오타) → **7/7 CAUGHT** |
+| R1 변이 재판정 | 5/5 CAUGHT(유지) |
+| 백엔드 락 | `test_site_join_pipeline` **26** · `test_transition_atomicity` 7 + **1 xfail(부채)** · `test_membership_reason_axis` 8 |
+| 프론트 락 | 35 passed(발견 9 · **승인 8** · 배선 6 · 형제 12) |
 
 ### ★부채 (초록 안에 보이게 둔다)
 
-| 항목 | 왜 |
+| 항목 | 상태 |
 |---|---|
-| **라이브 도달성 미측정** | 새 라우트를 라이브에 태우지 않았다(배포 전). 코드·락까지만 |
-| **동시성 실증 부재** | B-1 의 경쟁을 **실제 Postgres 로 재현하지 않았다.** SQL 의미론과 코드 좌표에서 도출했고, 락은 «CAS 조건이 실린다» 까지만 본다 |
-| **DB 통합 테스트 부재** | 부분 유니크 인덱스·`ON CONFLICT` 의 실제 동작은 Postgres 없이는 못 잰다 |
-| **`platform_admin`·`총괄관리자` 실재 미확인** | B-3 은 **소스 수준 불일치**로 확정했다. 라이브에 그 role 을 가진 계정이 있는지는 안 쟀다 |
-| **기계 변이 분모 오염** | 스택 PR 이라 base(`origin/main`)가 #1021 변경까지 포함한다. #1021 머지 후 다시 돌려야 이 PR 만의 생존을 안다 |
-| **볼트 조회 불가**(§0) | 과거 기각 이력 미확인 |
+| **수수료 합의 전이 경쟁** | ★**새로 발견**(내 락이 찾았다). `sales_commission_split_agreements` 의 confirm(:309)/reject(:344) 이 **서로 다른 값을 무조건** 쓴다 — 거부된 합의가 `confirmed` 로 끝날 수 있다. `xfail(strict=True)` 로 표시. ★내가 앞 판에 «측정으로 무해» 라 적은 것은 **거짓**이었다(grep 이 :309 를 놓쳤다) |
+| `social.py` 친구 수락/거절 · `crm_enhance` 단계 변경 | 비원자적 — 금전·격리 축이 아니라 범위 밖. **면제에 사유와 개수를 선언**했고 죽은 면제는 실패한다 |
+| **자기 승인 가능**(R1 C-5) | ★**여전히 가능**하다. `superadmin`/`developer` 는 조직노드가 없어 「이미 멤버」 검사를 통과해 신청을 만들고, 플랫폼 역할 분기로 **자기 신청을 자기가 승인**한다. 권한 축이라 부채 목록 밖으로 꺼낸다 — **다음 라운드 1순위** |
+| **404/403 정책 불일치**(R1 C-4) | `decide` 는 부재 404·권한 403 으로 가르고 `cancel` 은 «존재 여부가 새면 IDOR 단서» 라며 안 가른다. **같은 파일 안에서 정책이 둘**이다. UUID 라 실익은 낮으나 정하지 않은 것은 사실 |
+| **`site_code` 전수 노출**(R1 C-6) | ★**자격증명이 아님을 확인**했다 — `X-Site-Code` 로 현장을 해석한 뒤 멤버십을 **강제**하고 없으면 403(`deps_sales`). 정찰 표면은 넓어진다 |
+| **sponsor(희망 직속 상위) 미구현** | ★**볼트 §0 조회가 찾았다.** 채택된 설계(R2 벤치마킹)가 「신청 시 희망 직속 상위 필수」인데 빠졌다. 지금은 부모가 **승인자의 노드**라 **누가 먼저 누르느냐로 수수료 체인이 갈린다**. 다음 라운드 |
+| **동시성 실증 부재** · DB 통합 테스트 부재 | 실제 Postgres 로 재현 안 함. 락은 «CAS 조건이 실린다» 까지만 |
+| **라이브 도달성** · 기계 변이 분모 오염 | 배포 전 · 스택 PR |
+| **사유 축의 원리적 한계** | 생산자 파생이 «선언된 사유를 하나도 안 쓰는 새 모듈» 은 못 잡는다(락 독스트링에 명시) |
