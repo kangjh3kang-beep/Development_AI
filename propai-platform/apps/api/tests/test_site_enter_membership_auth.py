@@ -865,3 +865,73 @@ async def test_role_endpoint_reports_lockout_at_runtime(monkeypatch) -> None:
     clean = await mod.site_role(str(site.id), db=_RoleDB(attempt=None), user=user)
     assert clean["locked_until"] is None
     assert clean["fail_count"] == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# H. 전수 변이(63건 · kill 52 · 생존 3)가 남긴 자리 — 둘은 계약, 하나는 산문
+# ─────────────────────────────────────────────────────────────────────────────
+
+@_NEEDS_311
+@pytest.mark.asyncio
+async def test_membership_entry_also_clears_the_failure_counter() -> None:
+    """★멤버십 진입도 **실패 카운트를 지운다**(비번 경로만 보고 있었다).
+
+    ★변이 실측(2026-09-10 전수): `:385` 의 DELETE SQL 리터럴을 `"__MUTATED__"` 로 바꿔도
+      **생존**했다. 성공(비번) 경로의 DELETE 는 단언했는데 **멤버십 경로는 안 봤다** —
+      같은 계약이 한쪽에만 걸린 전형.
+    ★왜 중요한가: 지우지 않으면 옛 실패가 남아, 나중에 그 현장에 비번이 설정되는 순간
+      **이미 잠금에 가까운 상태**로 시작한다.
+    """
+    from app.api.endpoints.sales import site_auth as mod
+
+    site = type("S", (), {"id": uuid.uuid4(), "site_code": "s1", "site_name": "현장"})()
+
+    async def _get_site(_db, _sid):
+        return site
+
+    async def _role(_db, _site, _user):
+        return ("a1.t1", "MEMBER")
+
+    async def _ensure(_db):
+        pass
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(mod, "_get_site", _get_site, raising=True)
+    mp.setattr(mod, "_resolve_role", _role, raising=True)
+    mp.setattr(mod, "_ensure", _ensure, raising=True)
+    try:
+        db = _DB(has_password=False)
+        out = await mod.enter_site(str(site.id), mod.EnterRequest(),
+                                   db=db, user=type("U", (), {"id": uuid.uuid4(),
+                                                              "tenant_id": None})())
+    finally:
+        mp.undo()
+
+    assert out["auth"] == "membership"
+    assert any("DELETE FROM sales_site_login_attempts" in q for q in db.sql), (
+        "멤버십 진입이 실패 카운트를 리셋하지 않는다 — 옛 실패가 남아 나중에 잠금을 앞당긴다"
+    )
+
+
+@_NEEDS_311
+def test_entry_audit_line_actually_carries_the_four_values(caplog) -> None:
+    """★감사 로그가 네 값을 **실제로 렌더하는가** — 「불렸는가」가 아니라 「무엇이 남는가」.
+
+    ★변이 실측(2026-09-10 전수): `_log_entry` 의 포맷 문자열을 `"__MUTATED__"` 로 바꿔도
+      **생존**했다. 인자는 그대로지만 `%s` 자리가 사라져 **네 값이 로그에서 전부 증발**한다.
+      그러면 리뷰 M4 가 지적한 «오늘 몇 명이 비번으로 들어왔나» 를 다시 셀 수 없다.
+    ★단언하는 것은 **문구가 아니라 값**이다 — 문구까지 못 박으면 다듬을 때마다 깨진다.
+    """
+    import logging
+
+    from app.api.endpoints.sales import site_auth as mod
+
+    uid = uuid.uuid4()
+    with caplog.at_level(logging.INFO):
+        mod._log_entry("site-xyz", type("U", (), {"id": uid})(), "MEMBER", "membership")
+
+    rendered = " ".join(r.getMessage() for r in caplog.records)
+    for value in ("site-xyz", str(uid), "MEMBER", "membership"):
+        assert value in rendered, (
+            f"감사 줄에 `{value}` 가 없다 — 누가 무엇으로 들어왔는지 셀 수 없다: {rendered!r}"
+        )

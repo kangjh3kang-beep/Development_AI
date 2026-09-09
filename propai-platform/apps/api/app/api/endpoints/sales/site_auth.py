@@ -405,6 +405,13 @@ async def enter_site(site_id: str, body: EnterRequest,
     if outcome == "no_secret_supplied":
         # ★**실패 카운트를 올리지 않는다**(리뷰 C1). 「안 보냈다」와 「틀렸다」는 다른 사건이고,
         #   전자가 후자의 예산을 쓰면 모달을 몇 번 여는 것만으로 계정이 잠긴다.
+        #
+        # ★★**이 문구에 변이를 넣으면 생존한다 — 그리고 그것이 옳다**(2026-09-10 전수 감사
+        #   63건 중 생존 3건의 하나). 계약은 **400 이라는 상태코드**와 **카운터 앞이라는
+        #   위치**이고 둘 다 잠겨 있다(`test_missing_secret_is_not_a_failed_attempt` ·
+        #   `test_router_maps_each_outcome_to_its_own_status`). 안내 **문구**는 계약이 아니라
+        #   표현이라, 못 박으면 다듬을 때마다 깨지는 취약한 락이 된다(저장소 §C-30).
+        #   ⇒ 점수를 위해 단언을 늘리지 않고, **왜 구멍이 아닌지**를 여기 적는다.
         raise HTTPException(400, "이 현장은 2차 비밀번호가 필요합니다")
 
     if outcome != "password":
