@@ -497,6 +497,16 @@ async def desk_appraisal(
         if (market_stats.get("jeonse_conversion_rate") or {}).get("rate"):
             deposit_conv = market_stats["jeonse_conversion_rate"]["rate"]
             conv_source = "R-ONE"
+        # ★★독립 리뷰 R9 LOW-1(2026-09-09): 거부 사유가 **`기본` 한 글자로 뭉개졌다** —
+        #   «R-ONE 통계표 미설정» 과 «조회는 됐는데 값을 채택 못 함»(항목 축 혼재 거부 ·
+        #   카디널리티 거부 · sane 범위 이탈)이 사용자·조사자 양쪽에서 **구별 불가**였다.
+        #   사유는 `logger.info` 로 서버에만 남아 화면·제출본 어디에도 없었다.
+        #   ⇒ 반환 타입을 바꾸지 않고 **가를 수 있는 만큼** 가른다(모름을 한 값으로 뭉개지 않는다).
+        _rone_up = bool(market_stats.get("rone_available"))
+        if cap_source == "기본":
+            cap_source = "기본(R-ONE 값 채택 불가)" if _rone_up else "기본(R-ONE 미설정)"
+        if conv_source == "기본":
+            conv_source = "기본(R-ONE 값 채택 불가)" if _rone_up else "기본(R-ONE 미설정)"
     except Exception:  # noqa: BLE001
         market_stats = {}
 

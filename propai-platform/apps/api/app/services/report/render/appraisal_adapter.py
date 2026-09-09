@@ -358,11 +358,20 @@ def build_report_model_from_appraisal_multi(
     #   «시·도를 해석하지 못해» 고지가 **1/N 만** 덮었다 — 결함의 범위(N필지)와 처방의 범위(1필지)가
     #   갈렸다. 미루려면 «배치 안 필지가 시도를 공유한다» 를 재서 근거로 대야 하는데 그 측정이 없다.
     #   ⇒ 담요 경고 대신 **실제로 다른 필지를 세어** 말한다(파생 — 목록이 상한이 되지 않게).
+    # ★★독립 리뷰 R9 HIGH-3(2026-09-09): 내가 센 축(`time_adjust_scope`)이 **결함이 사는 축이
+    #   아니었다.** §5 는 자본환원율·전월세전환율도 싣는데 그 둘은 `_sido_of(address)` 로
+    #   **필지마다 다르다**. 세 필지가 전부 시도 시계열이 없어 `scope="전국"` 으로 같아지면
+    #   `_diff_scope` 가 0 이라 **침묵**하고, 경기·부산 필지가 **서울 수치를 「R-ONE 실측」으로**
+    #   아무 고지 없이 받는다(실측).
+    #   ★락이 못 잡은 이유도 내 픽스처였다 — `region` 과 `scope` 를 **같은 값으로 묶어**
+    #     두 모집단의 차가 0 이었다(§검증규율 «차가 0인 픽스처는 잠금이 아니다»).
+    #   ⇒ 축을 **해석된 지역(`market_stats.region`)까지** 넓힌다 — 그것이 cap/jeonse 를 가른다.
     _rep_scope = str((rep_result or {}).get("time_adjust_scope") or "")
     _rep_region = str(((rep_result or {}).get("market_stats") or {}).get("region") or "")
     _diff_scope = sum(
         1 for r, _ in ok_pairs
         if str(r.get("time_adjust_scope") or "") != _rep_scope
+        or str((r.get("market_stats") or {}).get("region") or "") != _rep_region
     )
     _unresolved = sum(
         1 for r, _ in ok_pairs
@@ -373,7 +382,10 @@ def build_report_model_from_appraisal_multi(
             f"★아래 §5 시점수정·시장통계 근거는 **대표 필지({_rep_addr_note(rep_addr, _rep_region)}) 기준**이다 — "
         )
         if _diff_scope:
-            caption += f"시점수정 범위가 대표와 **다른 필지 {_diff_scope}건**이 있다. "
+            caption += (
+                f"지역 해석 또는 시점수정 범위가 대표와 **다른 필지 {_diff_scope}건**이 있다"
+                "(자본환원율·전월세전환율은 필지별 지역으로 조회된다). "
+            )
         if _unresolved:
             caption += f"시·도를 해석하지 못한 필지 **{_unresolved}건**이 있다(전국 값 적용). "
         caption += "그 필지들에는 §5 의 고지가 그대로 적용되지 않는다."

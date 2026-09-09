@@ -1746,14 +1746,38 @@ def _multi_caption(results: list[dict]) -> str:
     return ""
 
 
-def _parcel(addr: str, scope: str, resolved: bool = True) -> dict:
+def _parcel(addr: str, scope: str, resolved: bool = True, region: str | None = None) -> dict:
+    """★`region` 과 `scope` 를 **따로 받는다**(독립 리뷰 R9 HIGH-3).
+
+    종전엔 `region=scope` 로 묶어 **두 모집단의 차가 0** 이었다 — 그래서 「지역 해석이 다른데
+    시점수정 범위는 같은」 진짜 위험 조합(cap_rate·전월세전환율이 필지별로 갈리는 경우)이
+    **원리적으로 만들어지지 않았다**.
+    """
     return {
         "ok": True, "address": addr, "appraised_price_per_sqm": 2_000_000,
         "appraised_total_won": 1_000_000_000, "area_sqm": 500, "confidence": 0.7,
         "range_per_sqm": {"low": 1, "high": 2}, "methods": [], "weight_note": "단독",
         "time_adjust_basis": "R-ONE 지가변동률 누적", "time_adjust_scope": scope,
-        "market_stats": {"region": scope, "region_resolved": resolved, "rone_available": True},
+        "market_stats": {"region": region if region is not None else scope,
+                         "region_resolved": resolved, "rone_available": True},
     }
+
+
+def test_multi_parcel_counts_parcels_whose_region_differs_even_if_scope_matches() -> None:
+    """★R9 HIGH-3 — 시점수정 범위가 **같아도** 해석된 지역이 다르면 센다.
+
+    세 필지가 전부 시도 시계열이 없어 `scope="전국"` 으로 **같아지는** 상황이 이 PR 의 표제
+    상황이다. 그때 cap_rate·전월세전환율은 **필지별 지역**으로 조회되므로 대표(서울) 수치가
+    경기·부산 필지에 「R-ONE 실측」으로 붙는다 — 그 사실을 총괄이 말해야 한다.
+    """
+    cap = _multi_caption([
+        _parcel("서울특별시 강남구 1", "전국", region="서울"),
+        _parcel("경기도 성남시 1", "전국", region="경기"),
+        _parcel("부산광역시 해운대구 1", "전국", region="부산"),
+    ])
+    assert "대표 필지" in cap, cap
+    assert "다른 필지 2건" in cap, cap
+    assert "자본환원율" in cap, cap
 
 
 def test_multi_parcel_report_says_the_basis_is_representative_only() -> None:
@@ -1827,3 +1851,113 @@ def test_a_region_that_merely_contains_the_sido_name_does_not_match() -> None:
     ]
     assert rate_series_from_rows(real, "전남", _no_fallback=True) == [("202607", 0.3)]
     assert latest_value_from_rows(real, "전남") == (0.3, "202607")
+
+
+# ─────────────────────────────────────────────────────────────
+# ★R9 HIGH-1/HIGH-2/MEDIUM-2/LOW-1 — 내 처방이 **내 계약을 어긴** 자리들
+# ─────────────────────────────────────────────────────────────
+
+
+def test_ambiguous_latest_period_refuses_instead_of_returning_an_older_value() -> None:
+    """★R9 HIGH-1 — 최신 시점을 못 읽으면 **구값을 최신인 척 내보내지 않는다**.
+
+    형제 계약(`test_missing_aggregate_at_the_latest_period_rejects_not_returns_stale`)이
+    이미 이름으로 못박은 속성인데, **원인만 다른 경로**(항목 축 혼재)에서 `continue` 로
+    더 오래된 시점이 이기고 있었다. 실측: `(5.4, '202606')` 이 「R-ONE 실측」으로 나갔다.
+    ★`wrttime` 은 화면·PDF 어디에도 렌더되지 않으므로 사용자가 알 방법이 없다.
+    """
+    from app.services.external_api.reb_client import latest_value_from_rows
+
+    rows = [
+        {"REGION_NM": "서울", "CLS_NM": "전체", "ITM_NM": "지수",
+         "DTA_VAL": 7.5, "WRTTIME_IDTFR_ID": "202607"},
+        {"REGION_NM": "서울", "CLS_NM": "40㎡이하", "ITM_NM": "전월세전환율",
+         "DTA_VAL": 5.9, "WRTTIME_IDTFR_ID": "202607"},
+        {"REGION_NM": "서울", "CLS_NM": "전체", "ITM_NM": "전월세전환율",
+         "DTA_VAL": 5.4, "WRTTIME_IDTFR_ID": "202606"},
+    ]
+    assert latest_value_from_rows(rows, "서울") is None, (
+        "최신 시점이 혼재인데 구값을 돌려줬다 — 「최신인 척」이 되살아났다"
+    )
+    # ★두 모집단 — 최신이 깨끗하면 그 값을 채택한다(과잉 거부 금지).
+    clean = [rows[1], rows[2]]
+    assert latest_value_from_rows(clean, "서울") == (5.9, "202607")
+    # ★옛 시점만 혼재면 최신은 살아 있어야 한다(거부 범위가 번지지 않게).
+    old_mixed = [
+        {"REGION_NM": "서울", "CLS_NM": "전체", "ITM_NM": "지수",
+         "DTA_VAL": 9.9, "WRTTIME_IDTFR_ID": "202605"},
+        {"REGION_NM": "서울", "CLS_NM": "전체", "ITM_NM": "전월세전환율",
+         "DTA_VAL": 5.1, "WRTTIME_IDTFR_ID": "202605"},
+        {"REGION_NM": "서울", "CLS_NM": "전체", "ITM_NM": "전월세전환율",
+         "DTA_VAL": 5.9, "WRTTIME_IDTFR_ID": "202607"},
+    ]
+    assert latest_value_from_rows(old_mixed, "서울") == (5.9, "202607")
+
+
+def test_absent_item_name_counts_as_its_own_item() -> None:
+    """★R9 HIGH-2 — `ITM_NM` **부재**도 하나의 항목값이다(무시하면 거부가 안 걸린다).
+
+    `discard("")` 때문에 한쪽 ITM 이 비면 혼재로 안 세어, 커밋 `4fdccbd17` 이 「고쳤다」고
+    선언한 회귀(`7.5 / 7.5`)가 **그대로 재현**됐다. 그 줄은 어느 방향으로도 안 잠겨 있었다.
+    ★이 코드베이스는 `ITM_NM` 이 없는 표를 **명시적으로 전제**한다 — 그러니 부재는
+      «무시할 값» 이 아니라 «다른 값» 이다.
+    """
+    from app.services.external_api.reb_client import latest_value_from_rows
+
+    mixed = [
+        {"REGION_NM": "서울", "CLS_NM": "전체", "ITM_NM": "",
+         "DTA_VAL": 7.5, "WRTTIME_IDTFR_ID": "202607"},
+        {"REGION_NM": "서울", "CLS_NM": "40㎡이하", "ITM_NM": "전월세전환율",
+         "DTA_VAL": 5.4, "WRTTIME_IDTFR_ID": "202607"},
+    ]
+    assert latest_value_from_rows(mixed, "서울") is None, "빈 ITM 이 혼재로 안 세어졌다"
+    assert latest_value_from_rows(list(reversed(mixed)), "서울") is None, "행 순서 의존이 남았다"
+    # ★위양성 축 — 표 **전체**에 ITM 필드가 없으면(구형 표) 종전대로 동작한다.
+    bare = [{"CLS_NM": "서울", "CLS_FULLNM": "서울", "DTA_VAL": 6.96, "WRTTIME_IDTFR_ID": "2005"}]
+    assert latest_value_from_rows(bare, "서울") == (6.96, "2005")
+
+
+def test_time_keys_are_shared_so_both_extractors_read_the_same_period() -> None:
+    """★R9 MEDIUM-2 — 시점 후보 키가 두 추출기에서 **갈리면 안 된다**.
+
+    종전엔 `WRTTIME_DESC` 가 한쪽에만 있었다. base 에선 라벨 수준이라 무해했는데, 이 PR 이
+    시점 키를 **그룹핑·행 삭제의 축**으로 승격시키면서 그 표의 전 시점이 한 바구니가 됐다
+    (실측: `[('', 0.1), ('', 0.2), ('', 0.3)]` · 고유기간 0).
+    """
+    from app.services.external_api.reb_client import (
+        distinct_period_count,
+        latest_value_from_rows,
+        rate_series_from_rows,
+    )
+
+    rows = [
+        {"REGION_NM": "서울", "CLS_NM": "전체", "ITM_NM": "변동률", "DTA_VAL": v,
+         "WRTTIME_DESC": t}
+        for t, v in (("202601", 0.1), ("202602", 0.2), ("202603", 0.3))
+    ]
+    series = rate_series_from_rows(rows, "서울", _no_fallback=True)
+    assert distinct_period_count(series) == 3, f"시점이 구분되지 않았다: {series}"
+    assert latest_value_from_rows(rows, "서울") == (0.3, "202603")
+
+
+@pytest.mark.asyncio
+async def test_default_source_says_why_it_fell_back(monkeypatch) -> None:
+    """★R9 LOW-1 — 거부 사유가 `기본` 한 글자로 뭉개지지 않는다."""
+    from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
+
+    # R-ONE 자체가 없는 경우 ↔ 조회는 됐는데 값을 못 쓴 경우를 가른다.
+    _patch_rone(monkeypatch, [])
+    _patch_statbl(monkeypatch, [])
+    down = await desk_appraisal(address="서울특별시 강남구 1", area_sqm=500.0,
+                                official_price_per_sqm=1_000_000.0,
+                                monthly_rent_won=5_000_000, deposit_won=100_000_000)
+    inc = str((down.get("income") or {}).get("rationale") or "")
+    assert "R-ONE 미설정" in inc, inc
+
+    _patch_rone(monkeypatch, _many_months("서울", rate=0.5))
+    _patch_statbl(monkeypatch, _many_months("서울", rate=0.5))
+    up = await desk_appraisal(address="서울특별시 강남구 1", area_sqm=500.0,
+                              official_price_per_sqm=1_000_000.0,
+                              monthly_rent_won=5_000_000, deposit_won=100_000_000)
+    inc2 = str((up.get("income") or {}).get("rationale") or "")
+    assert "R-ONE 미설정" not in inc2, inc2

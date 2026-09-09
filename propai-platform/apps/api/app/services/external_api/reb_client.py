@@ -166,6 +166,18 @@ async def fetch_land_price_changes(months: int = 24) -> list[dict[str, Any]] | N
 #   정확히 1행). 이 표기가 없는 표에서는 아래 좁히기가 무동작이므로 안전하다.
 _AGGREGATE_CLS_NM = "전체"
 
+# ★★값·시점 후보 키는 **한 자리**에 둔다(독립 리뷰 R9 MEDIUM-2 · 2026-09-09).
+#   종전에는 두 추출기가 각자 튜플을 들고 있었고 **`WRTTIME_DESC` 가 한쪽에만** 있었다.
+#   base 에서는 그 차이가 «출력 라벨» 수준이라 무해했는데, 이 PR 이 시점 키를
+#   **그룹핑 + 「집계행 없는 시점 행 삭제」의 축**으로 승격시키면서 위험해졌다 —
+#   `WRTTIME_DESC` 전용 표에서는 전 시점이 한 바구니가 되어 시점 구분이 사라진다(실측:
+#   `rate_series` → `[('', 0.1), ('', 0.2), ('', 0.3)]` · `distinct_periods` 0).
+#   ★어느 라이브 표가 `WRTTIME_DESC` 전용인지는 **미측정**이다 — 그래서 «무해하니 둔다» 가
+#     아니라 **키를 합쳐 비대칭 자체를 없앤다**(드리프트할 자리를 남기지 않는다).
+_VAL_KEYS = ("DTA_VAL", "VALUE", "DATA_VALUE", "dtaVal")
+_TIME_KEYS = ("WRTTIME_IDTFR_ID", "WRTTIME_DESC", "WRTTIME", "PRD_DE")
+
+
 
 def _period_of(row: dict[str, Any], time_keys: tuple[str, ...]) -> str:
     """행의 작성시점 문자열(없으면 빈 문자열)."""
@@ -263,8 +275,7 @@ def latest_value_from_rows(
     #        `ITM_NM="경기지수"` 행이 «경기» 로 잡혔다.
     #     ③ `and region_txt.strip()` — 지역 필드가 **빈 행은 필터를 통과**했다(per-row fail-open).
     #   ⇒ `row_region_name` 정확일치로 통일한다. 판정 규칙은 **한 자리**에 둔다.
-    val_keys = ("DTA_VAL", "VALUE", "DATA_VALUE", "dtaVal")
-    time_keys = ("WRTTIME_IDTFR_ID", "WRTTIME_DESC", "WRTTIME", "PRD_DE")
+    val_keys, time_keys = _VAL_KEYS, _TIME_KEYS
 
     # ★★독립 리뷰 R4 HIGH-3(2026-09-08): 종전 처방(«모호하면 거부»)은 **증상에 걸려 있었다**.
     #   카디널리티를 만드는 것은 «여러 지역이 섞였다» 가 아니라 **규모 구분 축**이고, 그 표들은
@@ -300,18 +311,38 @@ def latest_value_from_rows(
     #     (형제 `rate_series_from_rows` 는 항목 필터를 갖고 있어 이 문제가 없다. 여기만 없었다 —
     #      처방을 형제 한쪽에만 걸었던 것이다.)
     #   ★라이브 항목 구성이 **미측정인 표가 있으므로 거부 쪽이 안전하다**(값을 지어내지 않는다).
+    #
+    # ★★독립 리뷰 R9 HIGH-1/HIGH-2(2026-09-09) — 위 처방이 **두 곳에서 자기 계약을 어겼다**:
+    #   (1) 혼재 시점을 `continue` 로 **건너뛰어** 더 오래된 시점이 이겼다. 실측:
+    #         최신 202607 혼재 · 직전 202606 깨끗 → `(5.4, '202606')`
+    #       그 구값이 `source="R-ONE"` · `basis="…실측"` 으로 화면·제출본에 나가고 **시점은
+    #       어디에도 렌더되지 않는다**(`wrttime` 소비처 0). 그런데 이 함수의 형제 계약은
+    #       `test_missing_aggregate_at_the_latest_period_rejects_not_returns_stale` —
+    #       *"최신 시점에 집계행이 없으면 **거부**한다 — 구값을 최신인 척 내보내지 않는다"* 다.
+    #       **같은 속성을 원인만 다르게 반대로 처리**했다. ⇒ **최신 시점이 혼재면 통째로 거부**한다.
+    #   (2) `_items.discard("")` 때문에 **한쪽 ITM 이 비면** 혼재로 안 세어, 커밋 `4fdccbd17` 이
+    #       «고쳤다» 고 선언한 그 회귀(`7.5 / 7.5`)가 **그대로 재현**됐다. 그리고 그 줄은
+    #       **어느 방향으로도 안 잠겨** 있었다(변이 `discard` 제거 → SURVIVED).
+    #       ★이 코드베이스는 `ITM_NM` 이 **없는 표를 명시적으로 전제**한다(`rate_series` 의
+    #         «itm 이 비면 통과»). 그러니 «부재» 는 무시할 값이 아니라 **하나의 항목값**이다.
+    #       ⇒ `discard("")` 를 지운다 — 부재도 항목으로 센다.
     _by_period: dict[str, list[dict[str, Any]]] = {}
     for row in _matched_raw:
         _by_period.setdefault(_period_of(row, time_keys), []).append(row)
+    _latest_period = max(_by_period, default="")
     _homogeneous: list[dict[str, Any]] = []
-    for _grp in _by_period.values():
+    for _period, _grp in _by_period.items():
+        # ★«부재» 도 하나의 항목값으로 센다(discard 하지 않는다 — R9 HIGH-2).
         _items = {str(r.get("ITM_NM") or "").strip() for r in _grp}
-        _items.discard("")
         if len(_items) > 1:
             logger.info(
-                "R-ONE 최신값 항목 축 혼재 — 한 시점에 ITM_NM 이 여럿(해당 시점 제외)",
-                region=region_sido, items=sorted(_items),
+                "R-ONE 최신값 항목 축 혼재 — 한 시점에 ITM_NM 이 여럿",
+                region=region_sido, wrttime=_period, items=sorted(_items),
+                latest=(_period == _latest_period),
             )
+            if _period == _latest_period:
+                # ★최신 시점을 못 읽으면 **구값을 최신인 척 내보내지 않는다**(형제 계약과 동일).
+                return None
             continue
         _homogeneous.extend(_grp)
     matched = narrow_to_period_aggregate(_homogeneous, time_keys)
@@ -364,8 +395,7 @@ def rate_series_from_rows(
     """변동률(%) 시계열 [(YYYYMM, rate)] 추출 — ITM='변동률'만, 지역(sido→전국 폴백), 시점 오름차순."""
     if not rows:
         return []
-    val_keys = ("DTA_VAL", "VALUE", "DATA_VALUE", "dtaVal")
-    time_keys = ("WRTTIME_IDTFR_ID", "WRTTIME", "PRD_DE")
+    val_keys, time_keys = _VAL_KEYS, _TIME_KEYS
 
     def _collect(region_filter: str | None) -> list[tuple[str, float]]:
         out: list[tuple[str, float]] = []
@@ -391,7 +421,6 @@ def rate_series_from_rows(
             and (not region_filter or region_filter in row_region_names(r))
         ]
         for row in narrow_to_period_aggregate(candidates, time_keys):
-            itm = str(row.get("ITM_NM") or "")
             # ★★주석 정정(독립 리뷰 R3 MEDIUM-6): 종전 주석은 *"'누계' 등 제외"* 라 했지만
             #   `"누계변동률"` 은 `"변동"` 을 **포함해 통과한다** — 거짓 면역 주장이었다(§C-11).
             #   그러면 한 (지역,시점)에 «당월변동률»·«누계변동률» 두 행이 잡혀 시계열이 배로 늘고
@@ -399,8 +428,11 @@ def rate_series_from_rows(
             #   ★라이브 `distinct_ITM_NM` 은 표마다 다르다(지가변동률=«변동률» 1종 · 주택지수=«지수»)
             #     — **미측정 표가 있으므로** 이 필터를 좁히는 것은 별건으로 남긴다(그때 그 표를 재라).
             #   지금 보장하는 것은 «변동» 을 **포함하지 않는 항목은 제외» 뿐이다.
-            if itm and "변동" not in itm:
-                continue
+            # ★중복 판정 제거(독립 리뷰 R9 MEDIUM-1): 이 검사는 위 `candidates` 에 **이미 있다**.
+            #   지역 축의 중복은 지웠는데 **항목 축은 두 자리로 남겼다** — 12줄 위에 내가
+            #   «판정은 `candidates` 한 곳에만 둔다» 라고 써 둔 바로 그 함수에서.
+            #   지금은 등가라 무해하지만, **중복은 변이를 눈멀게 한다**(한쪽만 바꾸면 다른 쪽이 막는다).
+            #   실측: 루프 쪽만 무력화 → SURVIVED / `candidates` 쪽만 무력화 → CAUGHT.
             # ★★시도 행은 **정확일치**로 고른다(2026-09-08). 종전에는 `region_filter not in
             #   region_txt` 였는데 `region_txt` 에 `CLS_FULLNM`(**계층 경로**)이 섞여 있어
             #   `"경기"` 가 **경기 산하 모든 시군구·동**에 매칭됐다.
