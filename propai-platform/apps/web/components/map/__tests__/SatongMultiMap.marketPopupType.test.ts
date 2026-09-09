@@ -145,9 +145,24 @@ describe("★신고③ — 팝업이 「무엇의 거래인지」 말한다", ()
       expect(sig, "기본값이 붙으면 호출부 누락이 tsc 를 통과한다").not.toMatch(/marketType[^,)]*=\s*undefined/);
     });
 
-    it("★대조군 — 호출부가 유형을 **실제로 넘긴다**", () => {
+    it("★팝업 조립부가 유형을 **entry 에서** 넘긴다(effect 호출부 아님 — 이름을 정직하게)", () => {
+      // ★★2026-09-09 R2 정정 — 이 락의 이름은 «호출부»였는데, 리팩토링 후 이 자리는
+      //   **`buildMarketMarker` 함수 본문 안**이다. 진짜 effect 호출부(`:3029`)는 이 락의
+      //   **시야 밖**이고, 그쪽은 이제 `SatongMultiMap.marketEffectWiring.test.tsx` 가
+      //   **DOM 으로** 태운다. ***이름과 명제가 어긋나면 다음 사람이 덮였다고 오독한다.***
+      // ★★2026-09-09 정정 — 이 락이 호출 모양을 **리터럴**(`marketPopupHtml(item, kind, type)`)로
+      //   봤는데, 마커 생성이 `buildMarketMarker` 로 추출되면서 **깨졌다.**
+      //   계약(«호출부가 유형을 실제로 넘긴다»)은 **그대로**이므로 ***깨진 쪽은 락이다*** —
+      //   코드를 되돌리지 않고 락을 고친다(볼트 `2026-09-03_락이_리팩토링에_깨지면…` 그대로).
+      // ★그리고 **모양이 아니라 명제**로 좁힌다: 3번째 인자가 **entry 에서 온 유형**이어야 한다.
       const src = scan("components/map/SatongMultiMap.tsx");
-      expect(src).toContain("marketPopupHtml(item, kind, type)");
+      const i = src.indexOf("marketPopupHtml(item,");
+      expect(i, "팝업 호출부를 못 찾았다 — 조회기 사망").toBeGreaterThan(-1);
+      const call = src.slice(i, src.indexOf(")", i) + 1);
+      // ★양성 — 유형 인자가 실린다(어디서 오든 «entry 의 type» 이어야 한다).
+      expect(call, `호출부: ${call}`).toMatch(/marketPopupHtml\(item,\s*[\w.]+,\s*entry\.type\)/);
+      // ★음성 — 리터럴로 못 박지 않았다(그것이 #1018 이 잡은 「모든 마커가 아파트」다).
+      expect(call).not.toMatch(/marketPopupHtml\(item,\s*[\w.]+,\s*["'`]/);
     });
 
     it("★두 벌 어휘 방지 — 라벨을 **파생 맵**에서 얻는다(인라인 리터럴 맵 금지)", () => {
