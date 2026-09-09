@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { salesApi } from "@/lib/salesApi";
-import { useSalesStore, type Unit } from "@/store/useSalesStore";
+import { selectUnits, useSalesStore, type Unit } from "@/store/useSalesStore";
 import {
   UNIT_STATUSES,
   UNIT_STATUS_LABEL,
@@ -23,7 +23,7 @@ const Grid3D = dynamic(() => import("@/components/sales/Grid3D"), {
 export default function UnitGrid({ siteCode }: { siteCode: string }) {
   // ★현장별로 읽는다 — 아직 안 불러온 현장은 정의상 **빈 목록**이라
   //   조회가 도는 동안 **직전 현장의 세대가 그려질 자리가 없다**(2026-09-09 Stage 3).
-  const units = useSalesStore((s) => s.unitsOf(siteCode));
+  const units = useSalesStore(selectUnits(siteCode));
   const selectUnit = useSalesStore((s) => s.select);
   const setUnits = useSalesStore((s) => s.setUnits);
   const select = (u?: Unit) => selectUnit(siteCode, u);

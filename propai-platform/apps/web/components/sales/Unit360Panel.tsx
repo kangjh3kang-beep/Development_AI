@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { salesApi, won } from "@/lib/salesApi";
-import { useSalesStore, type Unit } from "@/store/useSalesStore";
+import { selectSelected, selectUnits, useSalesStore, type Unit } from "@/store/useSalesStore";
 import { unitStatusLabel } from "@/components/sales/unitStatus";
 
 interface Detail {
@@ -37,9 +37,9 @@ const ACTIONS_BY_STATUS: Record<string, { action: string; label: string; tone: "
 
 export default function Unit360Panel({ siteCode }: { siteCode: string }) {
   // ★현장별로 읽는다 — 다른 현장으로 바꾸면 **남의 세대가 열려 있지 않다**(2026-09-09 Stage 3).
-  const selectedUnit = useSalesStore((s) => s.selectedOf(siteCode));
+  const selectedUnit = useSalesStore(selectSelected(siteCode));
   const selectUnit = useSalesStore((s) => s.select);
-  const units = useSalesStore((s) => s.unitsOf(siteCode));
+  const units = useSalesStore(selectUnits(siteCode));
   const setUnitsFor = useSalesStore((s) => s.setUnits);
   const select = (u?: Unit) => selectUnit(siteCode, u);
   const setUnits = (u: Unit[]) => setUnitsFor(siteCode, u);

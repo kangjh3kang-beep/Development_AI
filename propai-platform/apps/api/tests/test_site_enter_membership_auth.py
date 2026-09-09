@@ -36,8 +36,17 @@ import pytest
 
 _NEEDS_311 = pytest.mark.skipif(
     sys.version_info < (3, 11),
-    reason="라우터가 `datetime.UTC`(3.11+) 의존을 끌고 온다 — CI(3.12)에서 실행된다. "
-           "★같은 축을 임포트 없이 보는 AST 락이 아래에 있어 이 스킵이 무잠금을 뜻하지 않는다.",
+    reason=(
+        # ★사유는 **둘**이고 둘 다 실측했다(2026-09-09) — 하나만 적으면 다음 사람이
+        #   `datetime.UTC` 만 고치고 «이제 로컬에서 돈다» 고 오독한다.
+        #   ① `datetime.UTC` (3.11+) — `site_auth.py:21`
+        #   ② PEP 695 제네릭 `class CRUDBase[M]:` — `app/crud/base.py` 는 3.10 에서
+        #      **파싱조차 안 된다**(`py_compile` 실패). 라우터가 그 사슬을 끌고 온다.
+        "라우터가 3.11+ 문법·API 두 가지에 의존한다(datetime.UTC · PEP 695) — CI(3.12)에서 실행된다. "
+        "★같은 축을 임포트 없이 보는 AST 락이 아래에 있어 이 스킵이 무잠금을 뜻하지 않는다. "
+        "★그래도 **AST 가 원리적으로 못 보는 것**이 있다: `if False:` 로 무력화해도 호출 노드는 "
+        "AST 에 남는다. 그래서 아래 CI 전용 왕복 테스트가 **세 모집단**(멤버십·틀린비번·맞는비번)을 태운다."
+    ),
 )
 
 
@@ -507,3 +516,184 @@ def test_my_sites_carries_password_set_for_every_site() -> None:
     src = ast.unparse(fn)
     assert "sales_site_passwords" in src, "비번 설정 여부를 조회하지 않는다"
     assert "ANY(:ids)" in src, "현장마다 따로 조회한다(N+1) — `IN`/`ANY` 한 번으로 받아라"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F. 변이 전수가 짚은 **행위 공백** — CI 3.12 전용 왕복(세 번째 모집단 + my_sites)
+#
+# ★기계 변이 55건 중 생존 20건의 대부분이 이 파일의 라우터 본문이었다(base 696b532a82e5).
+#   원인은 하나다 — **로컬에서 라우터를 임포트할 수 없어** AST 로만 잠갔고,
+#   AST 는 `if False:` 로 무력화된 분기와 살아 있는 분기를 **구별하지 못한다**.
+#   그래서 「모양」이 아니라 **행위**로 태우는 자리를 여기에 모은다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@_NEEDS_311
+@pytest.mark.asyncio
+async def test_correct_password_enters_by_password(monkeypatch) -> None:
+    """★★**모집단 C** — 비번이 **맞으면** 토큰이 나오고 `auth="password"` 다.
+
+    이 모집단이 없어서 변이 전수에서 **성공 경로가 통째로 무잠금**이었다(생존 9건):
+    응답 필드(`site_token`·`token_type`·`expires_in`·`role`·`role_label`·`features`) ·
+    실패카운트 DELETE · `issue_site_token` 호출 · **그리고 `if outcome != "password":` 자체**.
+    ★마지막 것이 핵심이다 — 그 조건이 뒤집히면 **틀린 비번이 통과**하는데,
+      모집단 A(멤버십)·B(틀린 비번)만으로는 그 뒤집힘이 **양쪽 다 지나간다**.
+    """
+    from app.api.endpoints.sales import site_auth as mod
+
+    site = type("S", (), {"id": uuid.uuid4(), "site_code": "s1", "site_name": "현장"})()
+
+    async def _get_site(_db, _sid):
+        return site
+
+    async def _role(_db, _site, _user):
+        return ("a1.t1", "MEMBER")
+
+    async def _ensure(_db):
+        pass
+
+    monkeypatch.setattr(mod, "_get_site", _get_site, raising=True)
+    monkeypatch.setattr(mod, "_resolve_role", _role, raising=True)
+    monkeypatch.setattr(mod, "_ensure", _ensure, raising=True)
+
+    user = type("U", (), {"id": uuid.uuid4(), "tenant_id": None})()
+    db = _DB(has_password=True)
+    out = await mod.enter_site(str(site.id), mod.EnterRequest(password="correct-horse"),
+                               db=db, user=user)
+
+    assert out["auth"] == "password", "맞는 비번인데 비번 경로로 기록되지 않는다"
+    assert out["site_token"], "맞는 비번인데 토큰을 발급하지 않는다"
+    assert out["token_type"] == "bearer"
+    assert out["expires_in"] == mod._SITE_TOKEN_HOURS * 3600
+    assert out["role"] == "MEMBER"
+    assert out["role_label"], "역할 라벨이 비었다"
+    assert isinstance(out["features"], list) and out["features"], "기능키가 비었다"
+
+    # ★성공하면 **실패 카운트를 지운다** — 안 지우면 다음 오타 한 번에 잠긴다.
+    assert any("DELETE FROM sales_site_login_attempts" in q for q in db.sql), (
+        "성공 진입이 실패 카운트를 리셋하지 않는다"
+    )
+
+
+class _AllRes:
+    """`.all()` 과 `.scalars().all()` 을 모두 받는 결과 객체."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+    def scalars(self):
+        return self
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class _MySitesDB:
+    """`my_sites` 의 세 갈래를 **한 호출에서** 만든다(멤버십 · 소유 · 관리자).
+
+    ★한 갈래만 만들면 «`password_set` 이 전수에 붙는가» 를 원리적으로 못 본다 —
+      그것이 변이 ⑥ 이 노린 자리다.
+    """
+
+    def __init__(self, *, nodes, owned, allsites, with_pw):
+        self._nodes, self._owned, self._all, self._pw = nodes, owned, allsites, with_pw
+        self.sql: list[str] = []
+
+    async def execute(self, stmt, params=None):
+        q = " ".join(str(stmt).split())
+        self.sql.append(q)
+        if "sales_site_passwords" in q:
+            return _AllRes([(sid,) for sid in self._pw])
+        # ★★라우팅은 **WHERE 로** 가른다 — 「소유」와 「관리자 전체」는 둘 다
+        #   `select(SalesSite)` 라 **SELECT 절이 글자 단위로 같다**(컬럼명 `organization_id`
+        #   포함). SELECT 절의 낱말로 가르면 두 갈래가 **한 갈래로 뭉친다** —
+        #   그러면 「세 갈래 전수」를 단언해도 실제로는 두 갈래만 태운다(공허해진다).
+        if "sales_org_nodes" in q and "sales_sites" in q:
+            return _AllRes(self._nodes)          # (a) 멤버십 조인
+        if "ORDER BY" in q:
+            return _AllRes(self._all)            # (c) 관리자 전체 — 유일하게 정렬한다
+        if "organization_id =" in q:
+            return _AllRes(self._owned)          # (b) 소유 테넌트
+        return _AllRes([])
+
+    async def commit(self):
+        pass
+
+
+@_NEEDS_311
+@pytest.mark.asyncio
+async def test_my_sites_marks_password_set_on_all_three_membership_kinds(monkeypatch) -> None:
+    """★★`password_set` 이 **세 갈래 전부**에 붙고, **두 값**이 실제로 갈리는가.
+
+    ★AST 락(위 E)은 «`out` 을 도는 루프 안에서 붙는다» 를 본다. 그런데 `if out:` 을
+      `if False:` 로 무력화하면 그 루프는 **도달 불가**가 되는데 **AST 에는 그대로 남는다**
+      — 실측 생존(변이 `조건무력화 site_auth.py:322`). 그래서 행위로 태운다.
+    """
+    from app.api.endpoints.sales import site_auth as mod
+
+    tenant = uuid.uuid4()
+
+    def _site(name):
+        return type("S", (), {
+            "id": uuid.uuid4(), "site_code": name, "site_name": name,
+            "development_type": "APT", "status": "ACTIVE", "organization_id": tenant,
+        })()
+
+    s_org, s_own, s_all = _site("org"), _site("own"), _site("all")
+    node = type("N", (), {
+        "node_type": "MEMBER", "path": "a1.t1", "id": uuid.uuid4(), "site_id": s_org.id,
+    })()
+
+    async def _ensure(_db):
+        pass
+
+    monkeypatch.setattr(mod, "_ensure", _ensure, raising=True)
+    user = type("U", (), {"id": uuid.uuid4(), "tenant_id": tenant, "role": "superadmin"})()
+
+    # 비번은 **org 현장에만** 설정돼 있다 → 두 모집단이 같은 실행에서 갈려야 한다.
+    db = _MySitesDB(nodes=[(node, s_org)], owned=[s_own], allsites=[s_all],
+                    with_pw={str(s_org.id)})
+    rows = await mod.my_sites(db=db, user=user)
+
+    by_id = {r["site_id"]: r for r in rows}
+    assert len(by_id) == 3, f"세 갈래가 다 안 나왔다: {sorted(r['membership'] for r in rows)}"
+    assert {r["membership"] for r in rows} == {"org", "owner", "admin"}
+
+    # ★전수 — 어느 갈래도 `password_set` 이 **빠지면 안 된다**.
+    missing = [r["membership"] for r in rows if "password_set" not in r]
+    assert not missing, f"`password_set` 이 빠진 갈래: {missing}"
+
+    # ★두 값이 실제로 갈린다(전부 True 나 전부 False 면 프론트 게이팅이 무의미하다).
+    assert by_id[str(s_org.id)]["password_set"] is True
+    assert by_id[str(s_own.id)]["password_set"] is False
+    assert by_id[str(s_all.id)]["password_set"] is False
+
+
+def test_role_endpoint_exposes_lockout_state() -> None:
+    """★잠긴 사용자를 **식별할 수단**이 있는가(리뷰 «What's Missing»).
+
+    종전엔 `fail_count`·`locked_until` 이 **401/429 응답에만** 드러났다 — 즉 상태를 알려면
+    **또 시도해야** 했고(그 시도가 카운터를 더 쓴다), 관리자는 조회할 방법이 없었다.
+    ★자기 자신의 상태만 싣는다 — `user_id` 로 좁히지 않으면 남의 잠금이 새어 나간다.
+    """
+    import ast
+    fn = None
+    for n in ast.walk(_tree()):
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "site_role":
+            fn = n
+            break
+    assert fn is not None, "`site_role` 을 찾지 못했다 — 축이 죽었다"
+    src = ast.unparse(fn)
+
+    keys = {c.value for c in ast.walk(fn)
+            if isinstance(c, ast.Constant) and isinstance(c.value, str)}
+    for k in ("locked_until", "fail_count", "password_set"):
+        assert k in keys, f"`/role` 이 `{k}` 를 싣지 않는다"
+
+    assert "sales_site_login_attempts" in src, "잠금 이력을 조회하지 않는다"
+    # ★자기 상태만 — `user_id` 로 좁히지 않으면 남의 잠금이 새어 나간다.
+    assert "user_id=:u" in src, (
+        "잠금 조회가 사용자로 좁혀지지 않는다 — 남의 잠금 상태가 새어 나간다"
+    )

@@ -62,6 +62,19 @@ interface SalesState {
   clearSite: (siteId: string) => void;
 }
 
+/** ★순수 셀렉터 — **인자 `s` 를 실제로 읽는다**(2026-09-09 리뷰 MINOR 6).
+ *
+ * `unitsOf`/`selectedOf` 는 액션이라 `get()` 을 읽는다. 지금의 zustand v5 경로에서는
+ * 결과가 같지만, `subscribeWithSelector`·스냅샷 비교를 도입하면 **인자를 무시하는 셀렉터는
+ * 조용히 틀린다**(구독이 스냅샷을 보고 있는데 함수는 최신 store 를 읽는다).
+ * 소비처는 이 팩토리를 쓴다 — `useSalesStore(selectUnits(siteId))`.
+ * ★빈 배열은 여기서도 **모듈 상수**라 미조회 현장끼리 참조가 같다(React #185 방지).
+ */
+export const selectUnits = (siteId: string) => (s: SalesState): Unit[] =>
+  s.unitsBySite[siteId] ?? EMPTY_UNITS;
+export const selectSelected = (siteId: string) => (s: SalesState): Unit | undefined =>
+  s.selectedBySite[siteId];
+
 export const useSalesStore = create<SalesState>((set, get) => ({
   unitsBySite: {},
   selectedBySite: {},

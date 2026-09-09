@@ -59,12 +59,11 @@ def _chain(tree: ast.AST, call: ast.Call) -> ast.AST:
     while True:
         par = parents.get(cur)
         # `X.where` (Attribute 의 value) 또는 `X.where(...)` (Call 의 func) 로만 올라간다.
-        if isinstance(par, ast.Attribute) and par.value is cur:
-            cur = par
-        elif isinstance(par, ast.Call) and par.func is cur:
-            cur = par
-        else:
+        climbs = ((isinstance(par, ast.Attribute) and par.value is cur)
+                  or (isinstance(par, ast.Call) and par.func is cur))
+        if not climbs:
             return cur
+        cur = par
 
 
 def _population() -> dict[str, str]:

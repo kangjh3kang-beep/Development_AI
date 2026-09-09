@@ -452,6 +452,15 @@ async def site_role(site_id: str, db: AsyncSession = Depends(get_db),
     await _ensure(db)
     has_pw = (await db.execute(text(
         "SELECT 1 FROM sales_site_passwords WHERE site_id=:s"), {"s": sid})).first() is not None
+    # ★★잠금 상태를 **볼 수 있게** 한다(2026-09-09 리뷰 «잠금 해제/조회 수단이 없다»).
+    #   종전에는 `fail_count`·`locked_until` 이 **오직 401/429 응답에만** 드러나서,
+    #   잠긴 사용자는 «틀렸다» 와 «잠겼다» 를 구별하려면 **또 시도해야** 했고
+    #   관리자는 그 상태를 조회할 방법이 아예 없었다(유일한 해제 수단이 비번 재설정의 부작용).
+    #   ★이 값은 **자기 자신의 상태**다 — 남의 잠금을 보여 주지 않는다.
+    att = (await db.execute(text(
+        "SELECT fail_count, locked_until FROM sales_site_login_attempts "
+        "WHERE site_id=:s AND user_id=:u"), {"s": sid, "u": str(user.id)})).first()
+    locked_until = att.locked_until if att else None
     return {
         "site_id": sid,
         "role": role,
@@ -459,5 +468,8 @@ async def site_role(site_id: str, db: AsyncSession = Depends(get_db),
         "org_path": org_path,
         "can_manage": role in _MANAGE_ROLES,
         "password_set": has_pw,
+        # ★진단 불가는 그 자체로 장애다 — 「몇 번 남았나」와 「언제 풀리나」를 말한다.
+        "fail_count": (att.fail_count if att else 0),
+        "locked_until": (locked_until.isoformat() if locked_until is not None else None),
         "features": _features(role),
     }

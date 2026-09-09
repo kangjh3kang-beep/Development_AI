@@ -19,6 +19,10 @@ interface StoredSiteToken {
   expiresAt: number; // epoch ms
   role?: string;
   features?: string[];
+  /** 어떤 인증으로 들어왔나 — `membership`(승인) vs `password`(2차 비번).
+   *  ★서버 응답의 `auth` 를 그대로 보관한다. 종전엔 응답에만 있고 **소비처 0건**이라
+   *    «이 세션이 무엇으로 인증됐는지» 를 화면 어디서도 알 수 없었다(2026-09-09 리뷰 M4). */
+  auth?: "membership" | "password";
 }
 
 /** 현장 진입 토큰을 sessionStorage에 저장(현장별, 만료시각 포함). */
@@ -26,7 +30,7 @@ export function storeSiteToken(
   siteId: string,
   token: string,
   expiresInSec: number,
-  meta?: { role?: string; features?: string[] },
+  meta?: { role?: string; features?: string[]; auth?: "membership" | "password" },
 ) {
   if (typeof window === "undefined" || !siteId || !token) return;
   try {
@@ -35,6 +39,7 @@ export function storeSiteToken(
       expiresAt: Date.now() + Math.max(0, expiresInSec) * 1000,
       role: meta?.role,
       features: meta?.features,
+      auth: meta?.auth,
     };
     window.sessionStorage.setItem(SITE_TOKEN_PREFIX + siteId, JSON.stringify(payload));
   } catch {
