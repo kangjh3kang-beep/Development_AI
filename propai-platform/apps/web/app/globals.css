@@ -1653,6 +1653,22 @@ summary {
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.14);
   pointer-events: none;
 }
+/* ★★2026-09-09(사용자 신고③의 나머지 절반) — **클릭할 것이 있는 라벨만** 이벤트를 받는다.
+   위 기본은 `pointer-events: none` 이라 라벨 클릭이 **아래 지도로 통과**했고, 지도는 그것을
+   **필지 선택**으로 받았다(실측: jsdom + 진짜 Leaflet 로 map click 발화 1회).
+   `bindSatongLabel` 이 **팝업을 가진 라벨에만** `interactive: true` 를 주면 Leaflet 이
+   `leaflet-interactive` 클래스를 붙인다(`leaflet-src.js:9875-9877`).
+   ★Leaflet 자신도 `.leaflet-tooltip.leaflet-interactive { cursor:pointer; pointer-events:auto }`
+     를 갖고 있지만(`leaflet.css:592-595`) 위 우리 규칙과 **명시도가 같아(0,2,0) 소스 순서가
+     승부를 가른다** — globals.css 가 나중에 로드되면 우리 `none` 이 이겨 **조용히 무력화**된다.
+     그래서 여기서 **0,3,0 으로 명시**해 순서에 의존하지 않게 못 박는다.
+   ★jsdom 은 `pointer-events` 를 적용하지 않으므로 이 축은 테스트가 못 잰다 —
+     그래서 CSS 계약 락이 이 규칙을 파일에서 파생해 단언한다. */
+.leaflet-tooltip.satong-tooltip.leaflet-interactive {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
 /* 기본 툴팁 화살표(::before) 제거 — 이중 박스/뾰족이 잔상 방지(방향 클래스 무관 전부 차단) */
 .leaflet-tooltip.satong-tooltip::before {
   display: none !important;
