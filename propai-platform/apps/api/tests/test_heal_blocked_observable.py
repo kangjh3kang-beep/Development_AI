@@ -84,10 +84,49 @@ async def _call(db, **kw):
 
 @pytest.mark.asyncio
 async def test_blocked_events_are_exposed():
+    """★네 필드를 **전부** 단언한다 — 하나라도 빠지면 그 필드는 무잠금이다.
+
+    기계 변이가 실증했다: `action_type`·`created_at` 을 안 단언했더니 그 줄을 지워도 초록이었다
+    (`mutate_changed.py` 생존 6건 중 3건이 정확히 그 자리).
+    """
     out = await _call(_FakeDB(actions=[ACTION_ROW], blocked=[BLOCKED_ROW]))
     assert out.blocked_total == 1
-    assert [b.reason for b in out.blocked] == ["cooldown"]
-    assert [b.trigger_key for b in out.blocked] == ["fallback_rate:site_analysis"]
+    b = out.blocked[0]
+    assert b.reason == "cooldown"
+    assert b.trigger_key == "fallback_rate:site_analysis"
+    assert b.action_type == "threshold_relax", "action_type 이 실리지 않는다"
+    assert b.created_at == NOW, "created_at 이 실리지 않는다"
+
+
+@pytest.mark.asyncio
+async def test_payload_may_arrive_as_json_string():
+    """★실 DB 드라이버는 jsonb 를 **문자열로** 줄 수 있다 — 형제(`actions`)도 같은 분기를 갖는다."""
+    import json
+    row = (json.dumps(BLOCKED_ROW[0], ensure_ascii=False), NOW)
+    out = await _call(_FakeDB(blocked=[row]))
+    assert out.blocked and out.blocked[0].reason == "cooldown", "문자열 payload 를 못 읽는다"
+    assert out.blocked[0].trigger_key == "fallback_rate:site_analysis"
+
+
+@pytest.mark.asyncio
+async def test_null_payload_does_not_explode():
+    """★payload 가 NULL 인 행이 있어도 죽지 않는다(관측 장치가 관측 때문에 죽으면 안 된다)."""
+    out = await _call(_FakeDB(blocked=[(None, NOW)]))
+    assert out.blocked_total == 1
+    assert out.blocked[0].reason is None and out.blocked[0].created_at == NOW
+
+
+@pytest.mark.asyncio
+async def test_blocked_query_selects_the_columns_it_reads():
+    """★스텁은 SELECT 목록을 무시한다 — 그래서 **질의 자체**를 본다.
+
+    (기계 변이 실증: SELECT 문자열을 바꿔도 스텁이 같은 튜플을 주므로 초록이었다.)
+    """
+    db = _FakeDB(blocked=[BLOCKED_ROW])
+    await _call(db)
+    q = [x for x in db.seen if "heal_blocked" in x and "COUNT(*)" not in x]
+    assert q, "blocked 행 질의가 없다"
+    assert "payload" in q[0] and "created_at" in q[0], "읽는 열을 SELECT 하지 않는다"
 
 
 @pytest.mark.asyncio
