@@ -90,12 +90,28 @@ describe("DiscoverSitesPanel — 렌더", () => {
     expect(screen.queryByText("이미소속현장")).toBeNull();
   });
 
+  it("★★희망 직속 상위를 **받기 전에는 안 보낸다** — 비면 서버가 400 을 낸다", async () => {
+    render(<DiscoverSitesPanel />);
+    fireEvent.click(await screen.findByText("등록신청"));
+    // 입력칸이 열리고, 아직 아무것도 안 나갔다.
+    expect(screen.getByLabelText("희망 직속 상위 이메일")).toBeTruthy();
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
   it("★신청을 누르면 **실제로 POST 가 나가고** 그 카드가 대기로 바뀐다", async () => {
     postMock.mockResolvedValue({ status: "pending", already_member: false });
     render(<DiscoverSitesPanel />);
     fireEvent.click(await screen.findByText("등록신청"));
+    fireEvent.change(screen.getByLabelText("희망 직속 상위 이메일"), {
+      target: { value: "lead@example.com" },
+    });
+    fireEvent.click(screen.getByText("보내기"));
 
     await waitFor(() => expect(postMock).toHaveBeenCalled());
+    // ★★body 에 sponsor 가 실렸는가 — 빠지면 서버가 400 이라 신청이 통째로 죽는다.
+    expect(postMock.mock.calls[0][1]).toMatchObject({
+      body: { sponsor_email: "lead@example.com" },
+    });
     // ★★경로를 **정확히** 못 박는다(적대 리뷰 B-8). 앞 판은 `toContain("s-open")` 뿐이라
     //   경로가 통째로 깨져도(`join-requests-TYPO`) site id 만 들어 있으면 통과했다
     //   — 주석은 «무엇을 넘겼는가를 본다» 고 선언했는데 코드가 그 면역을 안 갖고 있었다.
@@ -109,6 +125,10 @@ describe("DiscoverSitesPanel — 렌더", () => {
     postMock.mockResolvedValue({ status: null, already_member: true });
     render(<DiscoverSitesPanel />);
     fireEvent.click(await screen.findByText("등록신청"));
+    fireEvent.change(screen.getByLabelText("희망 직속 상위 이메일"), {
+      target: { value: "lead@example.com" },
+    });
+    fireEvent.click(screen.getByText("보내기"));
 
     await waitFor(() => expect(screen.queryByText("신청가능현장")).toBeNull());
     // 낙관적으로 칠했다면 대기 배지가 2개가 됐을 것이다.
@@ -125,5 +145,23 @@ describe("DiscoverSitesPanel — 렌더", () => {
     getMock.mockRejectedValue(new Error("boom"));
     render(<DiscoverSitesPanel />);
     expect(await screen.findByText(/불러오지 못했습니다/)).toBeTruthy();
+  });
+});
+
+describe("등록신청 실패 — **서버의 사유를 그대로** 보여 준다", () => {
+  it("★이메일 오타·직급 부족은 서로 다른 조치를 뜻한다 — 「실패했습니다」로 뭉개지 않는다", async () => {
+    postMock.mockRejectedValue(
+      Object.assign(new Error("'x@y.z' 은(는) 이 현장의 조직 구성원이 아닙니다"), { status: 400 }),
+    );
+    render(<DiscoverSitesPanel />);
+    fireEvent.click(await screen.findByText("등록신청"));
+    fireEvent.change(screen.getByLabelText("희망 직속 상위 이메일"), {
+      target: { value: "x@y.z" },
+    });
+    fireEvent.click(screen.getByText("보내기"));
+
+    await waitFor(() =>
+      expect(screen.getByText(/이 현장의 조직 구성원이 아닙니다/)).toBeTruthy(),
+    );
   });
 });

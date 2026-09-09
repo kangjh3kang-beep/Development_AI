@@ -90,7 +90,63 @@ async def resolve_approver_node(db: AsyncSession, site_id, user):
     return False, None
 
 
-async def link_membership(db: AsyncSession, site_id, applicant_user_id, approver_node) -> str:
+class SponsorNotFoundError(ValueError):
+    """희망 직속 상위를 그 현장에서 찾지 못했다(이메일 오타 · 그 현장 멤버가 아님)."""
+
+
+class SponsorNotEligibleError(ValueError):
+    """찾았으나 **아래를 둘 수 없는 직급**이다(MEMBER 는 서열 최하위)."""
+
+
+async def resolve_sponsor_node(db: AsyncSession, site_id, sponsor_email: str):
+    """희망 직속 상위(sponsor)를 **이메일로** 그 현장의 조직 노드로 해석한다.
+
+    ## 왜 sponsor 를 신청 시점에 정하나 (2026-09-09 · 볼트 §0 조회가 짚은 누락)
+
+    채택된 설계(벤치마킹 R2)가 *"신청 시 **희망 직속 상위 필수** + 승인·삽입 원자성"* 인데
+    구현에서 빠져 있었다. 그 결과 부모가 **승인자의 노드**로 정해졌고, 한 현장에 승인자가
+    여럿이면(팀장·본부장) **누가 먼저 누르느냐로 신입의 조상 체인이 갈렸다.**
+    정산이 `chain[0]` 을 대행사로 보므로 **수수료 귀속이 클릭 순서에 좌우된다** — 조용하다.
+
+    ★기각된 대안(X1 도메인 자동가입)의 기각 사유가 정확히 *"sponsor 확정 시점을 없애
+      R2 와 구조적 양립 불가"* 였다. 시점을 **신청**으로 고정하는 것이 이 함수의 존재 이유다.
+
+    ## 왜 조직도 목록이 아니라 **이메일**인가
+
+    신청자는 아직 그 현장의 멤버가 아니다. 후보를 고르게 하려면 **남의 현장 조직도를 보여 줘야**
+    하는데, 그건 이 파이프라인이 «축소 필드만 준다» 고 선언한 격리를 스스로 깨는 것이다.
+    이메일은 **신청자가 이미 아는 정보**(나를 부른 사람)라 새 노출이 0 이다.
+    ★해석 패턴은 새로 만들지 않았다 — `org/service.assign_user_to_node` 가 쓰는 그 SQL 이다.
+    """
+    em = (sponsor_email or "").strip()
+    if not em:
+        raise SponsorNotFoundError("희망 직속 상위의 이메일을 입력하세요")
+
+    row = (await db.execute(text(
+        "SELECT id FROM users WHERE lower(email)=lower(:em)"), {"em": em})).first()
+    if row is None:
+        # ★계정 존재 여부가 새지 않게 «그 현장에서 못 찾았다» 로 뭉뚱그린다.
+        raise SponsorNotFoundError(
+            f"'{em}' 을(를) 이 현장의 담당자로 찾을 수 없습니다(이메일을 확인하세요)")
+
+    nodes = (await db.execute(select(SalesOrgNode).where(
+        SalesOrgNode.site_id == site_id, SalesOrgNode.user_id == row[0],
+        SalesOrgNode.active.is_(True),
+        SalesOrgNode.deleted_at.is_(None)))).scalars().all()
+    if not nodes:
+        raise SponsorNotFoundError(
+            f"'{em}' 은(는) 이 현장의 조직 구성원이 아닙니다")
+
+    # ★복수 노드면 **권한 우선순위**로 고른다(형제 셋과 같은 기준).
+    node = min(nodes, key=lambda n: (node_priority(str(n.node_type)), str(n.path), str(n.id)))
+    if str(node.node_type) not in APPROVER_NODE_TYPES:
+        raise SponsorNotEligibleError(
+            f"'{em}' 의 직급({node.node_type})으로는 아래에 팀원을 둘 수 없습니다")
+    return node
+
+
+async def link_membership(db: AsyncSession, site_id, applicant_user_id, approver_node,
+                          sponsor_node=None) -> str:
     """승인된 신청자를 조직도에 **MEMBER** 로 붙인다 — 사유를 문자열로 돌려준다.
 
     사유 어휘는 채용 승인 경로(`endpoints/sales/market.py`)와 **같다**. 두 승인 경로가
@@ -107,7 +163,11 @@ async def link_membership(db: AsyncSession, site_id, applicant_user_id, approver
     if existing:
         return "ALREADY_MEMBER"
 
-    parent = approver_node
+    # ★★부모는 **신청 시 정해진 sponsor** 가 우선이다(2026-09-09).
+    #   승인자 노드를 부모로 쓰면 **누가 먼저 누르느냐로 조상 체인이 갈리고**,
+    #   정산이 `chain[0]` 을 보므로 **수수료 귀속이 클릭 순서에 좌우된다.**
+    #   sponsor 는 신청 시점에 고정되므로 **누가 승인해도 같은 자리**에 붙는다.
+    parent = sponsor_node or approver_node
     if parent is None:
         # 승인자가 플랫폼 운영자라 노드가 없다 → 현장의 대행사 루트에 붙인다.
         parent = (await db.execute(select(SalesOrgNode).where(

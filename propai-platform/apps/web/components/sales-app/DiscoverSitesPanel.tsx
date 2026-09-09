@@ -62,6 +62,10 @@ export default function DiscoverSitesPanel() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [sendingId, setSendingId] = useState("");
+  /** ★신청하려면 **나를 부른 담당자의 이메일**이 필요하다(희망 직속 상위).
+   *  그래야 누가 승인하든 같은 자리에 붙는다 — 승인자를 부모로 쓰면 클릭 순서가 체인을 정한다. */
+  const [sponsorFor, setSponsorFor] = useState("");
+  const [sponsorEmail, setSponsorEmail] = useState("");
 
   const load = useCallback(() => {
     apiClient
@@ -80,10 +84,11 @@ export default function DiscoverSitesPanel() {
 
   const apply = (siteId: string) => {
     setSendingId(siteId);
+    setErr("");
     apiClient
       .post<{ status?: string | null; already_member?: boolean }>(
         `/sales/sites/${siteId}/join-requests`,
-        { body: {} },
+        { body: { sponsor_email: sponsorEmail.trim() } },
       )
       .then((r) => {
         // ★서버가 판정한 결과를 **그대로 반영**한다(낙관적으로 'pending' 을 지어내지 않는다).
@@ -94,7 +99,16 @@ export default function DiscoverSitesPanel() {
           prev.map((s) => (s.site_id === siteId ? { ...s, membership: next } : s)),
         );
       })
-      .catch(() => setErr("등록신청에 실패했습니다. 잠시 후 다시 시도해 주세요."))
+      .then(() => {
+        setSponsorFor("");
+        setSponsorEmail("");
+      })
+      .catch((e) => {
+        // ★서버가 왜 거절했는지 **그대로** 보여 준다 — «실패했습니다» 는 진단 불가다.
+        //   이메일 오타·그 현장 사람이 아님·직급 부족이 전부 다른 조치를 뜻한다.
+        const msg = (e as { message?: string })?.message;
+        setErr(msg || "등록신청에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+      })
       .finally(() => setSendingId(""));
   };
 
@@ -144,9 +158,29 @@ export default function DiscoverSitesPanel() {
                   <span className="flex shrink-0 items-center gap-1 rounded-lg bg-[var(--surface-soft)] px-2.5 py-1.5 text-[11px] font-bold text-[var(--text-secondary)]">
                     <Clock3 className="size-3.5" aria-hidden /> 승인 대기
                   </span>
+                ) : sponsorFor === s.site_id ? (
+                  <span className="flex shrink-0 items-center gap-1">
+                    <input
+                      value={sponsorEmail}
+                      onChange={(e) => setSponsorEmail(e.target.value)}
+                      placeholder="나를 부른 담당자 이메일"
+                      aria-label="희망 직속 상위 이메일"
+                      className="w-44 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-2 py-1.5 text-[11px] text-[var(--text-primary)] placeholder:text-[var(--text-hint)]"
+                    />
+                    <button
+                      onClick={() => apply(s.site_id)}
+                      disabled={sendingId === s.site_id || sponsorEmail.trim().length < 3}
+                      className="rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-[11px] font-black text-white transition hover:opacity-90 disabled:opacity-50"
+                    >
+                      보내기
+                    </button>
+                  </span>
                 ) : (
                   <button
-                    onClick={() => apply(s.site_id)}
+                    onClick={() => {
+                      setSponsorFor(s.site_id);
+                      setSponsorEmail("");
+                    }}
                     disabled={sendingId === s.site_id}
                     className="flex shrink-0 items-center gap-1 rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-[11px] font-black text-white transition hover:opacity-90 disabled:opacity-50"
                   >

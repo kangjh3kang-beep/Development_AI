@@ -48,7 +48,13 @@ from app.api.endpoints.sales.market import _LINKED_REASONS
 
 # ★판정은 **서비스 층**에 산다(`org/join.py`) — 라우터에 두면 FastAPI 의존 때문에
 #   아무도 태울 수 없다(PR #1021 에서 정확히 그 형태로 데였다). 여기 남는 것은 HTTP 매핑뿐이다.
-from app.services.sales.org.join import link_membership, resolve_approver_node
+from app.services.sales.org.join import (
+    SponsorNotEligibleError,
+    SponsorNotFoundError,
+    link_membership,
+    resolve_approver_node,
+    resolve_sponsor_node,
+)
 from app.services.sales.transition import claim_status_transition
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
 
@@ -65,6 +71,9 @@ _JOIN_DDL = (
     "  site_id uuid NOT NULL,"
     "  user_id uuid NOT NULL,"
     "  message text,"
+    # ★신청 시 확정되는 **희망 직속 상위**. 승인자가 아니라 이것이 부모가 된다 —
+    #   그래야 «누가 먼저 누르느냐» 로 수수료 체인이 갈리지 않는다.
+    "  sponsor_node_id uuid,"
     "  status varchar(20) NOT NULL DEFAULT 'pending',"
     "  decided_by uuid,"
     "  decided_at timestamptz,"
@@ -84,6 +93,8 @@ _JOIN_IDX = (
     "ON sales_site_join_requests (site_id, status)",
     "CREATE INDEX IF NOT EXISTS ix_join_user "
     "ON sales_site_join_requests (user_id)",
+    # ★기존 테이블(이 컬럼 이전에 만들어진 것)에도 붙인다 — 멱등.
+    "ALTER TABLE sales_site_join_requests ADD COLUMN IF NOT EXISTS sponsor_node_id uuid",
 )
 
 _ENSURED = False
@@ -160,6 +171,18 @@ async def discover_sites(db: AsyncSession = Depends(get_db),
 # 2) 신청
 # ═══════════════════════════════════════════════════════════════════════════
 class JoinRequestBody(BaseModel):
+    """★`sponsor_email` 은 **필수**다(채택된 설계 — 벤치마킹 R2).
+
+    누구 아래로 들어갈지를 **신청 시점에** 정한다. 승인 시점에 정하면 승인자가 여럿인 현장에서
+    **누가 먼저 누르느냐로 조상 체인이 갈리고**, 정산이 `chain[0]` 을 보므로
+    **수수료 귀속이 클릭 순서에 좌우된다.**
+
+    ★목록이 아니라 이메일인 이유는 `org/join.resolve_sponsor_node` 독스트링에 있다
+      (남의 현장 조직도를 보여 주지 않으려고).
+    """
+
+    sponsor_email: str = Field(min_length=3, max_length=320,
+                               description="나를 이 현장에 부른 담당자의 이메일(희망 직속 상위)")
     message: str | None = Field(default=None, max_length=1000)
 
 
@@ -205,10 +228,19 @@ async def create_join_request(site_id: uuid.UUID, body: JoinRequestBody,
     # ★`ON CONFLICT DO NOTHING` — SELECT 와 INSERT 사이에 남이 끼어들면(두 탭·두 기기)
     #   부분 유니크 인덱스가 `IntegrityError` 를 던져 **정당한 재전송이 500** 이 됐다.
     #   («유일성 제약은 정당한 멱등 재전송을 거부한다» — 저장소가 이미 데인 형태.)
+    # ★sponsor 를 **여기서** 확정한다(승인 시점이 아니라). 못 찾으면 400 — 신청 자체를 안 만든다.
+    try:
+        sponsor = await resolve_sponsor_node(db, site_id, body.sponsor_email)
+    except SponsorNotEligibleError as e:
+        raise HTTPException(409, str(e)) from e
+    except SponsorNotFoundError as e:
+        raise HTTPException(400, str(e)) from e
+
     row = (await db.execute(text(
-        "INSERT INTO sales_site_join_requests (site_id, user_id, message) "
-        "VALUES (:s, :u, :m) ON CONFLICT DO NOTHING RETURNING id"),
-        {"s": str(site_id), "u": str(user.id), "m": body.message})).first()
+        "INSERT INTO sales_site_join_requests (site_id, user_id, message, sponsor_node_id) "
+        "VALUES (:s, :u, :m, :sp) ON CONFLICT DO NOTHING RETURNING id"),
+        {"s": str(site_id), "u": str(user.id), "m": body.message,
+         "sp": str(sponsor.id)})).first()
     if row is None:
         # 경쟁에서 졌다 — 남이 만든 그 신청을 **그대로 돌려준다**(터뜨리지 않는다).
         row = (await db.execute(text(
@@ -271,6 +303,21 @@ async def list_join_requests(site_id: uuid.UUID, status: str = "pending",
     } for r in rows], "count": len(rows)}
 
 
+async def _sponsor_of(db: AsyncSession, sponsor_node_id):
+    """신청에 박힌 sponsor 노드를 **승인 시점에 다시 확인**한다.
+
+    ★신청 후 승인 전에 그 사람이 해촉될 수 있다. 죽은 노드를 부모로 쓰면 고아 체인이 생기므로,
+      살아 있지 않으면 `None` 을 돌려 `link_membership` 의 **보류 경로**로 떨어뜨린다
+      (조용히 승인자 노드로 바꿔치기하지 **않는다** — 그러면 클릭 순서 의존이 되살아난다).
+    """
+    if sponsor_node_id is None:
+        return None
+    return (await db.execute(select(SalesOrgNode).where(
+        SalesOrgNode.id == sponsor_node_id,
+        SalesOrgNode.active.is_(True),
+        SalesOrgNode.deleted_at.is_(None)))).scalars().first()
+
+
 class DecideBody(BaseModel):
     approve: bool
     note: str | None = Field(default=None, max_length=1000)
@@ -295,11 +342,19 @@ async def decide_join_request(request_id: uuid.UUID, body: DecideBody,
     await _ensure(db)
 
     req = (await db.execute(text(
-        "SELECT site_id, user_id, status FROM sales_site_join_requests WHERE id = :i"),
+        "SELECT site_id, user_id, status, sponsor_node_id "
+        "  FROM sales_site_join_requests WHERE id = :i"),
         {"i": str(request_id)})).first()
     if req is None:
         raise HTTPException(404, "신청을 찾을 수 없습니다")
-    site_id, applicant_id, cur_status = req[0], req[1], req[2]
+    site_id, applicant_id, cur_status, sponsor_node_id = req[0], req[1], req[2], req[3]
+
+    # ★★**자기 승인 차단**(2026-09-09 R1 C-5 · R2 가 «여전히 가능» 으로 재확인).
+    #   플랫폼 역할(superadmin/developer)은 조직노드가 없어 「이미 멤버」 검사를 통과해
+    #   자기 신청을 만들 수 있고, 그다음 플랫폼 분기로 **자기가 자기를 승인**해
+    #   대행사 루트 아래에 자신을 넣을 수 있었다. 승인은 **남이 하는 것**이다.
+    if str(applicant_id) == str(user.id):
+        raise HTTPException(403, "자기 신청은 스스로 승인·거절할 수 없습니다")
 
     can, approver_node = await resolve_approver_node(db, site_id, user)
     if not can:
@@ -319,7 +374,8 @@ async def decide_join_request(request_id: uuid.UUID, body: DecideBody,
             return {"request_id": str(request_id), "status": new_status,
                     "idempotent": True, "membership_linked": False,
                     "membership_reason": "IDEMPOTENT_NO_CHANGE"}
-        retry_reason = await link_membership(db, site_id, applicant_id, approver_node)
+        retry_reason = await link_membership(db, site_id, applicant_id, approver_node,
+                                             sponsor_node=await _sponsor_of(db, sponsor_node_id))
         await db.commit()
         return {"request_id": str(request_id), "status": new_status, "idempotent": True,
                 "membership_linked": retry_reason in _LINKED_REASONS,
@@ -342,7 +398,8 @@ async def decide_join_request(request_id: uuid.UUID, body: DecideBody,
 
     reason = "DECLINED"
     if body.approve:
-        reason = await link_membership(db, site_id, applicant_id, approver_node)
+        reason = await link_membership(db, site_id, applicant_id, approver_node,
+                                       sponsor_node=await _sponsor_of(db, sponsor_node_id))
     await db.commit()
     return {"request_id": str(request_id), "status": new_status, "idempotent": False,
             "membership_linked": reason in _LINKED_REASONS,

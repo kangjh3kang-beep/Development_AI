@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import subprocess
 import uuid
 from pathlib import Path
@@ -714,6 +715,13 @@ async def test_every_org_node_query_is_site_scoped(fn_name: str, monkeypatch) ->
         await mod.resolve_approver_node(db, site, user)
     elif fn_name == "link_membership":
         await mod.link_membership(db, site, uuid.uuid4(), _Node())
+    elif fn_name == "resolve_sponsor_node":
+        # ★sponsor 해석도 «그 현장의» 노드만 봐야 한다 — 타 현장 사람을 상위로 앉히면
+        #   조상 체인이 현장을 넘고 정산이 통째로 어긋난다.
+        # `FROM users` 는 사용자 id 를 주고(그래야 조직 조회까지 간다), 조직 조회는 비운다.
+        db = _RecordingDB(_rows_for(name=(uuid.uuid4(),)))
+        with contextlib.suppress(ValueError):
+            await mod.resolve_sponsor_node(db, site, "who@example.com")
     else:  # 새로 생긴 함수 — 태우는 법을 모르면 **조용히 넘기지 않는다**
         pytest.fail(
             f"`{fn_name}` 이 조직노드를 조회하는데 이 락이 태우는 법을 모른다.\n"
@@ -842,3 +850,124 @@ def test_discover_excludes_deleted_sites() -> None:
             f"현장 조회가 소프트 삭제를 안 거른다: {conds}"
         )
     assert found, "`select(SalesSite).where(...)` 를 못 찾았다 — 축이 죽었다"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# G. sponsor(희망 직속 상위) — **클릭 순서가 수수료 체인을 정하지 못하게** 한다
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ★볼트 §0 조회가 짚은 누락(2026-09-09). 채택된 설계(벤치마킹 R2)가
+#   *"신청 시 **희망 직속 상위 필수** + 승인·삽입 원자성"* 인데 구현에서 빠져 있었다.
+#   그래서 부모가 **승인자의 노드**였고, 승인자가 여럿인 현장에서는
+#   **누가 먼저 누르느냐로 신입의 조상 체인이 갈렸다** — 정산이 `chain[0]` 을 보므로
+#   **수수료 귀속이 클릭 순서에 좌우된다.** 조용하다.
+
+
+async def test_sponsor_beats_the_approver_as_parent(monkeypatch) -> None:
+    """★★**같은 신청을 누가 승인해도 같은 자리**에 붙는다 — 두 승인자로 갈라 본다.
+
+    ★이것이 sponsor 의 존재 이유다. 두 모집단(팀장이 승인 / 본부장이 승인)에서
+      **부모가 동일**해야 한다 — 그래야 수수료 체인이 클릭 순서와 무관해진다.
+    """
+    from app.services.sales.org import join as mod
+
+    seen: list = []
+
+    async def _create(_db, _site, _type, parent_id=None, **_kw):
+        seen.append(parent_id)
+
+    monkeypatch.setattr(mod, "create_node", _create, raising=True)
+
+    sponsor = _Node("TEAM_LEADER", "a1.t1")
+    site, applicant = uuid.uuid4(), uuid.uuid4()
+
+    for approver in (_Node("TEAM_LEADER", "a1.t9"), _Node("GM_DIRECTOR", "a1")):
+        db = _RecordingDB(_rows_for(name=("홍길동",)))
+        reason = await mod.link_membership(db, site, applicant, approver, sponsor_node=sponsor)
+        assert reason == "LINKED"
+
+    assert seen == [sponsor.id, sponsor.id], (
+        f"승인자에 따라 부모가 달라진다 — 클릭 순서가 수수료 체인을 정한다: {seen}"
+    )
+
+
+async def test_without_sponsor_the_approver_still_places(monkeypatch) -> None:
+    """★★**반대편 모집단** — sponsor 가 없으면(옛 신청) 승인자 노드로 붙는다.
+
+    이것이 없으면 위 단언이 «항상 sponsor 만 본다» 와 구별되지 않고,
+    컬럼 추가 이전에 만들어진 신청이 **영원히 보류**된다.
+    """
+    from app.services.sales.org import join as mod
+
+    seen: list = []
+
+    async def _create(_db, _site, _type, parent_id=None, **_kw):
+        seen.append(parent_id)
+
+    monkeypatch.setattr(mod, "create_node", _create, raising=True)
+
+    approver = _Node("GM_DIRECTOR", "a1")
+    db = _RecordingDB(_rows_for(name=("홍길동",)))
+    reason = await mod.link_membership(db, uuid.uuid4(), uuid.uuid4(), approver, sponsor_node=None)
+    assert reason == "LINKED"
+    assert seen == [approver.id]
+
+
+async def test_sponsor_must_be_able_to_have_subordinates() -> None:
+    """★말단(MEMBER)을 희망 상위로 지정하면 **거부**한다 — 서열 최하위는 아래를 못 둔다."""
+    from app.services.sales.org import join as mod
+
+    db = _RecordingDB(_rows_for(name=(uuid.uuid4(),), member=_Node("MEMBER", "a1.t1.m1")))
+    with pytest.raises(mod.SponsorNotEligibleError):
+        await mod.resolve_sponsor_node(db, uuid.uuid4(), "member@example.com")
+
+
+async def test_sponsor_outside_the_site_is_not_found() -> None:
+    """★★**반대편** — 그 현장에 노드가 없으면 «못 찾음» 이다(계정 존재 여부는 안 샌다).
+
+    ★타 현장 사람을 상위로 앉히면 조상 체인이 **현장을 넘고** 정산이 통째로 어긋난다.
+    """
+    from app.services.sales.org import join as mod
+
+    db = _RecordingDB(_rows_for(name=(uuid.uuid4(),)))   # 사용자는 있고, 이 현장 노드는 없다
+    with pytest.raises(mod.SponsorNotFoundError):
+        await mod.resolve_sponsor_node(db, uuid.uuid4(), "outsider@example.com")
+
+
+def test_sponsor_email_is_required_on_the_request_body() -> None:
+    """★신청 본문에서 sponsor 가 **필수**인가 — 선택이면 옛 비결정성이 그대로 남는다."""
+    src = _MODULE.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    body = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.ClassDef) and n.name == "JoinRequestBody"
+    )
+    fields = {
+        t.target.id: ast.unparse(t.value) if t.value else ""
+        for t in body.body if isinstance(t, ast.AnnAssign) and isinstance(t.target, ast.Name)
+    }
+    assert "sponsor_email" in fields, "희망 직속 상위가 신청 본문에 없다"
+    assert "default" not in fields["sponsor_email"], (
+        "sponsor 가 **선택**이다 — 비면 부모가 승인자로 정해져 클릭 순서 의존이 되살아난다"
+    )
+
+
+def test_self_approval_is_blocked() -> None:
+    """★★자기 신청을 스스로 승인할 수 없다(R1 C-5 · R2 가 «여전히 가능» 으로 재확인).
+
+    플랫폼 역할은 조직노드가 없어 「이미 멤버」 검사를 통과해 자기 신청을 만들 수 있고,
+    그다음 플랫폼 분기로 **자기가 자기를 승인**해 대행사 루트 아래에 자신을 넣을 수 있었다.
+
+    ★축은 **`decide` 함수 안의 비교문**이다(파일 grep 아님 — `user.id` 는 여러 번 나온다).
+    """
+    fn = _fn("decide_join_request")
+    guarded = False
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.If):
+            continue
+        test = ast.unparse(node.test)
+        if "applicant_id" in test and "user.id" in test:
+            raised = [r for r in ast.walk(node) if isinstance(r, ast.Raise)]
+            assert raised, f"비교는 하는데 거부하지 않는다: {test}"
+            guarded = True
+    assert guarded, "자기 신청을 스스로 승인할 수 있다 — 승인은 **남이 하는 것**이다"
