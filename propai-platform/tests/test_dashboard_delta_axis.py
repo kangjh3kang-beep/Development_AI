@@ -175,6 +175,34 @@ def test_missing_base_is_unknown_for_classifier(repo_comment_only):
     assert _call("comment_only_delta", d, "deadbeefdeadbeef", "pkg/") == "unknown"
 
 
+# ── ★판정 자체를 태운다(파티션) — 「존재 락」이 아니라 「행위 락」 ────────
+#   ⑤-2 블록 안에 인라인으로 두면 보드·SSH 가 살아야 태울 수 있어 아무도 안 태운다.
+#   그래서 `delta_verdict` 를 순수 함수로 꺼냈고, 여기서 **다섯 모집단**을 직접 태운다.
+@pytest.mark.parametrize(
+    ("wd", "ad", "cd", "cow", "coa", "expected"),
+    [
+        ("0", "0", "0", "unknown", "unknown", "converged"),   # 수렴
+        ("0", "2", "0", "unknown", "yes", "obs"),             # api 주석만 → 강등
+        ("2", "0", "0", "yes", "unknown", "obs"),             # web 주석만 → 강등
+        ("0", "2", "0", "unknown", "no", "viol"),             # 코드 변경 → 위반
+        ("0", "2", "0", "unknown", "unknown", "viol"),        # 판정 불가 → 강등 금지
+        ("0", "0", "1", "yes", "yes", "viol"),                # 컨테이너 입력 → 재빌드 필요
+    ],
+)
+def test_delta_verdict_partition(tmp_path: Path, wd, ad, cd, cow, coa, expected):
+    assert _call("delta_verdict", tmp_path, wd, ad, cd, cow, coa) == expected
+
+
+def test_verdict_values_are_not_all_the_same(tmp_path: Path):
+    """★공허 진리 가드 — 「항상 viol」·「항상 obs」가 만점을 받지 못하게 한다."""
+    got = {
+        _call("delta_verdict", tmp_path, "0", "0", "0", "unknown", "unknown"),
+        _call("delta_verdict", tmp_path, "0", "2", "0", "unknown", "yes"),
+        _call("delta_verdict", tmp_path, "0", "2", "0", "unknown", "no"),
+    }
+    assert len(got) == 3, f"세 모집단이 {got} 로 뭉쳤다 — 판정이 입력을 안 읽는다"
+
+
 # ── 배선 — 판정 지점이 실제로 이 함수를 쓰는가 ────────────────────────────
 def test_judgment_point_consumes_the_classifier():
     """★함수만 고치고 판정 지점(⑤-2)을 안 고치면 처방은 아무것도 하지 않는다.
@@ -186,6 +214,7 @@ def test_judgment_point_consumes_the_classifier():
     head = src.index("⑤-2")
     block = src[head:]
     assert "CO_API=$(comment_only_delta " in block, "판정 지점이 분류기를 호출하지 않는다"
+    assert "$(delta_verdict " in block, "판정 지점이 판정 함수를 호출하지 않는다(인라인 복제 의심)"
     assert "OBS=1" in block, "판정 지점이 관측이상으로 강등하지 않는다"
     # ★음성 축 — 코드가 바뀐 경우의 위반 판정이 사라지지 않았는가
     assert "VIOL=1" in block, "코드 변경 시의 위반 판정이 사라졌다"

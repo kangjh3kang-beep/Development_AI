@@ -111,6 +111,21 @@ else:
     print("yes")
 PYEOF
 }
+# 델타 판정을 **순수 함수**로 꺼낸다 → `converged` / `obs` / `viol`
+#   ★왜 꺼냈나: ⑤-2 블록 안에 인라인으로 두면 그것을 태우려면 보드·SSH·네트워크가 전부 살아야 해서
+#     **아무도 안 태운다.** 그러면 락은 «소스에 `OBS=1` 이라는 문자열이 있는가» 로 내려앉고,
+#     그건 이 저장소가 «존재를 잠그면 행위는 안 잠긴다» 로 이미 값을 치른 형태다.
+#   인자: $1=web델타 $2=api델타 $3=컨테이너입력델타 $4=web주석만(yes/no/unknown) $5=api주석만
+delta_verdict() {
+  local wd="$1" ad="$2" cd_="$3" cow="$4" coa="$5"
+  if [ "$wd" = "0" ] && [ "$ad" = "0" ] && [ "$cd_" = "0" ]; then echo "converged"; return; fi
+  # 컨테이너 입력(Dockerfile·requirements)이 바뀌면 강등하지 않는다 — 재빌드가 필요하다
+  if [ "$cd_" != "0" ]; then echo "viol"; return; fi
+  if { [ "$ad" = "0" ] || [ "$coa" = "yes" ]; } && { [ "$wd" = "0" ] || [ "$cow" = "yes" ]; }; then
+    echo "obs"; return
+  fi
+  echo "viol"
+}
 if [ "${1:-}" = "--verdict-lib" ]; then return 0 2>/dev/null || exit 0; fi
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # ★cd 이전에 확정한다
@@ -367,9 +382,7 @@ else
       #   ⇒ 있는 칸을 쓴다: **관측 이상(4)**. 「위반은 아니나 이상 없음도 아니다」.
       CO_API=$(comment_only_delta "$ASHA" propai-platform/apps/api/ propai-platform/apps/worker/)
       CO_WEB=$(comment_only_delta "$WSHA" propai-platform/apps/web/ propai-platform/packages/)
-      if [ "${CD:-0}" = "0" ] \
-         && { [ "${AD:-0}" = "0" ] || [ "$CO_API" = "yes" ]; } \
-         && { [ "${WD:-0}" = "0" ] || [ "$CO_WEB" = "yes" ]; }; then
+      if [ "$(delta_verdict "${WD:-0}" "${AD:-0}" "${CD:-0}" "$CO_WEB" "$CO_API")" = "obs" ]; then
         echo "   ★관측 이상 — 위 요청의 델타는 **주석·독스트링만**이다(web ${WD} · api ${AD} · AST 판정)"
         echo "     런타임 동작 변화 0. 다만 **컨테이너 소스는 git 과 갈려 있다** — 다음 배포가 해소한다."
         OBS=1
