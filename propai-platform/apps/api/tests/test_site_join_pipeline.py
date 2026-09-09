@@ -28,6 +28,8 @@ import subprocess
 import uuid
 from pathlib import Path
 
+import pytest
+
 _HERE = Path(__file__).resolve()
 _API = _HERE.parents[1]
 _MODULE = _API / "app/api/endpoints/sales/site_join.py"   # 라우터(배선·격리)
@@ -124,6 +126,100 @@ def test_discover_does_not_read_the_tenant_column_into_the_response() -> None:
     assert "organization_id" not in attrs, (
         "발견 응답이 **어느 시행사의 현장인가**를 읽어 싣는다 — 키 이름과 무관하게 누출이다"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# A-2. **복원된 락 4건** — 내가 「락 무결성 반영」 커밋에서 지웠다
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ★★2026-09-09 R2 리뷰가 짚었다: 계획서 §5 가 이름 댄 락 14개 중 **5개가 실재하지 않았다.**
+#   원인은 내가 이 파일을 «head + 새 mid + tail» 로 이어 붙이며 **중간 구간을 통째로 날린** 것이다
+#   (`c7f48d4f1` 에서 만들고 `7966ce7b5` 에서 삭제 — **그 커밋 제목이 「락 무결성 반영」이다**).
+#
+# ★**테스트 수가 15 → 16 이라 아무 신호도 없었다.** 늘어난 수가 줄어든 것을 덮었다.
+#   그리고 푸시 때 삭제 가드가 발화했는데, 나는 «변경 파일이 전부 내 것인가» 만 확인하고
+#   **무엇이 지워졌는지는 안 봤다.** 소유 확인과 내용 확인은 다른 축이다.
+
+
+def test_reason_vocabulary_is_shared_with_the_hiring_approval() -> None:
+    """★사유 어휘가 채용 승인 경로(`market.py`)에서 **온다** — 사본이면 하나가 낡는다.
+
+    ★사본을 만들었는지 보는 방법은 «`_LINKED_REASONS` 를 임포트하는가» 다.
+      이 모듈 안에서 **재정의**하면 두 승인 경로가 서로 다른 말을 하게 된다.
+    """
+    tree = _tree()   # 라우터가 어휘를 가져오는 쪽이다
+    imported = {
+        a.name
+        for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+        and (n.module or "").endswith("sales.market")
+        for a in n.names
+    }
+    assert "_LINKED_REASONS" in imported, "사유 어휘를 채용 경로에서 안 가져온다"
+
+    redefined = [
+        t.id for n in ast.walk(tree) if isinstance(n, ast.Assign)
+        for t in n.targets if isinstance(t, ast.Name)
+        and t.id in {"_LINKED_REASONS", "_MEMBERSHIP_REASONS"}
+    ]
+    assert not redefined, f"사유 어휘를 이 모듈에서 **재정의**했다: {redefined}"
+
+
+def test_no_import_cycle_market_does_not_depend_on_join() -> None:
+    """★방향을 잠근다 — `market` 은 이 모듈을 임포트하지 않는다(순환 금지).
+
+    이 모듈이 `market` 을 임포트하므로, 반대 방향이 생기는 순간 앱이 **기동 자체를 못 한다.**
+    주석에 «순환 없음» 이라고 쓴 것을 **기계가 지키게** 한다.
+    """
+    market = (_API / "app/api/endpoints/sales/market.py").read_text(encoding="utf-8")
+    modules = {
+        (n.module or "") for n in ast.walk(ast.parse(market)) if isinstance(n, ast.ImportFrom)
+    }
+    # 공허 방지 — market 이 무언가는 임포트한다.
+    assert len(modules) >= 3, "market 의 임포트 수집이 비정상"
+    assert not any("site_join" in m for m in modules), "순환 임포트가 생겼다"
+
+
+def test_member_cannot_approve() -> None:
+    """★「관리자 및 상위레벨」의 기계적 정의에 **MEMBER 가 없다**.
+
+    MEMBER 는 서열 최하위라 아래를 승인할 대상이 없다(`_ORG_RANK` 와 정합).
+    ★두 모집단으로 본다 — 없어야 할 것이 없고, **있어야 할 것이 있다**.
+      후자가 없으면 «집합을 통째로 비워도» 초록이다.
+    """
+    approvers: set[str] = set()
+    for n in ast.walk(_tree(_SVC)):
+        if isinstance(n, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "APPROVER_NODE_TYPES" for t in n.targets):
+            approvers = {c.value for c in ast.walk(n)
+                         if isinstance(c, ast.Constant) and isinstance(c.value, str)}
+    assert "MEMBER" not in approvers, "말단 직원이 남을 현장에 들일 수 있다"
+    assert {"AGENCY", "TEAM_LEADER"} <= approvers, (
+        f"승인자 집합이 비었거나 좁다: {sorted(approvers)} — 아무도 승인 못 하면 파이프라인이 죽는다"
+    )
+
+
+def test_pending_uniqueness_is_partial_not_total() -> None:
+    """★유일성이 **대기 중에만** 걸리는가 — 전체 유니크면 **재신청이 원리적으로 불가**다.
+
+    거절당한 사람이 나중에 다시 신청하는 것은 정당하다.
+    정상 사용을 막는 가드는 그 자체가 결함이다.
+    """
+    src = _MODULE.read_text(encoding="utf-8")
+    flat = " ".join(src.split())
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS ux_join_pending_one" in flat, "유일성 인덱스가 없다"
+    idx = flat.index("ux_join_pending_one")
+    assert "WHERE status = 'pending'" in flat[idx:idx + 260], (
+        "유일성이 **전체**에 걸렸다 — 거절 뒤 재신청이 영원히 막힌다"
+    )
+
+
+
+class _Node:
+    def __init__(self, node_type="TEAM_LEADER", path="a1.t1"):
+        self.id = uuid.uuid4()
+        self.node_type = node_type
+        self.path = path
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -549,3 +645,83 @@ def test_module_has_no_mutation_sentinel_in_head() -> None:
         assert blob.returncode == 0, f"HEAD 에서 읽지 못했다(rc={blob.returncode}): {rel}"
         assert "import" in blob.stdout, f"조회기가 내용을 못 읽는다: {rel}"   # 대조군 2
         assert sentinel not in blob.stdout, f"변이 표식이 커밋돼 있다: {rel}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# D. 현장 격리 — **조회하는 함수를 AST 로 파생해 전수로** 태운다
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ★★2026-09-09 R2 리뷰 C-1(CRITICAL). 앞 판은 `link_membership` 에만 쿼리 락을 걸었고,
+#   **정작 인가 판정을 하는 `resolve_approver_node` 는 무잠금**이었다:
+#
+#       SalesOrgNode.site_id == site_id  삭제        ::VERDICT=SURVIVED
+#       deleted_at.is_(None) → id.isnot(None)        ::VERDICT=SURVIVED
+#
+#   그 함수는 `list_join_requests`(신청자 **이름·이메일** 반환)와 `decide_join_request` 의
+#   403 게이트다. 술어가 사라지면 **타 현장 관리자가 이 현장 신청을 보고 승인**한다.
+#
+#   ★내 테스트 파일이 그 실패 시나리오를 **이름으로 적어 두고도** 형제 함수엔 안 걸었다.
+#     R1 의 처방을 「지적된 함수」에만 적용한 것 — 이 저장소가 5연속 겪은 그 패턴이다.
+#
+# ⇒ 축을 **함수 목록이 아니라 「`SalesOrgNode` 를 조회하는 모든 함수」의 AST 파생**으로 바꾼다.
+#   세 번째 함수가 생겨도 자동으로 들어온다.
+
+
+def _functions_querying_org_nodes() -> list[str]:
+    """`SalesOrgNode` 를 `select()` 하는 서비스 층 함수 — **파생**(손 목록 아님)."""
+    tree = _tree(_SVC)
+    out: list[str] = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.AsyncFunctionDef):
+            continue
+        for c in ast.walk(fn):
+            if (isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                    and c.func.id == "select"
+                    and any(isinstance(a, ast.Name | ast.Attribute)
+                            and "SalesOrgNode" in ast.unparse(a) for a in c.args)):
+                out.append(fn.name)
+                break
+    return out
+
+
+def test_org_node_query_population_is_not_empty() -> None:
+    """★공허 진리 가드 — 파생이 비면 아래 전수 단언이 «0개를 검사» 가 된다."""
+    fns = _functions_querying_org_nodes()
+    assert len(fns) >= 2, f"조직노드를 조회하는 함수 수집이 비정상: {fns}"
+    # 두 축이 **모두** 들어왔는가 — 하나만 세면 그 형제가 무잠금이 된다(R2 C-1 의 본체).
+    assert {"resolve_approver_node", "link_membership"} <= set(fns), f"실측: {fns}"
+
+
+@pytest.mark.parametrize("fn_name", _functions_querying_org_nodes())
+async def test_every_org_node_query_is_site_scoped(fn_name: str, monkeypatch) -> None:
+    """★★**전수** — 조직노드를 조회하는 **모든** 함수가 현장·소유자·soft-delete 로 묶는가.
+
+    ★단언 대상은 **함수가 실제로 보낸 쿼리**다(소스 문자열이 아니라 컴파일된 SQL).
+      술어를 지우면 기록에서 사라져 여기서 깨진다.
+    """
+    from app.services.sales.org import join as mod
+
+    async def _noop(*_a, **_k):
+        pass
+
+    monkeypatch.setattr(mod, "create_node", _noop, raising=True)
+
+    site = uuid.uuid4()
+    user = type("U", (), {"id": uuid.uuid4(), "role": "user", "tenant_id": None})()
+    db = _RecordingDB(_rows_for(name=("홍길동",)))
+
+    if fn_name == "resolve_approver_node":
+        await mod.resolve_approver_node(db, site, user)
+    elif fn_name == "link_membership":
+        await mod.link_membership(db, site, uuid.uuid4(), _Node())
+    else:  # 새로 생긴 함수 — 태우는 법을 모르면 **조용히 넘기지 않는다**
+        pytest.fail(
+            f"`{fn_name}` 이 조직노드를 조회하는데 이 락이 태우는 법을 모른다.\n"
+            "  ★새 함수를 추가했으면 여기 분기도 함께 추가하라 — 그게 이 파생의 계약이다."
+        )
+
+    q = db.find("sales_org_nodes")
+    assert "site_id" in q, f"[{fn_name}] 현장으로 묶지 않는다: {q}"
+    assert (str(site) in q) or (site.hex in q), f"[{fn_name}] **이 현장**이 아니다"
+    assert "deleted_at IS NULL" in q, f"[{fn_name}] 소프트 삭제된 노드를 살아 있다고 센다"
+    assert "active" in q, f"[{fn_name}] 비활성 노드를 멤버로 센다"
