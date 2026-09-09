@@ -1784,3 +1784,46 @@ def test_multi_parcel_report_stays_quiet_when_every_parcel_agrees() -> None:
     ])
     assert "대표 필지" not in cap, cap
     assert "성공 2/2필지" in cap, cap
+
+
+# ─────────────────────────────────────────────────────────────
+# ★자기적용(2026-09-09) — 「~가 보장한다」를 태웠더니 **주석이 틀린 기전에 안전을 귀속**했다
+#
+#   주석은 «계층 경로(`CLS_FULLNM`)를 넣지 않는 것» 이 안전의 근거라고 적었다. 변이로 재니:
+#       후보 집합에 `CLS_FULLNM` 추가          → ::VERDICT=SURVIVED
+#       정확일치 → 부분문자열로 약화           → ::VERDICT=SURVIVED
+#   ★두 변이가 **각각 등가**다 — 방어가 **짝**이기 때문이다:
+#     경로를 넣어도 정확일치라 `"광주"` ≠ `"광주>금호지구"` · 부분문자열로 바꿔도 후보에 경로가 없다.
+#     **둘 다 무너져야** 원래 결함(「경기」가 「경기>성남시」에 매칭)이 돌아온다.
+#   ⇒ 한 다리씩 넣는 변이로는 못 잡는다. **속성 자체**를 잠근다 —
+#     «지역명을 **진부분문자열로 품은** 다른 지역은 매칭되면 안 된다».
+#     이 단언은 **두 다리 중 어느 쪽이 무너져도** 빨개진다.
+#   ★근거는 라이브 실측이다: `CLS_FULLNM="전남광주>전남"`(같은 파일 독스트링) — 시도명을
+#     진부분문자열로 품은 토큰이 이 표에 **실재한다**.
+# ─────────────────────────────────────────────────────────────
+
+
+def test_a_region_that_merely_contains_the_sido_name_does_not_match() -> None:
+    """★「전남광주」는 「전남」이 아니다 — 진부분문자열은 매칭되면 안 된다(정확일치 속성)."""
+    from app.services.external_api.reb_client import (
+        latest_value_from_rows,
+        rate_series_from_rows,
+    )
+
+    rows = [
+        {"CLS_NM": "전남광주", "CLS_FULLNM": "전남광주>전남", "ITM_NM": "변동률",
+         "DTA_VAL": 9.9, "WRTTIME_IDTFR_ID": "202607"},
+    ]
+    assert rate_series_from_rows(rows, "전남", _no_fallback=True) == [], (
+        "「전남광주」가 「전남」으로 잡혔다 — 정확일치가 무너졌다"
+    )
+    assert latest_value_from_rows(rows, "전남") is None, (
+        "「전남광주」가 「전남」으로 잡혔다 — 정확일치가 무너졌다"
+    )
+    # ★위양성 축 — 진짜 「전남」 행은 그대로 잡혀야 한다(과잉 차단 금지).
+    real = [
+        {"CLS_NM": "전남", "CLS_FULLNM": "전남광주>전남", "ITM_NM": "변동률",
+         "DTA_VAL": 0.3, "WRTTIME_IDTFR_ID": "202607"},
+    ]
+    assert rate_series_from_rows(real, "전남", _no_fallback=True) == [("202607", 0.3)]
+    assert latest_value_from_rows(real, "전남") == (0.3, "202607")
