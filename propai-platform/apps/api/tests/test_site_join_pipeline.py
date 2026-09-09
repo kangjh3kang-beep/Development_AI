@@ -1171,3 +1171,33 @@ def test_stored_sponsor_comes_from_the_resolver() -> None:
     assert any(any(name in b for name in resolved) for b in bound), (
         f"저장되는 sponsor 가 **해석 결과가 아니다**: {bound} (해석 이름: {sorted(resolved)})"
     )
+
+
+def test_every_link_membership_call_passes_the_reloaded_sponsor() -> None:
+    """★★`link_membership` 을 부르는 **모든** 지점이 sponsor 를 넘기는가 — 전수.
+
+    ★★2026-09-09 R3 리뷰 M-1(M2). 재승인 경로에서 `sponsor_node=None` 으로 되돌려도 초록이었다
+      (`::VERDICT=SURVIVED`). 행위 락(`test_sponsor_beats_the_approver_as_parent`)은
+      `link_membership` 을 **직접** 부르므로 **라우터가 안 넘겨도** 잡히지 않는다.
+      즉 «누가 먼저 누르느냐로 체인이 갈리던 것을 고친다» 는 이 PR 의 보장이
+      저자 자신이 «흔한 경로» 라 부른 길에서 **되돌려도 아무 락이 안 깨졌다.**
+
+    ★축은 **호출 지점 전수**다(하나를 고치면 형제가 남는다 — 이미 여섯 번 겪었다).
+      그리고 넘기는 값이 **재확인 함수의 반환**이어야 한다(그냥 `None` 이나 딴 값이면 안 된다).
+    """
+    fn = _fn("decide_join_request")
+    calls = [
+        c for c in ast.walk(fn)
+        if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+        and c.func.id == "link_membership"
+    ]
+    # ★공허 방지 — 호출을 못 찾으면 아래 전수 단언이 «0개를 검사» 가 된다.
+    assert len(calls) >= 2, f"`link_membership` 호출을 {len(calls)}개만 찾았다(승인·재승인 둘)"
+
+    for i, c in enumerate(calls):
+        kw = {k.arg: ast.unparse(k.value) for k in c.keywords}
+        assert "sponsor_node" in kw, f"{i}번째 호출이 sponsor 를 안 넘긴다 — 부모가 승인자로 정해진다"
+        assert "reload_sponsor_node" in kw["sponsor_node"], (
+            f"{i}번째 호출의 sponsor 가 **재확인 결과가 아니다**: {kw['sponsor_node']}\n"
+            "  ★None 이나 딴 값이면 «클릭 순서가 수수료 체인을 정한다» 가 되살아난다."
+        )
