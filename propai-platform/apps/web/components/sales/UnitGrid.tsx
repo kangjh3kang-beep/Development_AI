@@ -21,9 +21,12 @@ const Grid3D = dynamic(() => import("@/components/sales/Grid3D"), {
 
 // 색·라벨은 세대 상태 SSOT(unitStatus) 소비 — 배치도/실시간보드/상세/3D 전 화면 동일 표기.
 export default function UnitGrid({ siteCode }: { siteCode: string }) {
-  const units = useSalesStore((s) => s.units);
-  const select = useSalesStore((s) => s.select);
+  // ★현장별로 읽는다 — 아직 안 불러온 현장은 정의상 **빈 목록**이라
+  //   조회가 도는 동안 **직전 현장의 세대가 그려질 자리가 없다**(2026-09-09 Stage 3).
+  const units = useSalesStore((s) => s.unitsOf(siteCode));
+  const selectUnit = useSalesStore((s) => s.select);
   const setUnits = useSalesStore((s) => s.setUnits);
+  const select = (u?: Unit) => selectUnit(siteCode, u);
   const [view, setView] = useState<"2D" | "3D">("2D");
   const [zoom, setZoom] = useState(1); // 배치도 확대/축소(0.5~1.5)
   const [loading, setLoading] = useState(false);
@@ -33,8 +36,8 @@ export default function UnitGrid({ siteCode }: { siteCode: string }) {
     setLoading(true);
     salesApi(siteCode)
       .get<Unit[]>("/units?limit=2000")
-      .then((u) => { if (alive) setUnits(u || []); })
-      .catch(() => { if (alive) setUnits([]); })
+      .then((u) => { if (alive) setUnits(siteCode, u || []); })
+      .catch(() => { if (alive) setUnits(siteCode, []); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [siteCode, setUnits]);
