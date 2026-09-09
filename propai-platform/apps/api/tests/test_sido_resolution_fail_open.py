@@ -1453,6 +1453,13 @@ async def test_the_two_pipelines_answer_substitute_scope_differently_on_purpose(
     # ① desk_appraisal — **적용하고 고지한다**(값이 살아 있고 범위가 기계 필드로 실린다).
     assert out.get("time_adjust"), out.get("time_adjust")
     assert out.get("time_adjust_scope") == "전국", out.get("time_adjust_scope")
+    # ★두 모집단으로 가른다(독립 리뷰 R7 M-1) — 종전엔 이 한 줄뿐이라 필드를 `"전국"` 리터럴로
+    #   **고정해도 초록**이었다(상수를 자기 자신과 비교하는 락).
+    _patch_rone(monkeypatch, _many_months("경남", rate=0.5) + _many_months("전국", rate=0.9))
+    own = await desk_appraisal(address="경상남도 창원시 의창구 1", area_sqm=500.0,
+                               official_price_per_sqm=1_000_000.0)
+    assert own.get("time_adjust_scope") == "경남", own.get("time_adjust_scope")
+    assert "실데이터가 아닙니다" not in str(own.get("time_adjust_basis") or ""), own.get("time_adjust_basis")
     assert "실데이터가 아닙니다" in str(out.get("time_adjust_basis") or ""), out.get("time_adjust_basis")
 
     # ② market_precision — **적용하지 않는다**(같은 신호에 반대로 답한다).
@@ -1478,38 +1485,38 @@ async def test_the_two_pipelines_answer_substitute_scope_differently_on_purpose(
 
 
 # ─────────────────────────────────────────────────────────────
-# ★R6 MEDIUM-1 — 자본환원율 락의 픽스처가 **라이브 모양과 모순**된다(부채를 초록 안에)
+# ★R6 MEDIUM-1 → **R7 M-2 로 정정** — 내가 남긴 부채가 **거짓 전제** 위에 있었다
 #
-#   내 픽스처는 `CLS_NM="서울"` 인데, 라이브 상업용수익률 표(`A_2024_00683`)의 실제 모양은
-#   `CLS_NM` = **상권명**(`강남`·`광복동`·`금호지구`)이고 시도는 **`CLS_FULLNM` 안에만** 있다.
-#   `row_region_names` 는 계층 경로를 **의도적으로 제외**하므로(경기>수원시 과매칭을 막은 처방),
-#   그 모양에서는 시도 선택이 **원리적으로 불가능**하다 — 전 주소에서 `None` 이 된다.
-#   그리고 그 상실은 고지되지 않는다: `rone_available` 은 `any([...])` 라 다른 통계가 하나만
-#   살아 있어도 True 이고, 화면은 자본환원율 자리에 기본값 0.045 를 **아무 말 없이** 그린다.
-#
-#   ★오늘 라이브가 무해한 이유는 **별건**(레지스트리 `cycle="QQ"` 가 행 0건) 때문이다 —
-#     그 별건을 고치는 순간 이 결함이 켜진다. 그래서 **strict xfail 로 드러낸다**
-#     (커밋 메시지에만 적으면 다음 사람이 못 본다 — §C-13).
-# ─────────────────────────────────────────────────────────────
+#   R6 지적을 받고 «상업용수익률 표는 시도가 CLS_FULLNM 에만 있어 시도 선택이 원리적으로 불가»
+#   라며 strict xfail 을 걸었다. R7 이 «같은 파일이 같은 표에 모순되는 실측을 적고 있다» 고
+#   짚어 **라이브로 다시 쟀더니 내 전제가 틀렸다**(2026-09-08 · `/land-price/rone-test`):
+#       A_2024_00683 (YY) 300행 중 `CLS_NM` 이 **시도명인 행 24건**
+#       (서울4·부산4·대구4·인천3·광주3·대전3·울산3 — `CLS_FULLNM` 도 같은 시도명)
+#       ⇒ `latest_value_from_rows(rows, "서울")` = **(6.96, '2005')** — 선택은 **된다**
+#   모순의 출처는 같은 파일 독스트링의 **전사 오류**였다(`CLS_NM="서울"` 에 엉뚱한 경로를 짝지음).
+#   ★거짓 부채는 부채가 없는 것보다 나쁘다 — 다음 사람이 있지도 않은 결함을 고치러 간다.
+#     그래서 xfail 을 **지우고**, 실제로 남은 한계를 **관측으로** 적는다:
+#       · 그 표의 최신 시점은 **2005년**이고 레지스트리 `cycle="QQ"` 는 **행 0건**이다(범위 밖·기록만)
+#       · 상권 행이 시도 선택에 섞이지 않는 것은 `row_region_names` 의 정확일치가 보장한다 — 아래로 잠근다
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="★부채: 상업용수익률 표는 시도가 CLS_FULLNM 에만 있어 시도 선택 불가 — 계층 경로를 "
-           "과매칭 없이 읽는 방법(예: 경로의 첫 마디만)이 미구현",
-)
-def test_commercial_yield_live_shape_should_still_resolve_a_sido() -> None:
-    """라이브 모양(시도가 계층 경로에만)에서도 시도 값을 골라야 한다(미구현 — strict xfail)."""
+def test_commercial_yield_selects_the_sido_row_not_a_submarket_row() -> None:
+    """★시도 행은 고르고 **상권 행은 섞이지 않는다**(라이브 모양 그대로).
+
+    라이브 실측: 같은 표에 `CLS_NM="서울"`(시도, `CLS_FULLNM="서울"`)과
+    `CLS_NM="금호지구"`(상권, `CLS_FULLNM="광주>금호지구"`)가 **함께** 있다.
+    """
     from app.services.external_api.reb_client import latest_value_from_rows
 
-    # 라이브 실측 모양 그대로: CLS_NM 은 상권명, 시도는 CLS_FULLNM 의 첫 마디.
     rows = [
-        {"CLS_NM": "강남", "CLS_FULLNM": "서울>강남", "ITM_NM": "투자수익률",
-         "DTA_VAL": 4.2, "WRTTIME_IDTFR_ID": "2024"},
+        {"CLS_NM": "서울", "CLS_FULLNM": "서울", "ITM_NM": "투자수익률",
+         "DTA_VAL": 6.96, "WRTTIME_IDTFR_ID": "2005"},
         {"CLS_NM": "금호지구", "CLS_FULLNM": "광주>금호지구", "ITM_NM": "투자수익률",
-         "DTA_VAL": 7.1, "WRTTIME_IDTFR_ID": "2024"},
+         "DTA_VAL": 7.13, "WRTTIME_IDTFR_ID": "2005"},
     ]
-    assert latest_value_from_rows(rows, "서울") is not None
+    assert latest_value_from_rows(rows, "서울") == (6.96, "2005"), "시도 행을 못 골랐다"
+    # ★계층 경로는 지역 후보가 아니다 — «광주» 로 조회해도 그 상권 행이 잡히면 안 된다.
+    assert latest_value_from_rows(rows, "광주") is None, "계층 경로가 지역으로 새어 들어왔다"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1609,3 +1616,25 @@ def test_item_filter_runs_before_narrowing_not_after() -> None:
         f"202607 이 사라졌다 — 항목 필터가 좁히기 **뒤**에 있다: {periods}"
     )
     assert periods == ["202606", "202607"], periods
+
+
+def test_pdf_time_adjust_line_reports_substitute_scope() -> None:
+    """★R7 M-1 — 제출 PDF 의 시점수정 줄도 대체 범위를 말한다(화면과 같은 축)."""
+    from app.services.report.render.appraisal_adapter import build_report_model_from_appraisal
+
+    def lines(scope: str, region: str) -> list[str]:
+        doc = build_report_model_from_appraisal({
+            "ok": True, "appraised_price_per_sqm": 2_000_000, "appraised_total_won": 1,
+            "area_sqm": 500, "confidence": 0.7, "range_per_sqm": {"low": 1, "high": 2},
+            "methods": [], "weight_note": "단독", "time_adjust_basis": "R-ONE 지가변동률 누적",
+            "time_adjust_scope": scope,
+            "market_stats": {"region": region, "region_resolved": True, "rone_available": True},
+        })
+        return [p for sec in doc.sections if sec.title.startswith("5.")
+                for b in sec.blocks for p in getattr(b, "paragraphs", [])]
+
+    sub = "\n".join(lines("전국", "경남"))
+    assert "범위 전국" in sub and "실데이터가 아닙니다" in sub, sub
+    # ★위양성 축 — 요청 지역 값이면 그 경고가 뜨지 않는다.
+    own = "\n".join(lines("경남", "경남"))
+    assert "시점수정" in own and "실데이터가 아닙니다" not in own, own

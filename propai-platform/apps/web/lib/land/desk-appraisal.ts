@@ -86,6 +86,8 @@ export type DeskAppraisalResult = {
    */
   comparable_skipped_reason?: string | null;
   road_side?: string | null; time_adjust?: number; time_adjust_basis?: string; source?: string; base_year?: number;
+  /** ★시점수정 계수가 **실제로 나온 범위**. `market_stats.region` 과 다르면 요청 지역 값이 아니다. */
+  time_adjust_scope?: string | null;
   building?: { building_value_won: number; rationale: string } | null; complex_total_won?: number | null;
   income?: { income_value_won: number; rationale: string } | null; income_total_won?: number | null;
   complex_note?: string | null;

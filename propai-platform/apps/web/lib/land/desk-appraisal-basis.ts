@@ -50,7 +50,20 @@ export function buildMarketBasisLines(res: DeskAppraisalResult): string[] {
   const ms = res.market_stats ?? {};
   const lines: string[] = [];
 
-  if (res.time_adjust_basis) lines.push(`· 시점수정: ${res.time_adjust_basis}`);
+  if (res.time_adjust_basis) {
+    // ★`time_adjust_scope` 를 **실제로 읽는다**(독립 리뷰 R7 M-1). 백엔드가 이 필드를 새로
+    //   실어 놓고 읽는 쪽이 없어, «기계가 읽을 수 있게» 라는 목적이 성립하지 않았다
+    //   — 게다가 유일한 단언이 `== "전국"` 이라 필드를 그 리터럴로 고정해도 초록이었다
+    //   (상수를 자기 자신과 비교하는 락). 프론트 `scope` 에서 같은 것을 이미 한 번 고쳤는데
+    //   백엔드에서 새로 만들었다.
+    const taScope = res.time_adjust_scope;
+    const head = `· 시점수정: ${res.time_adjust_basis}`;
+    lines.push(
+      taScope && ms.region && taScope !== ms.region
+        ? `${head} — 범위 ${taScope} — 요청 지역(${ms.region}) 실데이터가 아닙니다`
+        : head,
+    );
+  }
 
   const cap = ms.cap_rate as Stat;
   if (cap?.source === RONE_SOURCE) {

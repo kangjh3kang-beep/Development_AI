@@ -201,6 +201,28 @@ describe("탁상감정 보고서 라벨", () => {
       const lines = build({}, { time_adjust_basis: "R-ONE 지가변동률 서울 실데이터" });
       expect(lines[0]).toBe("· 시점수정: R-ONE 지가변동률 서울 실데이터");
     });
+
+    // ★★독립 리뷰 R7 M-1: 백엔드가 `time_adjust_scope` 를 새로 실었는데 **읽는 쪽이 0** 이었고,
+    //   유일한 단언이 `== "전국"` 이라 필드를 그 리터럴로 고정해도 초록이었다(자기 비교 락).
+    //   ⇒ 화면이 실제로 읽고, **두 모집단**으로 가른다.
+    it("★시점수정 계수가 요청 지역 값이 아니면 화면이 **범위를 말한다**", () => {
+      const lines = buildMarketBasisLines({
+        time_adjust_basis: "R-ONE 지가변동률 누적",
+        time_adjust_scope: "전국",
+        market_stats: { region: "경남", region_resolved: true, rone_available: true },
+      } as never);
+      expect(lines[0]).toContain("범위 전국");
+      expect(lines[0]).toContain("실데이터가 아닙니다");
+    });
+
+    it("★위양성 축 — 요청 지역 값이면 그 경고가 뜨지 않는다", () => {
+      const lines = buildMarketBasisLines({
+        time_adjust_basis: "R-ONE 지가변동률 누적",
+        time_adjust_scope: "경남",
+        market_stats: { region: "경남", region_resolved: true, rone_available: true },
+      } as never);
+      expect(lines[0]).toBe("· 시점수정: R-ONE 지가변동률 누적");
+    });
   });
 
   it("★컴포넌트가 그 순수 함수를 **실제로 부른다**(배선 축은 따로 잠근다)", () => {

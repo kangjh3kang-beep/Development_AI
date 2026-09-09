@@ -182,7 +182,13 @@ def build_report_model_from_appraisal(
     ms = data.get("market_stats") or {}
     basis_lines: list[str] = []
     if data.get("time_adjust_basis"):
-        basis_lines.append(f"· 시점수정: {fmt_value(data['time_adjust_basis'])}")
+        _ta_line = f"· 시점수정: {fmt_value(data['time_adjust_basis'])}"
+        # ★화면과 같은 축으로 판정한다(독립 리뷰 R7 M-1) — 제출본이 화면보다 적게 말하지 않게.
+        _ta_scope, _region = data.get("time_adjust_scope"), ms.get("region")
+        if _ta_scope and _region and _ta_scope != _region:
+            _ta_line += (f" — 범위 {fmt_value(_ta_scope)} — "
+                         f"요청 지역({fmt_value(_region)}) 실데이터가 아닙니다")
+        basis_lines.append(_ta_line)
     cap = ms.get("cap_rate") or {}
     if cap.get("source") == "R-ONE":
         basis_lines.append(f"· 자본환원율(R-ONE 실측): {_pct(cap.get('pct'))} ({fmt_value(cap.get('basis'))})")
