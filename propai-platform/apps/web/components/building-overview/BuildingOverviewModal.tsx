@@ -8,7 +8,7 @@
  * ★용적률·건폐율은 **저장하지 않고 파생 표시**한다 — 저장하면 원본과 갈린다.
  * ★자동값과 사람이 덮어쓴 값을 **구별해 표시**한다. 같은 모양이면 그 값을 못 믿는다.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useModalFocus } from "@/hooks/useModalFocus";
@@ -58,17 +58,24 @@ export function BuildingOverviewModal({ open, intake, initial, onSave, onCancel 
   useModalFocus(dialogRef, open);
   useDismissible(DISMISS_Z.appModal, open, onCancel);
 
-  useEffect(() => {
-    if (!open) return;
-    const start = initial ?? emptyBuildingOverview();
-    setO({
-      ...start,
-      // ★열 때마다 자동 산입을 다시 적용한다 — 필지가 바뀌었을 수 있다.
-      //   단 사람이 덮어쓴 값(manual)은 **보존**한다.
-      landAreaSqm: start.landAreaOrigin === "manual" ? start.landAreaSqm : intake.autoLandAreaSqm,
-      landAreaOrigin: start.landAreaOrigin === "manual" ? "manual" : "auto",
-    });
-  }, [open, initial, intake.autoLandAreaSqm]);
+  // ★effect 로 setState 하지 않는다(연쇄 렌더) — React 공식 **「렌더 중 조정」** 패턴으로
+  //   직전에 반영한 열림 신호를 상태에 들고 비교한다. 닫히면 신호가 null 로 돌아가므로
+  //   **다시 열 때 같은 필지여도 초기화가 다시 돈다**(신호를 안 비우면 두 번째 열기가 조용히 낡는다).
+  const syncKey = open ? `open|${intake.autoLandAreaSqm ?? "null"}` : null;
+  const [syncedFor, setSyncedFor] = useState<string | null>(null);
+  if (syncKey !== syncedFor) {
+    setSyncedFor(syncKey);
+    if (syncKey !== null) {
+      const start = initial ?? emptyBuildingOverview();
+      setO({
+        ...start,
+        // ★열 때마다 자동 산입을 다시 적용한다 — 필지가 바뀌었을 수 있다.
+        //   단 사람이 덮어쓴 값(manual)은 **보존**한다.
+        landAreaSqm: start.landAreaOrigin === "manual" ? start.landAreaSqm : intake.autoLandAreaSqm,
+        landAreaOrigin: start.landAreaOrigin === "manual" ? "manual" : "auto",
+      });
+    }
+  }
 
   const far = useMemo(() => deriveFarPct(o), [o]);
   const bcr = useMemo(() => deriveBcrPct(o), [o]);
@@ -81,12 +88,18 @@ export function BuildingOverviewModal({ open, intake, initial, onSave, onCancel 
     setO((p) => ({ ...p, [k]: parseNum(s) }));
 
   const body = (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4">
+    // ★`role="dialog"`·`aria-modal` 은 **백드롭**에, 트랩 ref 는 **본체**에 — 형제 3표면이
+    //   전부 이 모양이고(ConfirmDeleteModal·LandShareModal·ConsentModal), 계약 락이
+    //   `role=dialog` 요소를 백드롭으로 보고 **그 안에 트랩 컨테이너가 따로 있는지**를 관측한다.
+    //   둘을 한 요소에 겹치면 트랩 범위가 백드롭까지 넓어진 것과 구별되지 않는다.
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="건축개요 입력"
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4"
+    >
       <div
         ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="건축개요 입력"
         data-testid="building-overview-modal"
         className="w-full max-w-2xl overflow-y-auto rounded-2xl border border-[var(--line)] bg-[var(--surface-strong)] p-6 shadow-2xl"
         style={{ maxHeight: "90vh" }}

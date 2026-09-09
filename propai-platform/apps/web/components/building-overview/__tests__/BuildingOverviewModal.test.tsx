@@ -34,6 +34,29 @@ describe("건축개요 모달", () => {
     expect(screen.queryByTestId("intake-withheld")).toBeNull();
   });
 
+  // ★열림 초기화를 effect 가 아니라 **렌더 중 조정**으로 옮기면서 생기는 함정을 잠근다:
+  //   「반영한 신호」를 닫힐 때 비우지 않으면 **두 번째 열기가 조용히 낡은 값을 들고 온다**.
+  //   같은 필지(같은 intake)로 다시 여는 것이 그 자리다 — 신호가 같아 재초기화가 생략된다.
+  it("★★닫았다 **다시 열면** 사람이 고친 값이 아니라 자동 산입값으로 돌아온다", async () => {
+    const user = userEvent.setup();
+    const props = { intake: OK, initial: null, onSave: vi.fn(), onCancel: vi.fn() };
+    const view = render(<BuildingOverviewModal open {...props} />);
+
+    const land = () => screen.getByTestId("land-area") as HTMLInputElement;
+    expect(land().value).toBe("1000");
+    await user.clear(land());
+    await user.type(land(), "7");
+    expect(land().value).toBe("7");
+
+    view.rerender(<BuildingOverviewModal open={false} {...props} />);
+    expect(screen.queryByTestId("building-overview-modal")).toBeNull();
+    // ★같은 intake 로 다시 연다 — 신호가 동일해도 초기화가 돌아야 한다.
+    view.rerender(<BuildingOverviewModal open {...props} />);
+
+    expect(land().value, "다시 열었는데 직전 편집이 남았다 — 열림 신호를 안 비웠다").toBe("1000");
+    expect(screen.getByTestId("land-origin").textContent).toContain("선택 필지 합계");
+  });
+
   it("★★보류되면 **비워 두고 사유를 보여 준다**(2026-08-23 사고 재현 방지)", () => {
     open(HELD);
     expect((screen.getByTestId("land-area") as HTMLInputElement).value).toBe("");

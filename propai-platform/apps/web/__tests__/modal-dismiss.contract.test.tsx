@@ -34,6 +34,7 @@ import type { ReactElement } from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { BuildingOverviewModal } from "@/components/building-overview/BuildingOverviewModal";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 import ConsentModal from "@/components/desk/ConsentModal";
 import { DocumentViewerModal } from "@/components/collaboration/DocumentViewerModal";
@@ -500,6 +501,29 @@ const RUNTIME_CASES: RuntimeCase[] = [
     z: DISMISS_Z.appModal,
     open: (close) => <LandShareModal jibun="테스트동 1-1" pnu={null} onClose={close} onApplyArea={noop} />,
   },
+  {
+    // ★면제(RUNTIME_UNCOVERED)로 넣지 않는다 — 이 모달은 부모가 주는 `open`·`intake` 만으로
+    //   단독 렌더가 되므로 **런타임까지 태울 수 있다.** 면제는 「못 태운다」일 때만이다.
+    file: "components/building-overview/BuildingOverviewModal.tsx",
+    label: "건축개요 입력",
+    z: DISMISS_Z.appModal,
+    open: (close) => (
+      <BuildingOverviewModal
+        open
+        intake={{ autoLandAreaSqm: 1000, withheldReason: null }}
+        onSave={noop}
+        onCancel={close}
+      />
+    ),
+    closed: () => (
+      <BuildingOverviewModal
+        open={false}
+        intake={{ autoLandAreaSqm: 1000, withheldReason: null }}
+        onSave={noop}
+        onCancel={noop}
+      />
+    ),
+  },
 ];
 
 /**
@@ -741,6 +765,11 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
     //   ★이 표면은 트랩이 **둘 겹친다**(라이트박스가 상세 모달 안에 렌더된다) —
     //     그래서 훅에 **중첩 양보** 규칙을 넣고, 전용 스펙이 실제 Tab 으로 태운다.
     "components/auction/AuctionWorkspace.tsx",
+    // ── 2026-09-09 — 신규 표면. **면제를 늘리지 않고 처음부터 배선했다** ──
+    //   `useModalFocus(dialogRef, open)` 를 early return **앞**에서 부르고(조건부 호출 금지),
+    //   런타임 표에도 함께 등재했다. 표면을 만든 커밋에서 같이 잠그지 않으면 그 뒤로는
+    //   *"기존 부채"* 로 읽혀 영원히 미뤄진다.
+    "components/building-overview/BuildingOverviewModal.tsx",
   ] as const;
 
   /**
