@@ -1510,3 +1510,102 @@ def test_commercial_yield_live_shape_should_still_resolve_a_sido() -> None:
          "DTA_VAL": 7.1, "WRTTIME_IDTFR_ID": "2024"},
     ]
     assert latest_value_from_rows(rows, "서울") is not None
+
+
+# ─────────────────────────────────────────────────────────────
+# ★R7 HIGH-1 — 처방을 **한 창(window)** 에만 걸었다
+#
+#   `cumulative_factor_from_rows` 는 «고유 기간 부족이면 거부» 를, `is_time_series` 는 **최근 24개월**
+#   창에서 판정하는데 `yearly` 는 **시계열 전체**를 그냥 더했다. 그래서 좁히기가 무동작인 구간이
+#   창 **밖**에 있으면 그 해 막대만 조용히 배수로 부풀고 **배지는 꺼져 있다**. 실측:
+#       최근24 고유기간 24 → is_time_series True(배지 꺼짐) · 누적계수 1.1272(정답)
+#       yearly = [2024: **12.0**, 2025: 6.0, 2026: 6.0]      ← 정답은 각 연 6.0
+#   ⇒ 형제(`latest_value_from_rows`)가 이미 가진 규율을 여기에도 건다 —
+#     **같은 시점에 값이 갈리면 합치지 말고 그 시점을 버린다**(같은 값이면 한 번만 센다).
+#     그리고 «연간» 이라 쓰면서 몇 달을 더했는지 말하지 않으면 부분 합계가 연간 값인 척한다
+#     → `months_counted` · `ambiguous_periods` 를 함께 싣는다.
+# ─────────────────────────────────────────────────────────────
+
+
+def _period_rows(values_by_month: dict[int, list[float]], year: str = "2024") -> list[dict]:
+    """(시점)당 값 목록을 그대로 행으로 편다 — 카디널리티를 픽스처가 직접 만든다."""
+    return [
+        {"GRP_NM": "서울", "CLS_NM": f"규모{i}", "ITM_NM": "변동률",
+         "DTA_VAL": v, "WRTTIME_IDTFR_ID": f"{year}{m:02d}"}
+        for m, vals in values_by_month.items()
+        for i, v in enumerate(vals)
+    ]
+
+
+def test_yearly_is_not_inflated_by_periods_outside_the_24_month_window() -> None:
+    """★창 **밖** 구간이 부풀지 않는다 — 배지가 꺼져 있어도 막대는 정답이어야 한다."""
+    from app.services.external_api.reb_client import trend_from_rows
+
+    # 2024 는 집계행이 **없다**(좁히기 무동작 → 2행 유지) · 2025·2026 은 있다.
+    rows: list[dict] = []
+    for m in range(1, 13):
+        for cls in ("40㎡이하", "85㎡초과"):
+            rows.append({"GRP_NM": "서울", "CLS_NM": cls, "ITM_NM": "변동률",
+                         "DTA_VAL": 0.5, "WRTTIME_IDTFR_ID": f"2024{m:02d}"})
+    for yr in ("2025", "2026"):
+        for m in range(1, 13):
+            for cls in _SIZE_CLASSES:          # '전체' 포함 → 좁히기 동작
+                rows.append({"GRP_NM": "서울", "CLS_NM": cls, "ITM_NM": "변동률",
+                             "DTA_VAL": 0.5, "WRTTIME_IDTFR_ID": f"{yr}{m:02d}"})
+    yearly = {y["year"]: y for y in trend_from_rows(rows, "서울", 24).get("yearly", [])}
+    assert yearly, "연간 통계가 비었다(수집기 사망)"
+    for yr in ("2024", "2025", "2026"):
+        assert yearly[yr]["rate"] == 6.0, f"{yr} 이 부풀었다: {yearly}"
+        assert yearly[yr]["months_counted"] == 12, yearly[yr]
+
+
+def test_same_period_duplicate_values_are_counted_once() -> None:
+    """★같은 값이 중복 표기된 것은 **한 번만** 센다(중복 ≠ 두 달)."""
+    from app.services.external_api.reb_client import trend_from_rows
+
+    tr = trend_from_rows(_period_rows({m: [0.5, 0.5] for m in range(1, 13)}), "서울", 24)
+    y = tr["yearly"][0]
+    assert (y["rate"], y["months_counted"]) == (6.0, 12), y
+
+
+def test_same_period_conflicting_values_are_dropped_not_summed() -> None:
+    """★값이 갈리는 시점은 **버린다** — 더하면 «연간 변동률» 이 거짓이 된다."""
+    from app.services.external_api.reb_client import trend_from_rows
+
+    # 전부 갈림 → 셀 수 있는 시점이 0 → 통계 자체를 내지 않는다.
+    allbad = trend_from_rows(_period_rows({m: [0.5, 0.9] for m in range(1, 13)}), "서울", 24)
+    assert not allbad.get("yearly"), allbad
+
+    # 절반만 갈림 → 남은 6개월만 세고, **몇 달인지·몇 개를 버렸는지 말한다**.
+    mixed = trend_from_rows(
+        _period_rows({m: ([0.5, 0.9] if m <= 6 else [0.5]) for m in range(1, 13)}), "서울", 24)
+    y = mixed["yearly"][0]
+    assert (y["rate"], y["months_counted"]) == (3.0, 6), y
+    assert mixed["ambiguous_periods"] == 6, mixed["ambiguous_periods"]
+
+
+def test_item_filter_runs_before_narrowing_not_after() -> None:
+    """★R7 H-2 — 커밋이 «ITM 필터를 좁히기 **앞**에 둔다» 고 **선언**했는데 무잠금이었다.
+
+    선언을 썼으면 그 선언에 변이를 넣어야 한다(§C-30). 갈라 주는 모집단:
+      한 시점의 **집계행이 다른 항목**(`지수`)이고 쓸 행은 `변동률` 인 경우.
+      필터가 좁히기 **뒤**에 있으면 집계행(지수)이 좁히기에서 이기고 → 항목 필터가 그것을 버려
+      **그 시점이 통째로 사라진다**(리뷰어 실측).
+    """
+    from app.services.external_api.reb_client import rate_series_from_rows
+
+    rows = [
+        # 202606 — 집계행 없음, 변동률 단일
+        {"GRP_NM": "서울", "CLS_NM": "40㎡이하", "ITM_NM": "변동률",
+         "DTA_VAL": 0.5, "WRTTIME_IDTFR_ID": "202606"},
+        # 202607 — 집계행이 **지수**(쓸 수 없는 항목) · 쓸 행은 변동률
+        {"GRP_NM": "서울", "CLS_NM": "전체", "ITM_NM": "지수",
+         "DTA_VAL": 100.0, "WRTTIME_IDTFR_ID": "202607"},
+        {"GRP_NM": "서울", "CLS_NM": "40㎡이하", "ITM_NM": "변동률",
+         "DTA_VAL": 0.7, "WRTTIME_IDTFR_ID": "202607"},
+    ]
+    periods = [t for t, _ in rate_series_from_rows(rows, "서울")]
+    assert "202607" in periods, (
+        f"202607 이 사라졌다 — 항목 필터가 좁히기 **뒤**에 있다: {periods}"
+    )
+    assert periods == ["202606", "202607"], periods

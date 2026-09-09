@@ -521,11 +521,53 @@ def trend_from_rows(rows: list[dict[str, Any]], region_sido: str, months: int = 
     series = rate_series_from_rows(rows, region_sido)
     if not series:
         return {}
-    monthly = [{"period": t, "rate": round(r, 3)} for t, r in series[-months:]]
-    yearly_map: dict[str, float] = {}
+
+    # ★★독립 리뷰 R7 HIGH-1(2026-09-08) — **처방을 한 창에만 걸었다.**
+    #   `cumulative_factor_from_rows` 는 «고유 기간이 모자라면 거부» 를 갖고 `is_time_series` 는
+    #   **최근 24개월 창**에서 판정하는데, `yearly` 는 **시계열 전체**를 그냥 더했다. 그래서
+    #   좁히기가 무동작인 시점(집계행이 없는 표·구간)이 창 **밖**에 있으면 그 해의 막대만
+    #   조용히 배수로 부풀고 **배지는 꺼져 있다**. 실측(집계행 없는 2024 + 있는 2025~26):
+    #       최근24 고유기간 = 24 → is_time_series **True**(배지 꺼짐) · 누적계수 1.1272(정답)
+    #       yearly = [2024: **12.0**, 2025: 6.0, 2026: 6.0]   ← 정답은 각 연 6.0
+    #   이 PR 의 표제 결함(«경기 yearly 2024 = +80.68%»)과 **같은 산수**다.
+    #   ⇒ 형제(`latest_value_from_rows`)가 이미 가진 규율을 여기에도 건다:
+    #     **같은 시점에 값이 갈리면 고를 근거가 없다 — 합치지 말고 그 시점을 버린다.**
+    #     값이 같으면(중복 표기) 한 번만 센다. 버린 시점 수를 함께 실어 화면이 말하게 한다.
+    by_period: dict[str, set[float]] = {}
+    order: list[str] = []
     for t, r in series:
+        if t not in by_period:
+            by_period[t] = set()
+            order.append(t)
+        by_period[t].add(round(r, 6))
+    collapsed: list[tuple[str, float]] = []
+    dropped: list[str] = []
+    for t in order:
+        vals = by_period[t]
+        if len(vals) == 1:
+            collapsed.append((t, next(iter(vals))))
+        else:
+            dropped.append(t)
+    if dropped:
+        logger.info(
+            "R-ONE 지가변동률 시점 모호 — 같은 시점에 값이 다른 행이 여럿(해당 시점 제외)",
+            region=region_sido or "전체", dropped=len(dropped), sample=sorted(dropped)[:3],
+        )
+    if not collapsed:
+        return {}
+
+    monthly = [{"period": t, "rate": round(r, 3)} for t, r in collapsed[-months:]]
+    yearly_map: dict[str, float] = {}
+    yearly_n: dict[str, int] = {}
+    for t, r in collapsed:
         yr = t[:4]
         if len(yr) == 4 and yr.isdigit():
             yearly_map[yr] = yearly_map.get(yr, 0.0) + r   # 월 변동률 합 ≈ 연간 변동률
-    yearly = [{"year": y, "rate": round(v, 2)} for y, v in sorted(yearly_map.items())][-10:]
-    return {"monthly": monthly, "yearly": yearly}
+            yearly_n[yr] = yearly_n.get(yr, 0) + 1
+    # ★`months_counted` 를 함께 싣는다 — 「연간」이라 쓰면서 실제로 몇 달을 더했는지 말하지 않으면
+    #   부분 합계가 연간 값인 척한다(모름을 유효값으로 표현하지 않는다).
+    yearly = [
+        {"year": y, "rate": round(v, 2), "months_counted": yearly_n.get(y, 0)}
+        for y, v in sorted(yearly_map.items())
+    ][-10:]
+    return {"monthly": monthly, "yearly": yearly, "ambiguous_periods": len(dropped)}
