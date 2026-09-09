@@ -92,10 +92,20 @@ permanent 툴팁이 열린다**. `group: map` 을 주는 테스트들이 그것�
    건드리지 않았으므로 **선재 부채**로 남긴다(초록 안 `it.todo`). ★초판 §2-a 는 그것을
    *"누적 상태라 마커 하나의 관심사가 아니다"* 로 정당화했는데, **그 논법이 바로 `addTo` 에서
    기각당한 그 논법**이다 — 정당화를 지우고 부채로 적는다.
-4. **전체 스코프(`npx vitest run`)로는 변이 판정이 안 난다** — 이 머신에서 430파일
-   **4,037 passed · 실패 0** 인데 `[vitest-worker]: Timeout calling "onTaskUpdate"` 때문에
-   **rc=1** 이라 도구가 `exit 13 / UNDECIDED` 를 낸다(R2 MINOR-4 실측). 증거를 낼 때는
-   `components lib`(386파일) 또는 `components/map/__tests__`(32파일)을 쓴다.
+4. **전체 스코프(`npx vitest run`)로는 변이 판정이 안 난다** — 실패 0 인데
+   `[vitest-worker]: Timeout calling "onTaskUpdate"` 때문에 **rc=1** 이라 도구가
+   `exit 13 / UNDECIDED` 를 낸다(R2 MINOR-4 실측). 증거를 낼 때는 `components lib`(386파일)
+   또는 `components/map/__tests__`(32파일)을 쓴다.
+   ★**이 브랜치 고유가 아니다** — R2 가 미측정으로 남긴 항목을 **대조군으로 닫았다**:
+
+   | 워크트리 | 파일 | 통과 | todo | Errors |
+   |---|---|---|---|---|
+   | 기준선 `DAI_base_wireident`(브랜치 자기 base) | 429 | 4,025 | 52 | **1** |
+   | 이 브랜치 | 431 | 4,042 | 54 | **1** |
+
+   **양쪽에 똑같이 1건**이므로 선재 환경 플레이크다(내 변경이 만든 것이 아니다).
+   ★세 축 검산: `git diff origin/main...HEAD` 파생 **+2파일 · +17 `it(` · +2 `it.todo`** —
+   429+2=431 · 4,025+17=4,042 · 52+2=54 로 **셋 다 일치**.
 5. §0 조회 신뢰도(볼트 훼손).
 
 ---
