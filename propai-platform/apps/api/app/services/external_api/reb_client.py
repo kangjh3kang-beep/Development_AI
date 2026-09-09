@@ -201,7 +201,18 @@ def narrow_to_period_aggregate(
                                        `대구` 4 · `인천`/`광주`/`대전`/`울산` 각 3, `CLS_FULLNM` 도
                                        같은 시도명) + 나머지는 **상권명**(`강남`·`광복동`·`금호지구`…).
                                        ⇒ **시도 선택은 된다**(실측 `latest_value_from_rows(rows,"서울")`
-                                         = `(6.96, '2005')`). 다만 최신 시점이 **2005년**이다.
+                                         = `(6.96, '2005')`).
+                                       ★★«최신이 2005년» 이라 단정하지 마라(독립 리뷰 R8 F-4):
+                                       그 300행은 `pIndex="1"` **단일 페이지**이고, 이 파일의
+                                       형제 주석(`fetch_recent_monthly_rows`)이 이미
+                                       *"A_2024_00903 등은 2005년~·지역블록·**오래된순**이라
+                                       pSize로는 최신이 안 잡힘"* 이라고 적어 두었다.
+                                       ⇒ 관측은 **«잘린 첫 페이지의 최댓값이 2005»** 이지
+                                         «표의 최신이 2005» 가 아니다(§증거규율 1 — 관측≠추론).
+                                       ★이 구분이 처방을 가른다: 「cycle 을 바꾼다」가 아니라
+                                         **「시점 지정 조회(`fetch_recent_monthly_rows` 계열)를 쓴다」**
+                                         가 옳을 수 있다(§29 — 없는 것을 만드는 것과 있는 것을
+                                         안 쓴 것은 처방이 다르다). 정렬 방향은 **미측정**이다.
         A_2024_00615 주택지수  (MM) : `CLS_NM` 은 **규모 구분** — 여기서만 좁히기가 동작한다
 
       ★그래도 «전 표에서 무동작» 은 아니다 — **미측정 표가 있다**(전월세전환율은 서버 시크릿이라
@@ -274,10 +285,36 @@ def latest_value_from_rows(
     #   ★없는 표기를 가정하지 않는다 — 상업용수익률 표는 `CLS_NM` 이 **상권명**이라 `전체` 가
     #     없고, 그 표에서는 이 좁히기가 아무 일도 하지 않는다(실측: `distinct_CLS_NM` =
     #     `강남`·`광복동`·`금호지구`… — 규모 구분이 아니다).
-    matched = narrow_to_period_aggregate(
-        [row for row in rows if isinstance(row, dict) and region_sido in row_region_names(row)],
-        time_keys,
-    )
+    _matched_raw = [
+        row for row in rows if isinstance(row, dict) and region_sido in row_region_names(row)
+    ]
+    # ★★독립 리뷰 R8 F-2(2026-09-08) — **내가 만든 회귀**다. 이 함수에는 항목(ITM) 필터가
+    #   **한 줄도 없는데** 집계행 좁히기를 붙였다. 그래서 집계행(`CLS_NM="전체"`)이 **다른 항목**
+    #   (예: `지수`)이면 그것이 좁히기에서 이겨 **엉뚱한 항목의 값**이 채택된다. 실측:
+    #       rows = [전체/지수 7.5, 40㎡이하/전월세전환율 5.4]  (같은 지역·같은 시점)
+    #       base   → 5.4 / 7.5  ★**행 순서에 따라 뒤집힌다**(운이지 정답이 아니다)
+    #       branch → 7.5 / 7.5  ★**일관되게 틀린다** — 안정적이라 더 안 보인다
+    #   그 7.5 는 `jeonse_conv` 의 sane (2.0,12.0) 을 **통과해** 「전월세전환율(R-ONE 실측)」로
+    #   보증금 환산 → NOI → 수익환원가액까지 흘러간다.
+    #   ⇒ **항목 축이 섞인 시점은 「무엇의 값인지」 알 수 없다 — 그 시점을 통째로 제외한다.**
+    #     (형제 `rate_series_from_rows` 는 항목 필터를 갖고 있어 이 문제가 없다. 여기만 없었다 —
+    #      처방을 형제 한쪽에만 걸었던 것이다.)
+    #   ★라이브 항목 구성이 **미측정인 표가 있으므로 거부 쪽이 안전하다**(값을 지어내지 않는다).
+    _by_period: dict[str, list[dict[str, Any]]] = {}
+    for row in _matched_raw:
+        _by_period.setdefault(_period_of(row, time_keys), []).append(row)
+    _homogeneous: list[dict[str, Any]] = []
+    for _grp in _by_period.values():
+        _items = {str(r.get("ITM_NM") or "").strip() for r in _grp}
+        _items.discard("")
+        if len(_items) > 1:
+            logger.info(
+                "R-ONE 최신값 항목 축 혼재 — 한 시점에 ITM_NM 이 여럿(해당 시점 제외)",
+                region=region_sido, items=sorted(_items),
+            )
+            continue
+        _homogeneous.extend(_grp)
+    matched = narrow_to_period_aggregate(_homogeneous, time_keys)
 
     best: tuple[str, float] | None = None
     # ★이 초기화는 **읽히지 않는다**(기계 변이 «줄삭제» 생존 = 등가 · 2026-09-08).
@@ -542,7 +579,13 @@ def trend_from_rows(rows: list[dict[str, Any]], region_sido: str, months: int = 
     #   이 PR 의 표제 결함(«경기 yearly 2024 = +80.68%»)과 **같은 산수**다.
     #   ⇒ 형제(`latest_value_from_rows`)가 이미 가진 규율을 여기에도 건다:
     #     **같은 시점에 값이 갈리면 고를 근거가 없다 — 합치지 말고 그 시점을 버린다.**
-    #     값이 같으면(중복 표기) 한 번만 센다. 버린 시점 수를 함께 실어 화면이 말하게 한다.
+    #     값이 같으면(중복 표기) 한 번만 센다.
+    #   ★★`months_counted`·`ambiguous_periods` 의 **소비처**(독립 리뷰 R8 F-1 — 종전엔 이 자리에
+    #     «화면이 말하게 한다» 고 써 놓고 **읽는 쪽이 0** 이었다. 거짓 동작 주장이었다):
+    #       · 화면  `DeskAppraisalReportClient.tsx` — 「값이 갈린 N개 시점 제외 — 부분 합계」·「6/12개월」
+    #       · 제출본 `report/render/appraisal_adapter.py` — §5 «부분 합계입니다» 줄
+    #       · 락    `test_pdf_reports_partial_yearly_and_non_timeseries` · 렌더 락 2건
+    #   ★버리면 그 해 합계는 **작아진다** — 부풀림보다 덜 보이므로(「올해가 좀 느렸구나」) 반드시 말해야 한다.
     by_period: dict[str, set[float]] = {}
     order: list[str] = []
     for t, r in series:

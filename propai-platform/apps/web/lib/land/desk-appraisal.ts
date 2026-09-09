@@ -98,7 +98,10 @@ export type DeskAppraisalResult = {
     rone_available?: boolean; cap_rate?: Stat; jeonse_conversion_rate?: Stat; housing_time_adjust?: Stat;
     land_price_trend?: {
       monthly?: { period: string; rate: number }[];
-      yearly?: { year: string; rate: number }[];
+      /** ★`months_counted` — 그 해에 **실제로 더한 달 수**. 12 미만이면 부분 합계다. */
+      yearly?: { year: string; rate: number; months_counted?: number }[];
+      /** ★같은 시점에 값이 갈려 **버린** 시점 수. >0 이면 통계가 일부 구간을 못 셌다. */
+      ambiguous_periods?: number;
       /** ★시계열의 실제 범위 — 화면이 라벨을 지어내지 않게(2026-09-07). */
       scope?: string;
       /** 고유 기간 수. 지역이 섞이면 같은 기간이 반복된다. */

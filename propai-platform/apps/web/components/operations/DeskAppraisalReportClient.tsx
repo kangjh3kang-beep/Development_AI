@@ -624,12 +624,26 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
                     )}
                     {!!yearly.length && (
                       <div className="mt-3">
-                        <p className="text-[10px] text-[var(--text-hint)]">연도별(연간 변동률 합, %)</p>
+                        {/* ★★독립 리뷰 R8 F-1: 백엔드가 `months_counted`·`ambiguous_periods` 를 실어
+                            «화면이 말하게 한다» 고 주석에 썼는데 **읽는 쪽이 0** 이었다(그 주석이 거짓 동작 주장).
+                            값이 갈리는 시점을 버리면 그 해 합계는 **부분 합계**가 되어 조용히 **작아진다**
+                            — 부풀림보다 덜 보인다(「올해가 좀 느렸구나」로 읽힌다). 그것을 여기서 말한다. */}
+                        <p className="text-[10px] text-[var(--text-hint)]">
+                          연도별(연간 변동률 합, %)
+                          {(tr?.ambiguous_periods ?? 0) > 0 && (
+                            <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-bold text-amber-800">
+                              값이 갈린 {tr?.ambiguous_periods}개 시점 제외 — 부분 합계
+                            </span>
+                          )}
+                        </p>
                         <div className="mt-1 grid grid-cols-5 gap-1 sm:grid-cols-10">
                           {yearly.map((y) => (
                             <div key={y.year} className="rounded bg-[var(--surface)] px-1 py-1 text-center">
                               <p className="text-[9px] text-[var(--text-hint)]">{y.year}</p>
                               <p className="text-[11px] font-bold" style={{ color: col(y.rate) }}>{y.rate > 0 ? "+" : ""}{y.rate}</p>
+                              {y.months_counted != null && y.months_counted < 12 && (
+                                <p className="text-[9px] text-amber-700">{y.months_counted}/12개월</p>
+                              )}
                             </div>
                           ))}
                         </div>

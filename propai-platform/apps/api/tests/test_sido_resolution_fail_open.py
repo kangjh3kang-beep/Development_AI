@@ -1496,7 +1496,29 @@ async def test_the_two_pipelines_answer_substitute_scope_differently_on_purpose(
 #   모순의 출처는 같은 파일 독스트링의 **전사 오류**였다(`CLS_NM="서울"` 에 엉뚱한 경로를 짝지음).
 #   ★거짓 부채는 부채가 없는 것보다 나쁘다 — 다음 사람이 있지도 않은 결함을 고치러 간다.
 #     그래서 xfail 을 **지우고**, 실제로 남은 한계를 **관측으로** 적는다:
-#       · 그 표의 최신 시점은 **2005년**이고 레지스트리 `cycle="QQ"` 는 **행 0건**이다(범위 밖·기록만)
+#       · 레지스트리 `cycle="QQ"` 는 **행 0건**이고, `YY` 300행의 최댓값이 2005 다.
+#         ★«표의 최신이 2005» 가 아니라 **«잘린 첫 페이지의 최댓값이 2005»** 다(R8 F-4) —
+#           `pIndex="1"` 단일 페이지이고 형제 주석이 이 표 계열을 «오래된순» 이라 적어 뒀다.
+#         ⇒ 아래 strict xfail 로 **참 부채**를 초록 안에 드러낸다(R8 F-3 —
+#           거짓 부채의 xfail 은 지웠는데 참 부채는 주석으로만 남겨 **가시성이 순감**했다).
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="★부채(R8 F-3): 상업용 자본환원율 경로가 라이브에서 값을 못 낸다 — 레지스트리 주기와 "
+           "실제 데이터가 있는 주기가 어긋난다(문서화된 통계표로 QQ=0행 · YY=300행 실측). "
+           "서버 설정값(RONE_COMMYIELD_STATBL_ID) 확인 + 시점 지정 조회 검토 필요",
+)
+def test_commercial_yield_registry_cycle_should_match_a_cycle_that_has_rows() -> None:
+    """상업용 자본환원율은 라이브에서 값을 내야 한다(미해결 — strict xfail).
+
+    ★지금 그대로면 `commercial_cap_rate` 가 **항상 None** 이고 화면·PDF 의
+      「자본환원율(R-ONE 실측)」 줄은 **한 번도 뜨지 않는다** — 기본 4.5% 가 영구 채택된다.
+      사용자에게 닿는 실결함인데 종전엔 초록 안에 아무 표시가 없었다.
+    """
+    from app.services.land_intelligence.reb_statistics_service import _STAT_REGISTRY
+
+    assert _STAT_REGISTRY["commercial_yield"]["cycle"] == "YY"
 #       · 상권 행이 시도 선택에 섞이지 않는 것은 `row_region_names` 의 정확일치가 보장한다 — 아래로 잠근다
 
 
@@ -1638,3 +1660,127 @@ def test_pdf_time_adjust_line_reports_substitute_scope() -> None:
     # ★위양성 축 — 요청 지역 값이면 그 경고가 뜨지 않는다.
     own = "\n".join(lines("경남", "경남"))
     assert "시점수정" in own and "실데이터가 아닙니다" not in own, own
+
+
+# ─────────────────────────────────────────────────────────────
+# ★R8 F-2 — **내가 만든 회귀**. 처방을 형제 한쪽에만 걸었다.
+#   `rate_series_from_rows` 는 항목(ITM) 필터를 갖는데 `latest_value_from_rows` 는 **없다**.
+#   그 함수에 집계행 좁히기를 붙였더니 집계행이 **다른 항목**이면 그것이 이겨 엉뚱한 값이 채택됐다.
+#     base   → 5.4 / 7.5  ★행 순서에 따라 뒤집힌다(운이지 정답이 아니다)
+#     branch → 7.5 / 7.5  ★일관되게 틀린다 — 안정적이라 더 안 보인다
+#   그 값은 `jeonse_conv` sane (2.0,12.0) 을 통과해 NOI·수익환원가액까지 간다.
+# ─────────────────────────────────────────────────────────────
+
+_IDX_ROW = {"REGION_NM": "서울", "CLS_NM": "전체", "ITM_NM": "지수",
+            "DTA_VAL": 7.5, "WRTTIME_IDTFR_ID": "202607"}
+_CONV_ROW = {"REGION_NM": "서울", "CLS_NM": "40㎡이하", "ITM_NM": "전월세전환율",
+             "DTA_VAL": 5.4, "WRTTIME_IDTFR_ID": "202607"}
+
+
+def test_mixed_item_axis_is_refused_regardless_of_row_order() -> None:
+    """★한 시점에 항목이 섞이면 **무엇의 값인지 모른다** — 거부한다(양쪽 순서 모두)."""
+    from app.services.external_api.reb_client import latest_value_from_rows
+
+    assert latest_value_from_rows([_IDX_ROW, _CONV_ROW], "서울") is None
+    # ★순서 독립 — base 는 여기서 뒤집혔다(운). 결정적으로 틀리는 것보다 거부가 옳다.
+    assert latest_value_from_rows([_CONV_ROW, _IDX_ROW], "서울") is None
+
+
+def test_homogeneous_item_axis_still_selects_the_aggregate_row() -> None:
+    """★위양성 축 — 항목이 하나뿐이면 집계행 좁히기는 **그대로 동작**한다."""
+    from app.services.external_api.reb_client import latest_value_from_rows
+
+    rows = [
+        {"REGION_NM": "서울", "CLS_NM": "전체", "ITM_NM": "전월세전환율",
+         "DTA_VAL": 5.0, "WRTTIME_IDTFR_ID": "202607"},
+        {"REGION_NM": "서울", "CLS_NM": "40㎡이하", "ITM_NM": "전월세전환율",
+         "DTA_VAL": 5.4, "WRTTIME_IDTFR_ID": "202607"},
+    ]
+    assert latest_value_from_rows(rows, "서울") == (5.0, "202607"), "집계행을 못 골랐다"
+    # ★항목 필드가 아예 없는 표(상업용 구형)도 종전대로 동작해야 한다.
+    bare = [{"CLS_NM": "서울", "CLS_FULLNM": "서울", "DTA_VAL": 6.96, "WRTTIME_IDTFR_ID": "2005"}]
+    assert latest_value_from_rows(bare, "서울") == (6.96, "2005")
+
+
+def test_pdf_reports_partial_yearly_and_non_timeseries() -> None:
+    """★R8 F-1/F-7 — 화면의 두 경고가 **제출본에도** 실린다(화면 2 : PDF 0 이었다)."""
+    from app.services.report.render.appraisal_adapter import build_report_model_from_appraisal
+
+    def lines(trend: dict) -> str:
+        doc = build_report_model_from_appraisal({
+            "ok": True, "appraised_price_per_sqm": 2_000_000, "appraised_total_won": 1,
+            "area_sqm": 500, "confidence": 0.7, "range_per_sqm": {"low": 1, "high": 2},
+            "methods": [], "weight_note": "단독", "time_adjust_basis": "R-ONE 지가변동률 누적",
+            "market_stats": {"region": "서울", "region_resolved": True, "rone_available": True,
+                             "land_price_trend": trend},
+        })
+        return "\n".join(p for sec in doc.sections if sec.title.startswith("5.")
+                         for b in sec.blocks for p in getattr(b, "paragraphs", []))
+
+    bad = lines({"is_time_series": False, "distinct_periods": 2, "requested_months": 24,
+                 "ambiguous_periods": 6})
+    assert "시계열이 아닙니다" in bad, bad
+    assert "부분 합계" in bad and "6" in bad, bad
+
+    # ★위양성 축 — 정상 시계열이면 두 줄 다 뜨지 않는다.
+    ok = lines({"is_time_series": True, "distinct_periods": 24, "requested_months": 24,
+                "ambiguous_periods": 0})
+    assert "시계열이 아닙니다" not in ok and "부분 합계" not in ok, ok
+
+
+# ─────────────────────────────────────────────────────────────
+# ★R8 F-6 — 이 PR 이 만든 고지가 **N필지 중 1필지**만 덮었다
+#   §5 근거 블록은 대표(첫 성공) 필지 하나로 만들어지는데 총괄표는 전 필지를 싣는다.
+#   결함의 범위(N) ≠ 처방의 범위(1). 담요 경고 대신 **실제로 다른 필지를 세어** 말한다.
+# ─────────────────────────────────────────────────────────────
+
+
+def _multi_caption(results: list[dict]) -> str:
+    from app.services.report.render.appraisal_adapter import build_report_model_from_appraisal_multi
+
+    doc = build_report_model_from_appraisal_multi(
+        results, addresses=[r.get("address", "") for r in results])
+    for sec in doc.sections:
+        if sec.title.startswith("0."):
+            return " ".join(str(getattr(b, "caption", "") or "") for b in sec.blocks)
+    return ""
+
+
+def _parcel(addr: str, scope: str, resolved: bool = True) -> dict:
+    return {
+        "ok": True, "address": addr, "appraised_price_per_sqm": 2_000_000,
+        "appraised_total_won": 1_000_000_000, "area_sqm": 500, "confidence": 0.7,
+        "range_per_sqm": {"low": 1, "high": 2}, "methods": [], "weight_note": "단독",
+        "time_adjust_basis": "R-ONE 지가변동률 누적", "time_adjust_scope": scope,
+        "market_stats": {"region": scope, "region_resolved": resolved, "rone_available": True},
+    }
+
+
+def test_multi_parcel_report_says_the_basis_is_representative_only() -> None:
+    """★대표와 **다른 범위**를 가진 필지가 있으면 총괄이 그것을 센다."""
+    cap = _multi_caption([
+        _parcel("서울특별시 강남구 1", "서울"),
+        _parcel("경상남도 창원시 1", "전국"),
+        _parcel("경상남도 김해시 1", "전국"),
+    ])
+    assert "대표 필지" in cap, cap
+    assert "다른 필지 2건" in cap, cap
+
+
+def test_multi_parcel_report_counts_unresolved_sido() -> None:
+    """★시·도를 해석하지 못한 필지 수도 센다."""
+    cap = _multi_caption([
+        _parcel("서울특별시 강남구 1", "서울"),
+        _parcel("zzz없는지역 1", "서울", resolved=False),
+    ])
+    assert "해석하지 못한 필지" in cap and "1건" in cap, cap
+
+
+def test_multi_parcel_report_stays_quiet_when_every_parcel_agrees() -> None:
+    """★위양성 축 — 전 필지가 같은 범위면 그 경고가 **뜨지 않는다**."""
+    cap = _multi_caption([
+        _parcel("서울특별시 강남구 1", "서울"),
+        _parcel("서울특별시 서초구 1", "서울"),
+    ])
+    assert "대표 필지" not in cap, cap
+    assert "성공 2/2필지" in cap, cap

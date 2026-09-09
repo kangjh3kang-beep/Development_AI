@@ -178,4 +178,28 @@ describe("탁상감정 §Ⅵ 렌더 락", () => {
     await waitFor(() => expect(screen.getByText(/방법 간 교차검증/)).toBeTruthy());
     expect(screen.queryByText(/교차검증 아님/)).toBeNull();
   });
+
+  // ★★독립 리뷰 R8 F-1: 백엔드가 `months_counted`·`ambiguous_periods` 를 실으며 주석에
+  //   «화면이 말하게 한다» 고 썼는데 **읽는 쪽이 0** 이었다(거짓 동작 주장). DOM 으로 잠근다.
+  //   ★오차의 방향이 바뀐 것도 함께 본다 — 부풀림은 눈에 띄지만 **부분 합계는 작아져서 덜 보인다**.
+  it("★부분 합계면 화면이 **몇 달을 셌는지·몇 시점을 버렸는지** 말한다", async () => {
+    const r = result();
+    (r.market_stats.land_price_trend as Record<string, unknown>).yearly =
+      [{ year: "2024", rate: 3.0, months_counted: 6 }];
+    (r.market_stats.land_price_trend as Record<string, unknown>).ambiguous_periods = 6;
+    await renderAndRun(r);
+    await waitFor(() => expect(screen.getByText(/값이 갈린 6개 시점 제외/)).toBeTruthy());
+    expect(screen.getByText("6/12개월")).toBeTruthy();
+  });
+
+  it("★위양성 축 — 12개월을 다 세면 그 표시가 **뜨지 않는다**", async () => {
+    const r = result();
+    (r.market_stats.land_price_trend as Record<string, unknown>).yearly =
+      [{ year: "2024", rate: 6.0, months_counted: 12 }];
+    (r.market_stats.land_price_trend as Record<string, unknown>).ambiguous_periods = 0;
+    await renderAndRun(r);
+    await waitFor(() => expect(screen.getByText(/시점수정: R-ONE/)).toBeTruthy());
+    expect(screen.queryByText(/값이 갈린/)).toBeNull();
+    expect(screen.queryByText(/\/12개월/)).toBeNull();
+  });
 });

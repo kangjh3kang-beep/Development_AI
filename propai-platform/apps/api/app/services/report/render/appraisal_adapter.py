@@ -73,6 +73,12 @@ def _confidence_pct(v: Any) -> str | None:
         return None
 
 
+def _rep_addr_note(addr: str, region: str) -> str:
+    """대표 필지를 사람이 알아볼 수 있게 표기 — 주소가 없으면 해석된 지역으로."""
+    a = (addr or "").strip()
+    return a if a else (region or "대표")
+
+
 def build_report_model_from_appraisal(
     result: dict[str, Any], *, address: str = "", ai_sections: dict[str, Any] | None = None
 ) -> ReportModel:
@@ -215,6 +221,20 @@ def build_report_model_from_appraisal(
             "· 지역 해석: 주소에서 시·도를 해석하지 못해 전국 값을 적용했습니다"
             "(이 지역 실데이터가 아닙니다)."
         )
+    # ★★독립 리뷰 R8 F-7/F-1: 화면의 경고가 **제출본에 없었다**(화면 2 : PDF 0).
+    #   R6 LOW-2 에서 내가 세운 원칙(«화면과 제출본이 갈리면 그 갈림 자체가 결함») 그대로 적용한다.
+    _tr = ms.get("land_price_trend") or {}
+    if _tr.get("is_time_series") is False:
+        basis_lines.append(
+            f"· 지가변동률 추이: **시계열이 아닙니다** — 고유 기간 "
+            f"{fmt_value(_tr.get('distinct_periods'))}개/"
+            f"{fmt_value(_tr.get('requested_months') or 24)}개월"
+        )
+    if (_tr.get("ambiguous_periods") or 0) > 0:
+        basis_lines.append(
+            f"· 연도별 변동률: 값이 갈린 {fmt_value(_tr.get('ambiguous_periods'))}개 시점을 제외한 "
+            "**부분 합계**입니다(그 구간은 세지 못했습니다)."
+        )
     if not ms.get("rone_available"):
         basis_lines.append("· 시장통계: R-ONE 통계표 미설정 구간은 근사값 적용(설정 시 실데이터 전환).")
     sections.append(Section(title="5. 시점수정·시장통계 근거", blocks=[
@@ -331,7 +351,32 @@ def build_report_model_from_appraisal_multi(
     caption = f"성공 {n_ok}/{m}필지 (채택 추정가 확정). "
     if omitted_count > 0:
         caption += f"1회 상한(30필지) 초과로 31번째 이상 {omitted_count}필지는 보고서에 미포함. "
-    caption += "실패 필지는 공시지가 미확인 등으로 '보완필요'(주소·PNU 재확인 필요)."
+    caption += "실패 필지는 공시지가 미확인 등으로 '보완필요'(주소·PNU 재확인 필요). "
+
+    # ★★독립 리뷰 R8 F-6(2026-09-08): §5 근거 블록은 **대표(첫 성공) 필지 하나**로 만들어지는데
+    #   이 표는 **전 필지**를 싣는다. 그래서 이 PR 이 새로 넣은 «요청 지역 실데이터가 아닙니다» ·
+    #   «시·도를 해석하지 못해» 고지가 **1/N 만** 덮었다 — 결함의 범위(N필지)와 처방의 범위(1필지)가
+    #   갈렸다. 미루려면 «배치 안 필지가 시도를 공유한다» 를 재서 근거로 대야 하는데 그 측정이 없다.
+    #   ⇒ 담요 경고 대신 **실제로 다른 필지를 세어** 말한다(파생 — 목록이 상한이 되지 않게).
+    _rep_scope = str((rep_result or {}).get("time_adjust_scope") or "")
+    _rep_region = str(((rep_result or {}).get("market_stats") or {}).get("region") or "")
+    _diff_scope = sum(
+        1 for r, _ in ok_pairs
+        if str(r.get("time_adjust_scope") or "") != _rep_scope
+    )
+    _unresolved = sum(
+        1 for r, _ in ok_pairs
+        if (r.get("market_stats") or {}).get("region_resolved") is False
+    )
+    if _diff_scope or _unresolved:
+        caption += (
+            f"★아래 §5 시점수정·시장통계 근거는 **대표 필지({_rep_addr_note(rep_addr, _rep_region)}) 기준**이다 — "
+        )
+        if _diff_scope:
+            caption += f"시점수정 범위가 대표와 **다른 필지 {_diff_scope}건**이 있다. "
+        if _unresolved:
+            caption += f"시·도를 해석하지 못한 필지 **{_unresolved}건**이 있다(전국 값 적용). "
+        caption += "그 필지들에는 §5 의 고지가 그대로 적용되지 않는다."
 
     # 통합 합계 — 성공 필지만 합산(실패 필지 제외, 정직).
     area_sum = sum(float(r.get("area_sqm") or 0) for r, _ in ok_pairs)
