@@ -90,12 +90,23 @@ describe("DiscoverSitesPanel — 렌더", () => {
     expect(screen.queryByText("이미소속현장")).toBeNull();
   });
 
-  it("★★희망 직속 상위를 **받기 전에는 안 보낸다** — 비면 서버가 400 을 낸다", async () => {
+  it("★희망 직속 상위 입력칸이 열리고, 그 전에는 아무것도 안 나간다", async () => {
     render(<DiscoverSitesPanel />);
     fireEvent.click(await screen.findByText("등록신청"));
-    // 입력칸이 열리고, 아직 아무것도 안 나갔다.
     expect(screen.getByLabelText("희망 직속 상위 이메일")).toBeTruthy();
     expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it("★★비워 두면 **sponsor 를 안 싣는다** — 조직도 없는 현장의 신청을 막지 않는다", async () => {
+    // ★R3 C-1: 무조건 필수로 만들었더니 조직 노드 0인 현장(라이브 10/13)의 신청이
+    //   **원리적으로 불가능**해졌다. 판정은 서버가 현장 상태로 한다.
+    postMock.mockResolvedValue({ status: "pending", already_member: false });
+    render(<DiscoverSitesPanel />);
+    fireEvent.click(await screen.findByText("등록신청"));
+    fireEvent.click(screen.getByText("보내기"));
+
+    await waitFor(() => expect(postMock).toHaveBeenCalled());
+    expect(postMock.mock.calls[0][1]).toMatchObject({ body: {} });
   });
 
   it("★신청을 누르면 **실제로 POST 가 나가고** 그 카드가 대기로 바뀐다", async () => {

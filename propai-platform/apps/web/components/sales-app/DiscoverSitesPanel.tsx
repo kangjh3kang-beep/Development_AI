@@ -88,7 +88,9 @@ export default function DiscoverSitesPanel() {
     apiClient
       .post<{ status?: string | null; already_member?: boolean }>(
         `/sales/sites/${siteId}/join-requests`,
-        { body: { sponsor_email: sponsorEmail.trim() } },
+        // ★비면 **안 싣는다** — 서버가 «조직도 있는 현장에서만 필수» 로 판정한다.
+        //   조직도가 없는 현장은 sponsor 없이 신청이 만들어지고 승인 시 보류로 간다(R3 C-1).
+        { body: sponsorEmail.trim() ? { sponsor_email: sponsorEmail.trim() } : {} },
       )
       .then((r) => {
         // ★서버가 판정한 결과를 **그대로 반영**한다(낙관적으로 'pending' 을 지어내지 않는다).
@@ -163,13 +165,13 @@ export default function DiscoverSitesPanel() {
                     <input
                       value={sponsorEmail}
                       onChange={(e) => setSponsorEmail(e.target.value)}
-                      placeholder="나를 부른 담당자 이메일"
+                      placeholder="나를 부른 담당자 이메일(없으면 비워 두세요)"
                       aria-label="희망 직속 상위 이메일"
                       className="w-44 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-2 py-1.5 text-[11px] text-[var(--text-primary)] placeholder:text-[var(--text-hint)]"
                     />
                     <button
                       onClick={() => apply(s.site_id)}
-                      disabled={sendingId === s.site_id || sponsorEmail.trim().length < 3}
+                      disabled={sendingId === s.site_id}
                       className="rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-[11px] font-black text-white transition hover:opacity-90 disabled:opacity-50"
                     >
                       보내기
