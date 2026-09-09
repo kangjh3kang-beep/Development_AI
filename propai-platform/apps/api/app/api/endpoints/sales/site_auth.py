@@ -37,7 +37,7 @@ from app.api.deps_sales import _SUPERADMIN_ROLES, _node_priority
 from app.core.config import settings
 
 # ★진입 판정은 의존 없는 서비스 모듈에 산다 — 어디서든 태울 수 있게(2026-09-09).
-from app.services.sales.site_entry import verify_site_secret
+from app.services.sales.site_entry import resolve_entry
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
 
 logger = logging.getLogger(__name__)
@@ -145,10 +145,26 @@ async def _get_site(db: AsyncSession, site_id) -> SalesSite:
         cond = SalesSite.id == uuid.UUID(sid)
     except (ValueError, AttributeError, TypeError):
         cond = SalesSite.site_code == sid  # UUID가 아니면 현장코드로 조회
-    site = (await db.execute(select(SalesSite).where(cond))).scalar_one_or_none()
+    # ★삭제된 현장은 주지 않는다(2026-09-09 리뷰 M5). `SalesSite` 는 `SoftDeleteMixin` 을 달고,
+    #   같은 파일의 형제 조회 **3곳**(`my_sites` (a)(b)(c))은 전부 이 필터를 건다 — **4중 1곳만**
+    #   빠져 있었고, 하필 그 하나가 `enter_site`·`set_site_password`·`site_role` 이 쓰는 것이다.
+    #   비번 미설정 현장이 진입 가능해지면서 «삭제된 현장에 토큰 발급» 이 열린다.
+    site = (await db.execute(select(SalesSite).where(
+        cond, SalesSite.deleted_at.is_(None)))).scalar_one_or_none()
     if not site:
         raise HTTPException(404, "현장을 찾을 수 없습니다")
     return site
+
+
+def _log_entry(site_id: str, user, role: str, auth: str) -> None:
+    """현장 진입을 **양쪽 경로 모두** 같은 모양으로 남긴다.
+
+    ★2026-09-09 리뷰 M4: 앞 판은 membership 진입만 로그했다. 그러면 «오늘 몇 명이 비번으로
+      들어왔나» 를 셀 수 없고, 두 경로가 **로그에서 비대칭**이 된다 — 응답에 `auth` 를 실어
+      «구별한다» 고 주석에 써 놓고 정작 로그에서는 하나만 보였다.
+    ★한쪽만 부르면 그것이 이 결함의 재발이다 — 그래서 **헬퍼 하나**로 묶는다.
+    """
+    logger.info("현장 진입: site=%s user=%s role=%s auth=%s", site_id, user.id, role, auth)
 
 
 def _features(role: str) -> list[str]:
@@ -293,6 +309,26 @@ async def my_sites(db: AsyncSession = Depends(get_db), user=Depends(get_current_
                 "role": "SUPERADMIN", "role_label": _ROLE_LABEL["SUPERADMIN"], "membership": "admin",
             })
 
+    # ★★현장마다 «2차 비밀번호가 설정돼 있나» 를 **한 쿼리로** 싣는다(2026-09-09 리뷰 C1).
+    #
+    #   【왜】「승인이 곧 인증」 뒤에는 **비번 미설정 현장이 다수**다(라이브 실측 14 중 11).
+    #     그런데 목록 카드는 진입 전 현장 전부에 «2차 비밀번호» 라벨을 무조건 그리고 있었고
+    #     (`SiteListClient.tsx`), 그 라벨은 11현장에서 **거짓**이 된다.
+    #   【그리고 이 필드가 게이팅을 만든다】진입 모달은 열리면 비번 없이 조용히 먼저 시도하는데,
+    #     비번이 **설정된** 현장에서 그 시도를 하면 잠금 카운터를 향해 노크하는 셈이다.
+    #     서버가 카운터 앞에서 400 으로 막지만(`resolve_entry` → `no_secret_supplied`),
+    #     **애초에 두드리지 않는 것**이 옳다 — 그 판정에 이 필드가 쓰인다.
+    #   ★N+1 이 되지 않게 `IN` 한 번으로 받는다. 목록이 비면 쿼리 자체를 건너뛴다.
+    if out:
+        await _ensure(db)
+        pw_rows = (await db.execute(
+            text("SELECT site_id::text FROM sales_site_passwords WHERE site_id = ANY(:ids)"),
+            {"ids": list(out.keys())},
+        )).all()
+        with_pw = {r[0] for r in pw_rows}
+        for sid, item in out.items():
+            item["password_set"] = sid in with_pw
+
     return list(out.values())
 
 
@@ -305,7 +341,11 @@ async def enter_site(site_id: str, body: EnterRequest,
     sid = str(site.id)  # 이후 SQL·토큰은 해석된 실제 UUID 사용
 
     org_path, role = await _resolve_role(db, site, user)
-    if not role:
+    # ★★멤버십 거부도 **판정 값**으로 받는다(2026-09-09 리뷰 C2).
+    #   종전엔 `if not role:` **한 줄**에만 살아서 `if role is None:` 로 바꿔도
+    #   (비멤버는 `""` 를 받으므로 **영원히 거짓**) 락 11건이 전부 초록이었다 —
+    #   그 변이는 **인증된 아무나 아무 현장에** 진입시킨다. 판정이 값이어야 태울 수 있다.
+    if resolve_entry(role, None, None) == "forbidden":
         raise HTTPException(403, "이 현장의 멤버가 아닙니다")
 
     now = datetime.now(UTC)
@@ -345,8 +385,7 @@ async def enter_site(site_id: str, body: EnterRequest,
             "DELETE FROM sales_site_login_attempts WHERE site_id=:s AND user_id=:u"),
             {"s": sid, "u": str(user.id)})
         await db.commit()
-        logger.info("현장 진입(비번 미설정 · 멤버십 인증): site=%s user=%s role=%s",
-                    sid, user.id, role)
+        _log_entry(sid, user, role, "membership")
         token = issue_site_token(user.id, getattr(user, "tenant_id", None), site.id, role, org_path)
         return {
             "site_token": token,
@@ -362,9 +401,13 @@ async def enter_site(site_id: str, body: EnterRequest,
 
     # ★판정은 **서비스 층**이 한다(`site_entry.verify_site_secret`) — 라우터는 3.10 에서
     #   임포트조차 안 돼(PEP 695 의존) 여기 두면 **CI 에서 처음 실행되는 락**만 남는다.
-    ok = verify_site_secret(pw.password_hash, body.password) == "password"
+    outcome = resolve_entry(role, pw.password_hash, body.password)
+    if outcome == "no_secret_supplied":
+        # ★**실패 카운트를 올리지 않는다**(리뷰 C1). 「안 보냈다」와 「틀렸다」는 다른 사건이고,
+        #   전자가 후자의 예산을 쓰면 모달을 몇 번 여는 것만으로 계정이 잠긴다.
+        raise HTTPException(400, "이 현장은 2차 비밀번호가 필요합니다")
 
-    if not ok:
+    if outcome != "password":
         # 실패 누적 + 임계 도달 시 잠금
         new_fail = (att.fail_count if att else 0) + 1
         locked = now + timedelta(minutes=_LOCK_MINUTES) if new_fail >= _MAX_FAILS else None
@@ -383,6 +426,7 @@ async def enter_site(site_id: str, body: EnterRequest,
                      {"s": sid, "u": str(user.id)})
     await db.commit()
 
+    _log_entry(sid, user, role, "password")
     token = issue_site_token(user.id, getattr(user, "tenant_id", None), site.id, role, org_path)
     return {
         "site_token": token,

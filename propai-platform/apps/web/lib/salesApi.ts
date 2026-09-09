@@ -6,6 +6,7 @@
  * sales API 호출 시 X-Site-Token 헤더로 자동 첨부한다(api-client가 sales 경로 한정으로 주입).
  */
 import { apiClient } from "@/lib/api-client";
+import { useSalesStore } from "@/store/useSalesStore";
 
 type Body = Record<string, unknown> | undefined;
 
@@ -58,7 +59,18 @@ export function getStoredSiteToken(siteId: string): StoredSiteToken | null {
   }
 }
 
-/** 현장 진입 토큰 제거(로그아웃·만료·진입실패 정리용). */
+/** 현장 진입 토큰 제거(로그아웃·만료·진입실패 정리용).
+ *
+ * ★★**그 현장의 캐시된 세대도 함께 버린다**(2026-09-09 · Stage 3).
+ *   토큰을 버리는 사건은 «이 현장을 볼 근거가 사라졌다» 는 뜻이다(멤버십 상실 4403 · 만료 ·
+ *   로그아웃). 그런데 스토어는 **모듈 싱글톤**이라 토큰만 지우면 세대 목록은 메모리에 남고,
+ *   같은 탭에서 다른 현장으로 갔다가 돌아오면 **권한이 사라진 현장의 데이터가 다시 그려진다.**
+ *
+ *   ★배선을 **호출부가 아니라 여기**에 둔다 — 호출부는 둘이고(`SiteWorkspaceClient` ·
+ *     `UnitLiveBoard`) 앞으로 늘어난다. 한 곳을 고치면 형제가 따라오게 하는 저장소 규율이다.
+ *   ★순환 임포트 없음: `store/useSalesStore.ts` 가 이 파일에서 가져가는 것은 `type UnitStatus`
+ *     **하나뿐**이라 컴파일 시 지워진다(런타임 참조 0).
+ */
 export function clearSiteToken(siteId: string) {
   if (typeof window === "undefined" || !siteId) return;
   try {
@@ -66,6 +78,7 @@ export function clearSiteToken(siteId: string) {
   } catch {
     /* noop */
   }
+  useSalesStore.getState().clearSite(siteId);
 }
 
 /** 현재 활성 현장 토큰의 raw 문자열(유효시)만 반환 — api-client 자동첨부용. */

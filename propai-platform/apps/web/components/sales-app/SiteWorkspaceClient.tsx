@@ -441,12 +441,15 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
         </>
       )}
 
-      {/* 진입 토큰 없음/만료 → 재진입 모달 */}
+      {/* 진입 토큰 없음/만료 → 재진입 모달.
+          ★`password_set` 은 여태 **선언만** 돼 있고 읽는 곳이 0건이었다(2026-09-09 파생 전수).
+            여기서 소비한다 — 비번이 설정된 현장에는 모달이 자동 시도를 하지 않는다(리뷰 C1). */}
       {needEnter && (
         <SiteEnterModal
           locale={locale}
           siteId={siteId}
           siteName="이 현장"
+          passwordSet={role?.password_set}
           open={needEnter}
           onClose={() => setNeedEnter(false)}
           onEntered={() => {

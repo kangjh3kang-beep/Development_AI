@@ -42,3 +42,44 @@ def verify_site_secret(stored_hash: str | None, supplied: str | None) -> str:
     except (ValueError, TypeError):
         return "reject"
     return "password" if ok else "reject"
+
+
+# ★진입 판정의 **전체** 결과. 라우터는 이것을 HTTP 로 옮기기만 한다.
+#   `forbidden` 을 여기 두는 것이 핵심이다 — 종전엔 «멤버 아님» 이 라우터 안 `if not role:`
+#   **한 줄**에만 살아서, `if role is None:` 로 바꿔도(비멤버는 `""` 를 받으므로 **영원히 거짓**)
+#   락 11건이 전부 초록이었다(`::VERDICT=SURVIVED`). 그 변이는 **인증된 아무나 아무 현장에**
+#   진입시킨다. 판정이 값이 되어야 태울 수 있다.
+ENTRY_OUTCOMES = ("membership", "password", "reject", "no_secret_supplied", "forbidden")
+
+
+def resolve_entry(role: str | None, stored_hash: str | None, supplied: str | None) -> str:
+    """현장 진입을 허용할지 — **하나의 값**으로 판정한다.
+
+    | 반환 | 뜻 | 호출부 |
+    |---|---|---|
+    | `forbidden` | 이 현장의 **멤버가 아니다** | 403 |
+    | `membership` | 비번 **미설정** — 승인된 멤버십이 곧 인증 | 토큰 발급 |
+    | `password` | 비번 설정 + **일치** | 토큰 발급 |
+    | `no_secret_supplied` | 비번 설정인데 **아무것도 안 보냈다** | 400 — ★**실패 카운트 금지** |
+    | `reject` | 비번 설정 + **불일치** | 401 + 실패 카운트 |
+
+    ## ★`no_secret_supplied` 를 `reject` 와 가르는 이유 (2026-09-09 · 리뷰 C1)
+
+    프론트 모달이 열릴 때 «비번 없이 먼저 시도» 하도록 만들었는데, 빈 비번이 **실패로 세어졌다**.
+    그리고 `sales_site_login_attempts` 는 **시간으로 감쇠하지 않는다**(지우는 곳은 성공 진입·
+    membership 진입·관리자 비번 변경 **셋뿐**). 즉 «15분 안에 5회» 가 아니라
+    **«성공하기 전까지 누적 5회»** 다.
+
+    ⇒ 모달을 다섯 번 여는 것만으로(비번을 몰라 닫았다 다시 여는 것만으로) 계정이 잠기고,
+      실패는 **설계상 조용해서** 사용자는 아무것도 못 본다. 하필 «2차 요소를 조용히 걷어내지
+      않으려고 남긴» 비번 설정 현장을 정확히 때린다. **내가 이번 라운드에 만든 결함이다.**
+
+    ★**「안 보냈다」와 「틀렸다」는 다른 사건이다.** 같은 값으로 뭉개면 전자가 후자의 예산을 쓴다.
+    """
+    if not role:
+        return "forbidden"
+    if not stored_hash:
+        return "membership"
+    if supplied is None or supplied == "":
+        return "no_secret_supplied"
+    return "password" if verify_site_secret(stored_hash, supplied) == "password" else "reject"

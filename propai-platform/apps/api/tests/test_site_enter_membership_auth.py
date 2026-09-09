@@ -194,7 +194,10 @@ def test_router_delegates_the_decision() -> None:
     fn = _enter_fn()
     calls = {c.func.id for c in ast.walk(fn)
              if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
-    assert "verify_site_secret" in calls, "판정을 서비스 층에 위임하지 않는다"
+    # ★판정 함수 이름이 `verify_site_secret` → `resolve_entry` 로 올라갔다(리뷰 C2·M1).
+    #   라우터가 부르는 것은 **다섯 결과를 내는 쪽**이어야 한다 — 참/거짓 두 값짜리를
+    #   부르면 「비멤버」·「안 보냈다」가 다시 라우터 안의 손 분기로 내려온다.
+    assert "resolve_entry" in calls, "판정을 서비스 층에 위임하지 않는다"
     src = ast.unparse(fn)
     assert "checkpw" not in src, (
         "라우터가 여전히 직접 bcrypt 를 비교한다 — 판정이 두 벌이 된다"
@@ -310,3 +313,181 @@ async def test_wrong_password_still_rejected_when_one_is_set(monkeypatch) -> Non
         await mod.enter_site(str(site.id), mod.EnterRequest(password="wrong"),
                              db=_DB(has_password=True), user=user)
     assert ei.value.status_code == 401
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# D. `resolve_entry` — **다섯 결과를 한 값으로**(리뷰 C1·C2·M1 의 공통 처방)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_non_member_is_forbidden() -> None:
+    """★★**비멤버 모집단** — 이것이 없던 것이 C2 의 근본이다.
+
+    ★★2026-09-09 리뷰 C2: 종전엔 «멤버 아님» 이 라우터 안 `if not role:` **한 줄**에만 살았고,
+      테스트의 `_resolve_role` 스텁은 **항상 `("a1.t1","MEMBER")`** 를 돌려줬다 —
+      **비멤버를 만드는 테스트가 0건**이었다. 그래서 `if not role:` → `if role is None:` 변이가
+      (비멤버는 `""` 를 받으므로 **영원히 거짓**) `::VERDICT=SURVIVED` 였고,
+      그 변이는 **인증된 아무나 아무 현장에** `role=""` 토큰으로 진입시킨다.
+    """
+    from app.services.sales.site_entry import resolve_entry
+
+    for empty in (None, ""):
+        assert resolve_entry(empty, None, None) == "forbidden"
+        assert resolve_entry(empty, "$2b$12$" + "x" * 53, "무엇이든") == "forbidden", (
+            "비멤버인데 비번만 맞으면 들여보낸다 — 멤버십 가드가 죽었다"
+        )
+
+
+def test_member_without_secret_enters_by_membership() -> None:
+    """★★**반대편** — 멤버이고 비번 미설정이면 진입한다(라이브 11/14 현장)."""
+    from app.services.sales.site_entry import resolve_entry
+
+    assert resolve_entry("MEMBER", None, None) == "membership"
+    assert resolve_entry("DEVELOPER", "", None) == "membership"
+
+
+def test_missing_secret_is_not_a_failed_attempt() -> None:
+    """★★**「안 보냈다」와 「틀렸다」는 다른 사건이다**(리뷰 C1).
+
+    ★내가 이번 라운드에 만든 결함이다 — 모달이 열릴 때마다 **빈 비번**을 보내게 해 놓고
+      서버는 그것을 **실패로 셌다**. `sales_site_login_attempts` 는 **시간으로 감쇠하지 않아**
+      («성공하기 전까지 누적 5회») 모달을 다섯 번 여는 것만으로 계정이 잠기고,
+      실패는 **설계상 조용해서** 사용자는 아무것도 못 본다.
+      하필 «2차 요소를 걷어내지 않으려고 남긴» 비번 설정 현장을 정확히 때린다.
+    """
+    from app.services.sales.site_entry import resolve_entry
+
+    h = bcrypt.hashpw(b"pw", bcrypt.gensalt()).decode()
+    assert resolve_entry("MEMBER", h, None) == "no_secret_supplied"
+    assert resolve_entry("MEMBER", h, "") == "no_secret_supplied"
+    # ★반대편 — 실제로 **틀린** 것은 여전히 `reject`(실패 카운트를 받아야 한다).
+    assert resolve_entry("MEMBER", h, "wrong") == "reject"
+    assert resolve_entry("MEMBER", h, "pw") == "password"
+
+
+def test_five_outcomes_are_distinct() -> None:
+    """★다섯 결과가 **서로 다른 값**이다 — 뭉치면 호출부가 400/401/403 을 못 가른다."""
+    from app.services.sales.site_entry import ENTRY_OUTCOMES, resolve_entry
+
+    h = bcrypt.hashpw(b"pw", bcrypt.gensalt()).decode()
+    got = {
+        resolve_entry(None, None, None),
+        resolve_entry("MEMBER", None, None),
+        resolve_entry("MEMBER", h, "pw"),
+        resolve_entry("MEMBER", h, ""),
+        resolve_entry("MEMBER", h, "no"),
+    }
+    assert got == set(ENTRY_OUTCOMES), f"실측: {sorted(got)}"
+
+
+def test_router_maps_each_outcome_to_its_own_status() -> None:
+    """★배선 — 라우터가 **판정 값**으로 갈리고, 빈 비번을 **카운터 앞에서** 막는가.
+
+    ★`no_secret_supplied` 의 400 이 실패 카운트 **뒤**에 있으면 C1 이 그대로 남는다.
+    """
+    import ast
+    fn = _enter_fn()
+    calls = {c.func.id for c in ast.walk(fn)
+             if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+    assert "resolve_entry" in calls, "판정을 서비스 층에 위임하지 않는다"
+
+    # ★★축은 «`fail_count` 라는 낱말» 이 아니라 **카운터를 올려 쓰는 문**이다.
+    #   종전 판은 `src.find("fail_count")` 였는데 그 낱말이 **처음 나오는 자리**는
+    #   잠금 여부를 **읽는** SELECT 다(카운터를 안 건드린다). 그래서 올바른 코드가
+    #   «거부가 카운트 뒤에 있다» 로 신고됐다 — 위양성이고, 가드의 위양성도 결함이다.
+    guard_line = write_line = None
+    for n in ast.walk(fn):
+        if isinstance(n, ast.If) and "no_secret_supplied" in ast.unparse(n.test):
+            assert "HTTPException(400" in ast.unparse(n), (
+                "빈 비번을 400 이 아닌 것으로 답한다 — 「안 보냈다」가 「틀렸다」로 섞인다"
+            )
+            guard_line = n.lineno if guard_line is None else min(guard_line, n.lineno)
+        if (isinstance(n, ast.Constant) and isinstance(n.value, str)
+                and "INSERT INTO sales_site_login_attempts" in n.value):
+            write_line = n.lineno if write_line is None else min(write_line, n.lineno)
+    assert guard_line is not None, "빈 비번을 가르지 않는다 — 잠금 카운터를 소진한다"
+    assert write_line is not None, "실패 카운트를 **쓰는** 문을 못 찾았다 — 축이 죽었다"
+    assert guard_line < write_line, (
+        "빈 비번 거부가 **카운터 증가 뒤**에 있다 — 자동 시도가 계정을 잠근다"
+    )
+
+    # ★다섯 결과가 **서로 다른 상태코드**로 갈리는가(이름값을 하는 락).
+    src = ast.unparse(fn)
+    for outcome, status in (("forbidden", "403"), ("no_secret_supplied", "400")):
+        i = src.find(outcome)
+        assert i != -1, f"`{outcome}` 분기가 없다"
+        assert f"HTTPException({status}" in src, f"`{outcome}` 에 {status} 이 없다"
+    assert "HTTPException(401" in src, "틀린 비번의 401 이 사라졌다"
+
+
+def test_site_lookup_excludes_deleted_sites() -> None:
+    """★삭제된 현장은 진입 대상이 아니다(리뷰 M5).
+
+    형제 조회 3곳은 전부 `deleted_at` 을 거르는데 `_get_site` 만 안 걸었고,
+    비번 미설정 현장이 진입 가능해지면서 **삭제된 현장에 토큰 발급**이 열렸다.
+    """
+    import ast
+    for n in ast.walk(_tree()):
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "_get_site":
+            src = ast.unparse(n)
+            assert "deleted_at" in src, "삭제된 현장을 그대로 준다"
+            return
+    raise AssertionError("`_get_site` 를 찾지 못했다 — 축이 죽었다")
+
+
+def test_both_entry_paths_are_logged_by_one_helper() -> None:
+    """★감사가 **양방향**인가 — 한쪽만 로그하면 «비번으로 들어온 사람» 을 셀 수 없다(M4)."""
+    import ast
+    fn = _enter_fn()
+    calls = [c for c in ast.walk(fn)
+             if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+             and c.func.id == "_log_entry"]
+    assert len(calls) == 2, f"진입 로그가 {len(calls)}곳이다 — 두 경로 모두여야 한다"
+    auths = {a.value for c in calls for a in c.args
+             if isinstance(a, ast.Constant) and isinstance(a.value, str)}
+    assert auths == {"membership", "password"}, f"실측: {auths}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E. `password_set` — **모든** 현장에 실린다(리뷰 C1 프론트 게이팅의 입력)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_my_sites_carries_password_set_for_every_site() -> None:
+    """★목록이 «비번이 설정된 현장인가» 를 실어야 프론트가 자동 시도를 가를 수 있다.
+
+    ★축은 «키가 어딘가 있다» 가 아니라 **«모집단 전체에 붙는다»** 다.
+    `my_sites` 는 현장을 **세 갈래**로 모은다(멤버십 org · 소유 owner · 관리자 admin).
+    키를 한 갈래 안에서 붙이면 나머지 두 갈래는 `undefined` 가 되고, 모달은 «모른다» 로
+    떨어져 **비번이 설정된 현장에 다시 노크한다.** 그래서 `out` 전체를 도는 자리여야 한다.
+    """
+    import ast
+    fn = None
+    for n in ast.walk(_tree()):
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "my_sites":
+            fn = n
+            break
+    assert fn is not None, "`my_sites` 를 찾지 못했다 — 축이 죽었다"
+
+    # `password_set` 을 대입하는 자리를 찾고, 그 **바깥 for 가 `out` 을 돈다**는 것까지 본다.
+    def _sets_password_set(node) -> bool:
+        for a in ast.walk(node):
+            if isinstance(a, ast.Assign):
+                for t in a.targets:
+                    if (isinstance(t, ast.Subscript) and isinstance(t.slice, ast.Constant)
+                            and t.slice.value == "password_set"):
+                        return True
+        return False
+
+    assert _sets_password_set(fn), "`my_sites` 가 `password_set` 을 싣지 않는다"
+
+    over_out = [
+        f for f in ast.walk(fn)
+        if isinstance(f, ast.For) and _sets_password_set(f) and "out" in ast.unparse(f.iter)
+    ]
+    assert over_out, (
+        "`password_set` 이 `out` 전수 루프 밖에서 붙는다 — 소유·관리자 현장이 빠진다"
+    )
+
+    # 한 번의 쿼리로 받는가(현장 수만큼 왕복하면 목록이 느려진다).
+    src = ast.unparse(fn)
+    assert "sales_site_passwords" in src, "비번 설정 여부를 조회하지 않는다"
+    assert "ANY(:ids)" in src, "현장마다 따로 조회한다(N+1) — `IN`/`ANY` 한 번으로 받아라"

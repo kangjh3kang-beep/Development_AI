@@ -50,6 +50,17 @@
 필요한 현장에서는 그 시도가 **조용히 실패**해 입력창이 남는다(오류를 안 띄운다).
 ★«비었으면 보내지 마라» 는 클라 검사를 **뺐다** — 그 검사가 곧 차단이었다.
 
+### 2-4. 적대 리뷰 R3 반영 (2026-09-09 · 처방을 **지적된 자리 밖**까지)
+
+| # | 지적 | 처방 | 축을 어디까지 넓혔나 |
+|---|---|---|---|
+| **C1** | 자동 시도가 잠금 카운터를 소진한다 | 서버가 **카운터 앞에서** 400(`no_secret_supplied`) + 프론트가 `password_set===true` 면 **노크하지 않는다** | 그 입력을 만들려고 `/my-sites` 가 `password_set` 을 **한 쿼리로** 싣게 했다. 부수로 목록 라벨의 **거짓**이 드러났다 — 진입 전 현장 **전부**에 «2차 비밀번호» 를 그렸는데 11현장은 미설정이다 |
+| **C2** | 비멤버 모집단이 안 태워진다 | 멤버십 거부를 `resolve_entry(role,None,None)=="forbidden"` **판정 값**으로 | 종전 `if not role:` 한 줄은 `if role is None:` 변이가 **영원히 거짓**(비멤버는 `""`)이라 원리적으로 무잠금이었다 |
+| **M1** | 라우터 배선을 로컬에서 못 태운다 | 판정을 의존 없는 `site_entry.resolve_entry` 로 한 단계 더 내림(5치) | 라우터는 3.10 에서 임포트 불가라 **AST 로** 배선을 태운다 |
+| **M2** | `clearSite` 소비처 0건 | **배선했다** — `clearSiteToken` 이 그 현장 슬라이스를 함께 비운다 | 호출부(2곳)가 아니라 **`clearSiteToken` 안**에 뒀다. 토큰 폐기 = «볼 근거가 사라졌다» |
+| **M4** | 감사가 한쪽만 | `_log_entry()` 를 **양 경로**에서 부른다 | — |
+| **M5** | `_get_site` 만 `deleted_at` 없음 | **전역 스윕** — `resolve_site`(경로·헤더·서브도메인 진입점) · `_authorize_site_channel`(WS 합류)도 없었다 | `select(SalesSite)` **전수 파생** 락 + 사유 있는 면제 원장(죽은 면제도 실패) |
+
 ### 왜 회귀가 아닌가
 
 - 멤버십 가드·비번 검증 경로·rate-limit 을 **그대로** 둔다(추가·분기만).
@@ -64,6 +75,13 @@
   같은 파일을 두 브랜치에서 만지지 않는다). 볼트 사양의 **절반만** 한 것이다.
 - **`applyStatus` 배선** — 소비처 0건인 채로 둔다(`it.todo`).
 - **실 브라우저 전환 시나리오** — 스토어 단위로만 태웠고 실제 화면 전환은 안 재 봤다.
+- **`password_set` 의 라이브 값** — `/my-sites` 의 새 필드를 **라이브에 안 태웠다**(배포 전).
+  P1 의 «비번 설정 3현장» 은 `enter_site` 응답코드로 **간접 추정**한 값이고, 새 쿼리가
+  같은 3현장을 집는지는 **미측정**이다.
+- **`resolve_site`·`_authorize_site_channel` 의 삭제현장 거부** — 코드만 고쳤고 라이브에
+  삭제된 현장으로 요청을 넣어 보지는 **않았다**(삭제 현장을 만들지 않기 위해).
+- **면제 3건의 다운스트림 주장** — 유일 호출부를 `grep` 으로 셌다(`suggest.py:522` ·
+  `generation.py:130`). 동적 디스패치로 부르는 자리가 있으면 이 면제는 틀린다 — 미측정.
 
 ## 4. 되돌리기
 
@@ -80,13 +98,21 @@
 | **비번은 선택** | `str \| None` | 필수 | 같은 파일 `::test_password_is_optional_in_the_request_schema` |
 | **행위(두 모집단)** | 미설정 → 진입 | 설정됨 + 틀림 → 401 | 같은 파일 `::test_member_enters_when_no_password_is_set` · `::test_wrong_password_still_rejected_when_one_is_set` (CI 3.12 전용) |
 | **현장별 스토어** | 각 현장이 자기 것 | 미조회 현장에 남의 것 | `apps/web/store/__tests__/sales-store-site-scope.test.ts` 7건 |
+| **다섯 결과가 갈린다** | 5치 각각 | 뭉개짐 | `apps/api/tests/test_site_enter_membership_auth.py::test_five_outcomes_are_distinct` |
+| **빈 비번이 카운터를 안 쓴다** | 400 | 401+카운트 | 같은 파일 `::test_missing_secret_is_not_a_failed_attempt` · `::test_router_maps_each_outcome_to_its_own_status`(축 = **카운터를 쓰는 문**과의 순서) |
+| **비멤버 모집단** | 403 | 진입 | 같은 파일 `::test_non_member_is_forbidden` |
+| **감사 양방향** | 두 경로 모두 | 한쪽만 | 같은 파일 `::test_both_entry_paths_are_logged_by_one_helper` |
+| **`password_set` 전수** | 세 갈래 모두 | 한 갈래만 | 같은 파일 `::test_my_sites_carries_password_set_for_every_site` |
+| **삭제현장 전역** | 진입점 전수 | 한 자리만 | `apps/api/tests/test_site_lookup_soft_delete_sweep.py` 4건(모집단 11 · 면제 3 · 죽은 면제 실패) |
+| **모달 게이팅(두 모집단)** | 모르면 시도 | 아는데 노크 | `apps/web/components/sales-app/__tests__/site-enter-modal-password-gate.test.tsx` 4건 |
+| **`clearSite` 배선** | A 비워짐 | B 도 비워짐 | `apps/web/lib/__tests__/clear-site-token-drops-cached-units.test.ts` 4건 (축 = «불렸는가» 가 아니라 **«비었는가»**) |
 
 ### ★부채 (초록 안에 보이게 둔다)
 
 | 항목 | 왜 |
 |---|---|
 | `key={siteId}` remount | `it.todo` — #1022 가 그 파일을 편집 중 |
-| `applyStatus` 배선 0건 | `it.todo` — 주석의 거짓 주장은 사실로 낮췄다 |
+| `applyStatus` 배선 0건 | `it.todo` — 주석의 거짓 주장은 사실로 낮췄다. ★`clearSite` 는 R3 에서 **배선했다**(더 이상 부채가 아니다) |
 | **비번 설정된 3현장** | 여전히 비번을 요구한다. 사용자 결정이 «승인하면 비번 없이» 이므로 **그 3현장까지 없앨지는 결정 사항**으로 남긴다(2차 요소를 조용히 걷어내지 않으려고) |
 | 행위 락 2건 CI 전용 | 라우터가 `datetime.UTC`(3.11+) 의존을 끌고 온다. 같은 축 AST 락 4건이 로컬에서 돈다 |
 | 라이브 도달성 | 배포 전 |

@@ -142,9 +142,13 @@ async def _authorize_site_channel(user_id: str, site_id: str) -> bool:
                 cond = SalesSite.id == uuid.UUID(sid)
             except (ValueError, AttributeError, TypeError):
                 cond = SalesSite.site_code == sid
-            site = (await db.execute(select(SalesSite).where(cond))).scalar_one_or_none()
+            # ★삭제된 현장은 **없는 현장**이다(2026-09-09 · 전역 스윕). 이 함수는 WS 채널
+            #   합류를 여는 진입점이라, 빠지면 폐지된 현장의 실시간 채널이 계속 열린다.
+            site = (await db.execute(select(SalesSite).where(
+                cond, SalesSite.deleted_at.is_(None),
+            ))).scalar_one_or_none()
             if site is None:
-                return False  # 존재하지 않는 현장 → 거부.
+                return False  # 존재하지 않거나 삭제된 현장 → 거부.
 
             # ★User.id 는 UUID 컬럼이므로 토큰 sub(문자열)를 uuid.UUID 로 명시 변환해 비교한다
             #   (드라이버/컬럼 타입에 따른 암묵 캐스팅에 의존하지 않음 — 형식오류 sub 는 거부).

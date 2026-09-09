@@ -80,9 +80,15 @@ describe("현장 전환 — 스토어가 현장별로 갈리는가", () => {
   it("★현장을 떠나면 그 현장 것만 비운다(다른 현장은 남는다)", () => {
     useSalesStore.getState().setUnits(SITE_A, unitsA);
     useSalesStore.getState().setUnits(SITE_B, unitsB);
+    useSalesStore.getState().select(SITE_A, unitsA[0]);
+    useSalesStore.getState().select(SITE_B, unitsB[0]);
     useSalesStore.getState().clearSite(SITE_A);
     expect(useSalesStore.getState().unitsOf(SITE_A)).toEqual([]);
     expect(useSalesStore.getState().unitsOf(SITE_B)).toHaveLength(1);
+    // ★**선택도 함께 비워야 한다** — 종전 단언은 `units` 절반만 봐서, `selectedBySite` 를
+    //   안 지우는 변이가 통과했다(그러면 `Unit360Panel` 이 권한 없는 세대를 계속 띄운다).
+    expect(useSalesStore.getState().selectedOf(SITE_A)).toBeUndefined();
+    expect(useSalesStore.getState().selectedOf(SITE_B)?.id).toBe("b1");
   });
 });
 

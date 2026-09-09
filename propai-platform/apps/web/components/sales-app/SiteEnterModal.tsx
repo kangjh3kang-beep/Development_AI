@@ -32,9 +32,16 @@ interface Props {
   onClose: () => void;
   /** 진입 성공 시 호출(메타 전달). 미지정 시 워크스페이스로 라우팅. */
   onEntered?: (res: EnterResponse) => void;
+  /** 이 현장에 2차 비밀번호가 **설정돼 있나**(`GET /sales/my-sites`·`/role` 의 `password_set`).
+   *
+   * ★`true` 면 **자동 시도를 하지 않는다**(2026-09-09 리뷰 C1). 모르면(`undefined`) 시도한다 —
+   *   서버가 카운터 **앞에서** 400 으로 막으므로 잠금은 소진되지 않지만, 아는 경우에는
+   *   애초에 두드리지 않는 것이 옳다(네트워크 왕복·서버 로그도 사건이다).
+   */
+  passwordSet?: boolean;
 }
 
-export default function SiteEnterModal({ locale, siteId, siteName, open, onClose, onEntered }: Props) {
+export default function SiteEnterModal({ locale, siteId, siteName, open, onClose, onEntered, passwordSet }: Props) {
   const router = useRouter();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -55,11 +62,13 @@ export default function SiteEnterModal({ locale, siteId, siteName, open, onClose
     setPassword("");
     setErr("");
     setTimeout(() => inputRef.current?.focus(), 50);
-    if (autoTried.current !== siteId) {
+    // ★비번이 **설정된 것으로 알려진** 현장에는 노크하지 않는다(리뷰 C1).
+    //   `undefined`(모름)와 `false` 는 시도한다 — 시도해야 알 수 있는 경우다.
+    if (passwordSet !== true && autoTried.current !== siteId) {
       autoTried.current = siteId;
       void submitRef.current?.({ silent: true });
     }
-  }, [open, siteId]);
+  }, [open, siteId, passwordSet]);
 
   // ESC 로 닫기 — 열려 있는 동안만 등록한다(닫힌 모달이 ESC 를 가로채지 않게).
   // ★비밀번호를 입력하던 중 ESC 를 누르면 입력은 사라진다. 이 모달은 열릴 때마다 입력을
@@ -132,7 +141,16 @@ export default function SiteEnterModal({ locale, siteId, siteName, open, onClose
 
         <div className="p-5">
           <p className="mb-4 text-xs leading-relaxed text-[var(--text-secondary)]">
-            <b className="text-[var(--text-primary)]">{siteName}</b> 현장의 2차 비밀번호를 입력하세요.
+            {passwordSet === false ? (
+              <>
+                <b className="text-[var(--text-primary)]">{siteName}</b> 현장은 <b className="text-[var(--text-primary)]">승인된 멤버십으로 진입</b>합니다.
+                2차 비밀번호는 설정돼 있지 않습니다.
+              </>
+            ) : (
+              <>
+                <b className="text-[var(--text-primary)]">{siteName}</b> 현장의 2차 비밀번호를 입력하세요.
+              </>
+            )}
           </p>
 
           <input
