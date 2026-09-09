@@ -389,3 +389,40 @@ R2 지적으로 `desk_appraisal()` 층을 잠갔더니 R3 가 **그 바깥 3곳*
 
 프론트 생존 3건은 전부 **표현 계층**이라 잠그지 않는다(§30):
 `key={line}`(React 키) · `className`(안내 줄 글자색) — 계약이 아니라 표시다.
+
+---
+
+## §10. 성장루프 연결 — **배포 후 재측정 조건**(2026-09-09 조회)
+
+라이브 성장루프(`/api/v1/growth/insights?sort=created_at&limit=500`)에서 **warn 64건** 중
+**`recurring_verify_error` 4건이 전부 `desk_appraisal`** 이다:
+
+    [warn] desk_appraisal 재발 검증오류 '수치불일치' — 시간당 5.0건(총 5건)   2026-09-04T10:47
+    [warn] desk_appraisal 재발 검증오류 '내부모순'   — 시간당 5.0건(총 5건)   2026-09-04T10:47 · 10:05
+
+**관측**: 그 두 분류를 발행하는 곳은 `app/services/verification/verifier_service.py` 이고,
+그 서비스는 desk_appraisal 산출물을 검증한다.
+
+**추론(반증 조건 포함)**: 이 PR 이 고친 결함 클래스가 정확히 그 두 이름과 겹친다 —
+· **내부모순** = 라벨이 데이터와 모순(전국 대체값을 「해당 지역 R-ONE 실데이터」라 말함)
+· **수치불일치** = 연간 변동률이 창 밖에서 배수로 부풂(실측 12.0% ↔ 정답 6.0%)
+**반증 조건**: 저장된 이슈가 다른 필드(예: 용적률·면적 — `verifier_service.py:125,132` 의
+휴리스틱 두 개)를 가리키면 이 추론은 틀렸다.
+
+**미측정 — 그리고 왜 못 쟀는지**: 인사이트는 **PII 방지로 `claim` 을 저장하지 않는다**
+(`verifier_service.py:63` — *"유형만(예: '수치불일치') — claim 제외"*). 그래서 **어느 필드가
+걸렸는지 원리적으로 조회 불가**다. 「권한 부족」이 아니라 **장치 부재**다.
+
+**⇒ 배포 후 재측정(이 PR 의 효과를 재는 유일한 라이브 축)**
+
+```bash
+TOK=$(curl -s -X POST https://api.4t8t.net/api/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"admin@4t8t.net","password":"admin1234"}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
+curl -s -H "Authorization: Bearer $TOK" \
+  'https://api.4t8t.net/api/v1/growth/insights?sort=created_at&limit=500' \
+ | python3 -c 'import json,sys;d=json.load(sys.stdin);ws=[i for i in (d if isinstance(d,list) else d.get("items",[])) if i.get("insight_type")=="recurring_verify_error"];print(len(ws));[print(i["created_at"],i["narrative"][:80]) for i in ws[:5]]'
+```
+· **판정**: 배포 후 새 창에서 `desk_appraisal` 재발 검증오류가 **줄어드는가**.
+· ★**줄지 않아도 이 PR 이 틀렸다는 뜻은 아니다** — 위 두 휴리스틱(용적률·면적)이 원인일 수 있고,
+  그 축은 이 PR 이 건드리지 않았다. **줄면 확증, 안 줄면 미상**(비대칭 증거).
+· ★`0건`을 보면 **토큰 만료부터** 의심하라(만료 시 401 이 아니라 0건이 온다).
