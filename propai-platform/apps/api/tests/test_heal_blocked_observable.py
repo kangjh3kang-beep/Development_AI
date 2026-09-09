@@ -21,7 +21,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -60,7 +60,7 @@ class _FakeDB:
         return _Res(scalar=0, rows=[])
 
 
-NOW = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 9, 12, 0, tzinfo=UTC)
 # (severity, service, payload, created_at)
 ACTION_ROW = ("warn", "site_analysis",
               {"action_id": "a1", "action_type": "threshold_relax", "executed": True}, NOW)
