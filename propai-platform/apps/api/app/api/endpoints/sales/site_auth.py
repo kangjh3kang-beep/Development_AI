@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -35,6 +36,8 @@ from app.api.deps import get_current_user, get_db
 from app.api.deps_sales import _SUPERADMIN_ROLES, _node_priority
 from app.core.config import settings
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
+
+logger = logging.getLogger(__name__)
 
 site_auth_router = APIRouter(tags=["sales-auth"])
 
@@ -187,7 +190,13 @@ class SetPasswordRequest(BaseModel):
 
 
 class EnterRequest(BaseModel):
-    password: str
+    """★`password` 는 **선택**이다(2026-09-09).
+
+    승인된 멤버십이 곧 인증이다 — 아래 `enter_site` 독스트링 참조.
+    현장이 2차비번을 **설정해 둔 경우에만** 이 값이 검증된다.
+    """
+
+    password: str | None = None
 
 
 # ── 1) 현장 2차비번 설정/변경 ────────────────────────────────────────────────
@@ -297,6 +306,20 @@ async def enter_site(site_id: str, body: EnterRequest,
         raise HTTPException(403, "이 현장의 멤버가 아닙니다")
 
     now = datetime.now(UTC)
+    # ★★**승인이 곧 인증이다**(2026-09-09). 위 `_resolve_role` 이 이미 «이 현장의 멤버인가» 를
+    #   물었고, 멤버십은 **관리자·상위 레벨이 승인해야** 생긴다(`sales_org_nodes`).
+    #
+    #   ★라이브 실측(2026-09-09 · 읽기 전용 프로브): **14현장 중 11현장이 비번 미설정**이라
+    #     그 현장들은 «2차비밀번호가 아직 설정되지 않았습니다» 409 로 **멤버여도 진입이 막혀
+    #     있었다.** 워크스페이스 전체와 등록신청 승인 화면이 그 뒤에 있다.
+    #
+    #   ★볼트 R5(채택 · Zoom 벤치마킹): *"passcode(공유 설계) ↔ password(공유 금지) 구분 —
+    #     우리는 **공유되도록 설계된 값을 비밀번호로 저장 중**"*. 현장 2차비번은 그 현장 사람
+    #     모두가 아는 **공유 비밀**이고 회전되지 않는다. 「관리자가 개인에게 부여한 멤버십」보다
+    #     약한 인증을 그 위에 강제하고 있었던 셈이다.
+    #
+    #   ⇒ **설정돼 있으면 요구하고, 없으면 멤버십으로 충분하다.** 비번을 지우지는 않는다 —
+    #     이미 설정한 현장(실측 3곳)의 2차 요소를 **조용히 걷어내지 않기** 위해서다.
     # rate-limit: 잠금 여부 확인
     att = (await db.execute(text(
         "SELECT fail_count, locked_until FROM sales_site_login_attempts WHERE site_id=:s AND user_id=:u"
@@ -313,7 +336,26 @@ async def enter_site(site_id: str, body: EnterRequest,
         "SELECT password_hash FROM sales_site_passwords WHERE site_id=:s"
     ), {"s": sid})).first()
     if not pw:
-        raise HTTPException(409, "현장 2차비밀번호가 아직 설정되지 않았습니다. 관리자에게 문의하세요")
+        # ★비번 미설정 현장 — **승인된 멤버십으로 진입한다**(종전엔 409 로 막혔다).
+        #   passwordless 진입은 감사에 남긴다(누가 무엇으로 들어왔는지 구별 가능해야 한다).
+        await db.execute(text(
+            "DELETE FROM sales_site_login_attempts WHERE site_id=:s AND user_id=:u"),
+            {"s": sid, "u": str(user.id)})
+        await db.commit()
+        logger.info("현장 진입(비번 미설정 · 멤버십 인증): site=%s user=%s role=%s",
+                    sid, user.id, role)
+        token = issue_site_token(user.id, getattr(user, "tenant_id", None), site.id, role, org_path)
+        return {
+            "site_token": token,
+            "token_type": "bearer",
+            "expires_in": _SITE_TOKEN_HOURS * 3600,
+            "site_id": sid,
+            "role": role,
+            "role_label": _ROLE_LABEL.get(role, role),
+            "features": _features(role),
+            # ★어떤 인증으로 들어왔는지 **말한다** — 두 경로가 같은 응답이면 진단이 불가능하다.
+            "auth": "membership",
+        }
 
     ok = False
     try:
@@ -349,6 +391,7 @@ async def enter_site(site_id: str, body: EnterRequest,
         "role": role,
         "role_label": _ROLE_LABEL.get(role, role),
         "features": _features(role),
+        "auth": "password",
     }
 
 

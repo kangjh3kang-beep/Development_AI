@@ -42,12 +42,22 @@ export default function SiteEnterModal({ locale, siteId, siteName, open, onClose
   const inputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
+  // ★★모달이 열리면 **비번 없이 먼저 시도**한다(2026-09-09).
+  //   라이브 14현장 중 **11현장이 비번 미설정**이라, 승인된 멤버는 아무것도 입력할 필요가 없다.
+  //   비번이 설정된 현장(실측 3곳)에서는 이 시도가 조용히 실패하고 입력창이 그대로 남는다
+  //   — 사용자는 아무 오류도 보지 않는다(`silent`).
+  //   ★`submitRef` 로 최신 함수를 잡는다 — effect 의존에 `submit` 을 넣으면 매 렌더 재실행된다.
+  const autoTried = useRef("");
+  const submitRef = useRef<((o?: { silent?: boolean }) => Promise<void>) | null>(null);
+
   useEffect(() => {
-    if (open) {
-      setPassword("");
-      setErr("");
-      // 모바일·데스크 모두 즉시 입력 포커스
-      setTimeout(() => inputRef.current?.focus(), 50);
+    if (!open) return;
+    setPassword("");
+    setErr("");
+    setTimeout(() => inputRef.current?.focus(), 50);
+    if (autoTried.current !== siteId) {
+      autoTried.current = siteId;
+      void submitRef.current?.({ silent: true });
     }
   }, [open, siteId]);
 
@@ -61,19 +71,16 @@ export default function SiteEnterModal({ locale, siteId, siteName, open, onClose
   //   훅의 초기 포커스와 저자 의도가 일치한다(빼앗는 회귀가 아니다).
   useModalFocus(bodyRef, open);
 
-  if (!open) return null;
-
-  const submit = async () => {
-    if (!password) {
-      setErr("현장 비밀번호를 입력하세요.");
-      return;
-    }
+  const submit = async (opts?: { silent?: boolean }) => {
+    // ★비번은 **선택**이다(2026-09-09). 서버가 «이 현장에 비번이 설정돼 있나» 로 판정한다 —
+    //   라이브 14현장 중 11현장이 미설정이라 종전엔 멤버여도 409 로 진입이 막혀 있었다.
+    //   그래서 «비었으면 보내지 마라» 는 클라 검사를 **뺀다**(그 검사가 곧 차단이었다).
     setBusy(true);
     setErr("");
     try {
       const res = await apiClient.post<EnterResponse>(
         `/sales/sites/${siteId}/enter`,
-        { body: { password } },
+        { body: password ? { password } : {} },
       );
       storeSiteToken(siteId, res.site_token, res.expires_in, {
         role: res.role,
@@ -82,11 +89,16 @@ export default function SiteEnterModal({ locale, siteId, siteName, open, onClose
       if (onEntered) onEntered(res);
       else router.push(`/${locale}/sales/sites/${siteId}/workspace`);
     } catch (e) {
-      setErr(friendlyError(e));
+      // ★자동 시도(모달이 열리자마자)는 **조용히 실패**한다 — 비번이 필요한 현장이면
+      //   사용자가 아직 아무것도 안 했는데 빨간 오류가 뜨면 안 된다.
+      if (!opts?.silent) setErr(friendlyError(e));
     } finally {
       setBusy(false);
     }
   };
+  submitRef.current = submit;
+
+  if (!open) return null;
 
   return (
     <div
@@ -150,7 +162,7 @@ export default function SiteEnterModal({ locale, siteId, siteName, open, onClose
               취소
             </button>
             <button
-              onClick={submit}
+              onClick={() => void submit()}
               disabled={busy}
               className="flex-[2] rounded-xl bg-[var(--accent-strong)] px-4 py-3.5 text-sm font-black text-white shadow-[var(--shadow-sm)] transition hover:opacity-90 active:scale-95 disabled:opacity-50"
             >
