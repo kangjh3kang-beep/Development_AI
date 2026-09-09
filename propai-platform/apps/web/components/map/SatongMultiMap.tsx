@@ -1289,13 +1289,28 @@ type MarketMarkerLeaflet = {
  * ★그리고 이제 **진짜 Leaflet 으로 행위 검증**된다 — #1024 가 목이 필요 없음을 실증했다
  *   (`leaflet` 이 의존성에 선언돼 있고 jsdom 에서 그대로 돈다).
  *
- * ★`addTo(group)` 과 `bounds.extend` 는 **effect 에 남긴다** — 레이어·경계는 effect 관심사다.
+ * ★★2026-09-09 2차(적대 리뷰 MAJOR-1·3) — **`addTo(group)` 과 라벨 버짓 판정도 여기로 들인다.**
+ *   초판은 *"레이어·경계는 effect 관심사"* 라며 그 둘을 밖에 뒀는데, 그건 **선언으로 정당화한
+ *   무잠금**이었다. 실측: `marker.addTo(group)` 한 줄을 지우면 **실거래 마커가 하나도 안 뜨는데
+ *   테스트는 초록**이었다. 그리고 `permanent: ordinal < typeLabelLimit`(*"한 유형이 전역 라벨
+ *   버짓을 독식하지 않게"* 라는 **선언된 계약**)도 단언이 0건이었다.
+ *   ⇒ ***태울 수 없는 자리에 배선을 남기고 「관심사 분리」로 부르지 않는다.***
+ *   `bounds.extend` 만 effect 에 남는다 — 그건 **누적 상태**라 마커 하나의 관심사가 아니다.
  */
 export function buildMarketMarker(
   L: MarketMarkerLeaflet,
   item: SatongMarketGroup,
   entry: { type: string; color: string },
-  opts: { kind: "trade" | "rent"; permanent: boolean; pyeongFirst: boolean },
+  opts: {
+    kind: "trade" | "rent";
+    pyeongFirst: boolean;
+    /** 이 유형에서 몇 번째 마커인가(0부터). 라벨 버짓 판정의 입력. */
+    ordinal: number;
+    /** 이 유형에 배정된 상시 라벨 수. `ordinal < typeLabelLimit` 이면 상시. */
+    typeLabelLimit: number;
+    /** 붙일 레이어 그룹. 넘기면 여기서 `addTo` 한다(★그래야 그 배선이 태워진다). */
+    group?: unknown;
+  },
 ): unknown {
   const radius = Math.min(18, 7 + Math.round(Math.sqrt(Math.max(1, item.count)) * 1.5));
   const marker = L.circleMarker([item.lat, item.lon], {
@@ -1319,10 +1334,15 @@ export function buildMarketMarker(
     perPyeong10k: item.price_per_pyeong_10k,
     pyeongFirst: opts.pyeongFirst,
   });
+  // ★라벨 버짓 — *"한 유형이 전역 라벨 버짓을 독식하지 않게"* 라는 계약이 여기서 판정된다.
+  //   ★★`bindPopup` 이 `bindSatongLabel` 보다 **먼저** 와야 한다 — `bindSatongLabel` 이
+  //     `getPopup()` 유무로 라벨을 클릭 가능하게 할지 정하기 때문이다(#1024). 순서 의존이라
+  //     아래 락이 `tooltip.options.interactive` 로 그것까지 본다.
   bindSatongLabel(marker as never, `${item.name || "실거래"}${priceTag}`, {
-    permanent: opts.permanent,
+    permanent: opts.ordinal < opts.typeLabelLimit,
     offsetY: radius,
   });
+  if (opts.group) (marker as unknown as { addTo: (g: unknown) => unknown }).addTo(opts.group);
   return marker;
 }
 
@@ -3006,12 +3026,13 @@ export function SatongMultiMap({
         //   `"apt"` 로 바꿔치기하면 **모든 마커가 「아파트」인데 2412건이 초록**이었다.
         //   `entry` 를 통째로 넘겨 **바꿔치기할 지역변수를 없앤다** — 동일성은
         //   `buildMarketMarker` 안에서 진짜 Leaflet 으로 검증된다.
-        const marker = buildMarketMarker(L, item, entry, {
+        buildMarketMarker(L, item, entry, {
           kind,
-          permanent: ordinal < typeLabelLimit,
           pyeongFirst: pricePerPyeongOn,
-        }) as { addTo: (g: unknown) => unknown };
-        marker.addTo(group);
+          ordinal,
+          typeLabelLimit,
+          group,
+        });
         bounds.extend([item.lat, item.lon]);
       });
 

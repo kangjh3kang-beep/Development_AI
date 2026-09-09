@@ -14,7 +14,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildMarketMarker, type SatongMarketGroup } from "@/components/map/SatongMultiMap";
 import { MARKET_TRADE_TYPES } from "@/lib/satong-map-layers";
@@ -67,28 +67,45 @@ const readMarker = (m: unknown) => {
 
 /** ★`permanent` 툴팁은 **맵에 올려야** 열린다(레이어가 add 될 때 `openTooltip` 이 돈다).
  *  내 초판은 맵 없이 만들고 `getElement()` 를 읽어 **null 을 보고 「라벨이 안 그려졌다」로 오독**했다. */
+const 열린맵: ReturnType<LeafletNS["map"]>[] = [];
+const 열린엘: HTMLElement[] = [];
+afterEach(() => {
+  // ★정리는 **teardown 에서** — 본문에 두면 단언이 먼저 터졌을 때 도달하지 못한다
+  //   (형제 하네스 `lib/__tests__/satong-label-click.test.ts` 가 그렇게 하고 있다).
+  for (const m of 열린맵.splice(0)) { try { m.remove(); } catch { /* noop */ } }
+  for (const e of 열린엘.splice(0)) e.remove();
+});
+
 const onMap = () => {
   const el = document.createElement("div");
   Object.defineProperty(el, "clientWidth", { value: 800 });
   Object.defineProperty(el, "clientHeight", { value: 600 });
   document.body.appendChild(el);
-  return L.map(el, { center: [37.6, 127.3], zoom: 15, attributionControl: false });
+  const m = L.map(el, { center: [37.6, 127.3], zoom: 15, attributionControl: false });
+  열린맵.push(m); 열린엘.push(el);
+  return m;
 };
 
-const build = (
-  key: string,
-  over: Partial<SatongMarketGroup> = {},
-  permanent = true,
-  map?: ReturnType<LeafletNS["map"]>,
-) => {
-  const m = buildMarketMarker(L as never, { ...그룹, ...over }, entryOf(key), {
-    kind: "trade",
-    permanent,
-    pyeongFirst: false,
+type BuildOpts = Partial<{
+  kind: "trade" | "rent";
+  pyeongFirst: boolean;
+  ordinal: number;
+  typeLabelLimit: number;
+  group: unknown;
+}>;
+
+const mk = (key: string, over: Partial<SatongMarketGroup> = {}, o: BuildOpts = {}) =>
+  buildMarketMarker(L as never, { ...그룹, ...over }, entryOf(key), {
+    kind: o.kind ?? "trade",
+    pyeongFirst: o.pyeongFirst ?? false,
+    // 기본은 «상시 라벨» — `ordinal(0) < typeLabelLimit(1)`.
+    ordinal: o.ordinal ?? 0,
+    typeLabelLimit: o.typeLabelLimit ?? 1,
+    group: o.group,
   });
-  if (map) (m as { addTo: (x: unknown) => unknown }).addTo(map);
-  return readMarker(m);
-};
+
+const build = (key: string, over: Partial<SatongMarketGroup> = {}, o: BuildOpts = {}) =>
+  readMarker(mk(key, over, o));
 
 describe("★배선 동일성 — 팝업 유형과 마커 색이 **같은 entry** 에서 나온다", () => {
   it("★★두 모집단 — 같은 그룹이 entry 에 따라 **유형도 색도** 갈린다", () => {
@@ -133,16 +150,82 @@ describe("★배선 동일성 — 팝업 유형과 마커 색이 **같은 entry*
     expect(build("apt").bubbling).toBe(false);
   });
 
+  it("★★MAJOR-1 — 마커가 **레이어에 실제로 붙는다**(안 붙으면 지도에 하나도 안 뜬다)", () => {
+    // ★★적대 리뷰: 초판은 `addTo(group)` 을 *"레이어는 effect 관심사"* 라며 밖에 뒀는데,
+    //   그 한 줄을 지우면 **실거래 마커가 하나도 안 뜨는데 2,103건이 초록**이었다(SURVIVED).
+    //   ***태울 수 없는 자리에 배선을 남기고 「관심사 분리」로 부르지 않는다.***
+    const group = L.layerGroup();
+    expect(group.getLayers().length, "공허 진리 가드 — 시작이 0이어야 증가가 의미를 갖는다").toBe(0);
+    mk("apt", {}, { group });
+    expect(group.getLayers().length, "마커가 레이어에 안 붙었다 — 지도에 아무것도 안 뜬다").toBe(1);
+    mk("land", {}, { group });
+    expect(group.getLayers().length, "두 번째 마커가 안 붙었다").toBe(2);
+  });
+
+  it("★대칭 — `group` 을 안 주면 **붙이지 않는다**(«항상 붙인다» 배제)", () => {
+    const group = L.layerGroup();
+    mk("apt", {}, {});
+    expect(group.getLayers().length).toBe(0);
+  });
+
+  it("★★MAJOR-3 — 라벨 버짓이 판정된다(`ordinal < typeLabelLimit`)", () => {
+    // ★*"한 유형이 전역 라벨 버짓을 독식하지 않게"* 라는 **선언된 계약**인데 단언이 0건이었다.
+    const map = onMap();
+    // 버짓 안 → 상시(DOM 존재)
+    expect(build("apt", {}, { group: map, ordinal: 0, typeLabelLimit: 3 }).tooltipText ?? "").toContain(
+      "화도읍 창현리 736-1",
+    );
+    // ★두 모집단 — 버짓 밖 → hover(열기 전엔 DOM 없음)
+    expect(
+      build("apt", {}, { group: map, ordinal: 3, typeLabelLimit: 3 }).tooltipText,
+      "버짓을 넘겼는데 상시 라벨이다 — 라벨 스팸",
+    ).toBeNull();
+    // ★경계 — 정확히 `<` 인가(`<=` 면 하나 더 샌다)
+    expect(build("apt", {}, { group: map, ordinal: 2, typeLabelLimit: 3 }).tooltipText ?? "").toContain(
+      "화도읍",
+    );
+  });
+
+  it("★★MAJOR-2 — `pyeongFirst` 가 라벨 표기 **순서를 바꾼다**(한쪽만 재면 무잠금)", () => {
+    const map = onMap();
+    const 총액먼저 = build("apt", {}, { group: map, pyeongFirst: false }).tooltipText ?? "";
+    const 평당먼저 = build("apt", {}, { group: map, pyeongFirst: true }).tooltipText ?? "";
+    expect(총액먼저, "가격 표기가 비었다 — 아래 대조가 공허하다").not.toBe("");
+    expect(평당먼저, "`pyeongFirst` 가 라벨에 아무 영향이 없다 — 배선이 끊겼다").not.toBe(총액먼저);
+  });
+
+  it("★★전월세 모집단 — `kind:\"rent\"` 도 돈다(매매만 태우면 절반이 샌다)", () => {
+    const 월세 = build("apt", { avg_deposit_10k: 1000, avg_monthly_10k: 50 }, { kind: "rent" });
+    expect(월세.html, "전월세 팝업이 보증금 축을 안 그린다").toContain("보증금");
+    expect(월세.html, "전월세인데 유형이 안 실렸다").toContain("아파트");
+  });
+
+  it("★순서 의존 — `bindPopup` 이 라벨보다 **먼저**여야 라벨이 클릭 가능해진다(#1024)", () => {
+    // `bindSatongLabel` 이 `getPopup()` 유무로 interactive 를 정한다. 순서가 뒤집히면
+    // 라벨 클릭이 다시 **필지 선택**으로 샌다 — 사용자 신고③의 그 결함이다.
+    const m = mk("apt", {}, {}) as { getTooltip: () => { options: { interactive?: boolean } } };
+    expect(m.getTooltip().options.interactive, "라벨이 클릭 불가다 — bindPopup 순서가 뒤집혔나?").toBe(true);
+  });
+
   it("★라벨 — 이름과 가격이 실리고 `permanent` 가 옵션대로다", () => {
     const map = onMap();
-    const 상시 = build("apt", {}, true, map);
+    const 상시 = build("apt", {}, { group: map });
     expect(상시.tooltipText ?? "", "상시 라벨이 안 그려졌다").toContain("화도읍 창현리 736-1");
     expect(상시.tooltipText ?? "", "가격이 라벨에 안 실렸다").toMatch(/8,250만|8250/);
     // ★대비 — hover 라벨은 열기 전엔 DOM 이 없다. 그 차이가 `permanent` 배선의 증거다
     //   (한쪽만 재면 «항상 상시» 도 통과한다).
-    expect(build("apt", {}, false, map).tooltipText, "permanent:false 인데 라벨이 이미 떠 있다").toBeNull();
-    map.remove();
+    expect(build("apt", {}, { group: map, ordinal: 5, typeLabelLimit: 3 }).tooltipText, "permanent:false 인데 라벨이 이미 떠 있다").toBeNull();
   });
+
+  // ★★부채를 **초록 안에** 남긴다(§C-13). 계획서가 `it.todo` 를 약속했는데 초판은 **산문에만**
+  //   적고 코드에 0건이었다 — 적대 리뷰가 산출물로 잡았다(§F-24).
+  it.todo(
+    "★형제 마커의 동일성 축 — **미측정이 아니라 실측 SURVIVED ×2**(2026-09-09 적대 리뷰): " +
+      "분양 `status` 를 \"미정\"으로 고정 → 386파일 3528건 초록 · POI 색을 하나로 고정 → 같음. " +
+      "★대조군: 같은 도구·스코프에서 실거래 축 변이는 CAUGHT 다(도구 사망 아님). " +
+      "★`presalePopupHtml`·`auctionPopupHtml` 은 **export 조차 안 돼** 지금 구조로는 행위 검증 불가 — " +
+      "별건 PR 에서 이 함수와 같은 형태로 꺼낸다",
+  );
 });
 
 describe("★호출부 배선 — effect 가 `entry` 를 **통째로** 넘긴다(소스 락 · 약함을 명시)", () => {
