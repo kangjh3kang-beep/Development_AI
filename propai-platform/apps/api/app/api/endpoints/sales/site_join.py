@@ -52,8 +52,9 @@ from app.services.sales.org.join import (
     SponsorNotEligibleError,
     SponsorNotFoundError,
     link_membership,
+    prepare_join_request,
+    reload_sponsor_node,
     resolve_approver_node,
-    resolve_sponsor_node,
 )
 from app.services.sales.transition import claim_status_transition
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
@@ -181,8 +182,10 @@ class JoinRequestBody(BaseModel):
       (남의 현장 조직도를 보여 주지 않으려고).
     """
 
-    sponsor_email: str = Field(min_length=3, max_length=320,
-                               description="나를 이 현장에 부른 담당자의 이메일(희망 직속 상위)")
+    sponsor_email: str | None = Field(
+        default=None, max_length=320,
+        description="나를 이 현장에 부른 담당자의 이메일(희망 직속 상위). "
+                    "★조직도가 있는 현장에서는 **필수** — 서버가 그 현장 상태로 판정한다.")
     message: str | None = Field(default=None, max_length=1000)
 
 
@@ -228,9 +231,9 @@ async def create_join_request(site_id: uuid.UUID, body: JoinRequestBody,
     # ★`ON CONFLICT DO NOTHING` — SELECT 와 INSERT 사이에 남이 끼어들면(두 탭·두 기기)
     #   부분 유니크 인덱스가 `IntegrityError` 를 던져 **정당한 재전송이 500** 이 됐다.
     #   («유일성 제약은 정당한 멱등 재전송을 거부한다» — 저장소가 이미 데인 형태.)
-    # ★sponsor 를 **여기서** 확정한다(승인 시점이 아니라). 못 찾으면 400 — 신청 자체를 안 만든다.
+    # ★sponsor 확정은 **서비스 층**이 한다(조직도 유무로 갈라서). 여기 남는 것은 HTTP 매핑뿐.
     try:
-        sponsor = await resolve_sponsor_node(db, site_id, body.sponsor_email)
+        sponsor_id = await prepare_join_request(db, site_id, body.sponsor_email)
     except SponsorNotEligibleError as e:
         raise HTTPException(409, str(e)) from e
     except SponsorNotFoundError as e:
@@ -240,7 +243,7 @@ async def create_join_request(site_id: uuid.UUID, body: JoinRequestBody,
         "INSERT INTO sales_site_join_requests (site_id, user_id, message, sponsor_node_id) "
         "VALUES (:s, :u, :m, :sp) ON CONFLICT DO NOTHING RETURNING id"),
         {"s": str(site_id), "u": str(user.id), "m": body.message,
-         "sp": str(sponsor.id)})).first()
+         "sp": str(sponsor_id) if sponsor_id else None})).first()
     if row is None:
         # 경쟁에서 졌다 — 남이 만든 그 신청을 **그대로 돌려준다**(터뜨리지 않는다).
         row = (await db.execute(text(
@@ -303,21 +306,6 @@ async def list_join_requests(site_id: uuid.UUID, status: str = "pending",
     } for r in rows], "count": len(rows)}
 
 
-async def _sponsor_of(db: AsyncSession, sponsor_node_id):
-    """신청에 박힌 sponsor 노드를 **승인 시점에 다시 확인**한다.
-
-    ★신청 후 승인 전에 그 사람이 해촉될 수 있다. 죽은 노드를 부모로 쓰면 고아 체인이 생기므로,
-      살아 있지 않으면 `None` 을 돌려 `link_membership` 의 **보류 경로**로 떨어뜨린다
-      (조용히 승인자 노드로 바꿔치기하지 **않는다** — 그러면 클릭 순서 의존이 되살아난다).
-    """
-    if sponsor_node_id is None:
-        return None
-    return (await db.execute(select(SalesOrgNode).where(
-        SalesOrgNode.id == sponsor_node_id,
-        SalesOrgNode.active.is_(True),
-        SalesOrgNode.deleted_at.is_(None)))).scalars().first()
-
-
 class DecideBody(BaseModel):
     approve: bool
     note: str | None = Field(default=None, max_length=1000)
@@ -374,8 +362,29 @@ async def decide_join_request(request_id: uuid.UUID, body: DecideBody,
             return {"request_id": str(request_id), "status": new_status,
                     "idempotent": True, "membership_linked": False,
                     "membership_reason": "IDEMPOTENT_NO_CHANGE"}
-        retry_reason = await link_membership(db, site_id, applicant_id, approver_node,
-                                             sponsor_node=await _sponsor_of(db, sponsor_node_id))
+
+        # ★★재시도도 **전이로 만든다**(2026-09-09 R3 리뷰 C-2).
+        #   앞 판은 이 분기에 상태 전이문이 **아예 없어** CAS 를 안 탔다 — 즉 이 PR 이 만든
+        #   `claim_status_transition` 이 막으려던 경쟁을 **새 문으로 되살렸다.**
+        #   두 승인자가 동시에(또는 더블클릭) 재승인하면 둘 다 `link_membership` 에 들어가고,
+        #   `sales_org_nodes` 에 `(site_id,user_id)` UNIQUE 가 없어 `create_node` 가 **두 번** 돈다
+        #   ⇒ 한 사람이 두 조상 체인에 소속돼 **수수료 귀속이 동률 파괴에 좌우된다. 조용하다.**
+        #   ★`approved → approved` 로 **행을 선점**한 쪽만 연결을 태운다(값은 안 바뀌지만
+        #     `RETURNING` 이 «내가 주인이다» 를 준다). 부수로 `decided_by`·`decided_at` 도
+        #     갱신된다 — 앞 판은 **실제로 멤버십을 만든 사람이 감사 기록에 안 남았다.**
+        if not await claim_status_transition(
+                db, "sales_site_join_requests", request_id,
+                expected_status=cur_status, new_status=new_status,
+                extra_set=", decided_by = :by, decided_at = now()",
+                params={"by": str(user.id)}):
+            await db.rollback()
+            return {"request_id": str(request_id), "status": new_status, "idempotent": True,
+                    "membership_linked": False,
+                    "membership_reason": "IDEMPOTENT_NO_CHANGE"}
+
+        retry_reason = await link_membership(
+            db, site_id, applicant_id, approver_node,
+            sponsor_node=await reload_sponsor_node(db, site_id, sponsor_node_id))
         await db.commit()
         return {"request_id": str(request_id), "status": new_status, "idempotent": True,
                 "membership_linked": retry_reason in _LINKED_REASONS,
@@ -399,7 +408,7 @@ async def decide_join_request(request_id: uuid.UUID, body: DecideBody,
     reason = "DECLINED"
     if body.approve:
         reason = await link_membership(db, site_id, applicant_id, approver_node,
-                                       sponsor_node=await _sponsor_of(db, sponsor_node_id))
+                                       sponsor_node=await reload_sponsor_node(db, site_id, sponsor_node_id))
     await db.commit()
     return {"request_id": str(request_id), "status": new_status, "idempotent": False,
             "membership_linked": reason in _LINKED_REASONS,

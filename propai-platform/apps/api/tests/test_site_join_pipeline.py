@@ -244,13 +244,6 @@ class _Node:
 #     («행위» 와 «질의» 는 다른 축이다 — 반환값만 보면 질의는 영원히 무잠금이다.)
 
 
-class _Node:
-    def __init__(self, node_type="TEAM_LEADER", path="a1.t1"):
-        self.id = uuid.uuid4()
-        self.node_type = node_type
-        self.path = path
-
-
 class _Result:
     """SQLAlchemy Result 의 최소 대역 — 호출별로 **다른 행**을 준다."""
 
@@ -715,6 +708,10 @@ async def test_every_org_node_query_is_site_scoped(fn_name: str, monkeypatch) ->
         await mod.resolve_approver_node(db, site, user)
     elif fn_name == "link_membership":
         await mod.link_membership(db, site, uuid.uuid4(), _Node())
+    elif fn_name == "site_has_approver_nodes":
+        await mod.site_has_approver_nodes(db, site)
+    elif fn_name == "reload_sponsor_node":
+        await mod.reload_sponsor_node(db, site, uuid.uuid4())
     elif fn_name == "resolve_sponsor_node":
         # ★sponsor 해석도 «그 현장의» 노드만 봐야 한다 — 타 현장 사람을 상위로 앉히면
         #   조상 체인이 현장을 넘고 정산이 통째로 어긋난다.
@@ -934,22 +931,87 @@ async def test_sponsor_outside_the_site_is_not_found() -> None:
         await mod.resolve_sponsor_node(db, uuid.uuid4(), "outsider@example.com")
 
 
-def test_sponsor_email_is_required_on_the_request_body() -> None:
-    """★신청 본문에서 sponsor 가 **필수**인가 — 선택이면 옛 비결정성이 그대로 남는다."""
-    src = _MODULE.read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    body = next(
-        n for n in ast.walk(tree)
-        if isinstance(n, ast.ClassDef) and n.name == "JoinRequestBody"
+def test_sponsor_requirement_is_conditional_on_the_site_having_an_org() -> None:
+    """★★sponsor 는 «조직도가 있는 현장» 에서만 필수다 — **무조건 필수는 회귀였다**.
+
+    ★★2026-09-09 R3 리뷰 C-1. 앞 판은 `sponsor_email` 을 무조건 필수로 만들었고,
+      그러자 **조직 노드가 하나도 없는 현장은 어떤 이메일을 넣어도 400** 이 됐다 —
+      신청이 **원리적으로 불가능**해졌다. 그런데 같은 PR 이
+      *"라이브 13현장 중 10현장이 조직도 미시드"* 라고 적는다.
+      **두 문장은 동시에 참일 수 없다** — 사용자 요구(«모든 회원이 모든 현장에 신청»)를
+      다수 현장에서 막은 것이다.
+
+    ⇒ 판정은 **현장의 상태**로 갈린다. 그 갈림이 서비스 층에 있는지를 본다
+      (라우터에 있으면 태울 수 없다 — 이 PR 이 스스로 선언한 원칙).
+    """
+    fn = _fn("prepare_join_request", _SVC)
+    calls = {c.func.id for c in ast.walk(fn)
+             if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+    assert "site_has_approver_nodes" in calls, (
+        "조직도 유무를 안 본다 — 무조건 필수면 조직도 없는 현장은 신청이 불가능하다"
     )
-    fields = {
-        t.target.id: ast.unparse(t.value) if t.value else ""
-        for t in body.body if isinstance(t, ast.AnnAssign) and isinstance(t.target, ast.Name)
-    }
-    assert "sponsor_email" in fields, "희망 직속 상위가 신청 본문에 없다"
-    assert "default" not in fields["sponsor_email"], (
-        "sponsor 가 **선택**이다 — 비면 부모가 승인자로 정해져 클릭 순서 의존이 되살아난다"
-    )
+    assert "resolve_sponsor_node" in calls, "조직도가 있는 현장에서도 sponsor 를 안 본다"
+
+
+async def test_site_without_org_accepts_a_request_with_no_sponsor(monkeypatch) -> None:
+    """★★**모집단 A** — 조직 노드 0인 현장은 sponsor 없이도 신청이 만들어진다(C-1 회귀 방지)."""
+    from app.services.sales.org import join as mod
+
+    async def _no_org(_db, _site):
+        return False
+
+    monkeypatch.setattr(mod, "site_has_approver_nodes", _no_org, raising=True)
+    out = await mod.prepare_join_request(_RecordingDB(), uuid.uuid4(), None)
+    assert out is None, "조직도 없는 현장인데 sponsor 를 요구했다 — 신청이 원리적으로 불가해진다"
+
+
+async def test_site_with_org_still_requires_a_valid_sponsor(monkeypatch) -> None:
+    """★★**모집단 B** — 조직도가 있으면 sponsor 를 **여전히** 요구한다.
+
+    이것이 없으면 위 단언이 «항상 통과» 와 구별되지 않고, 클릭 순서 의존이 되살아난다.
+    """
+    from app.services.sales.org import join as mod
+
+    async def _has_org(_db, _site):
+        return True
+
+    monkeypatch.setattr(mod, "site_has_approver_nodes", _has_org, raising=True)
+    db = _RecordingDB()                      # users 조회가 비어 sponsor 해석 실패
+    with pytest.raises(mod.SponsorNotFoundError):
+        await mod.prepare_join_request(db, uuid.uuid4(), "nobody@example.com")
+
+
+async def test_sponsor_failures_are_indistinguishable(monkeypatch) -> None:
+    """★★실패 문구가 **갈리지 않는다** — 갈리면 계정 열거·소속·직급 오라클이 된다(R3 M-2).
+
+    ★앞 판은 세 갈래를 서로 다른 문구로 답했고, 바로 위 주석이 «계정 존재 여부가 새지 않게
+      뭉뚱그린다» 고 **없는 면역을 주장**했다. 여기서 그 속성을 직접 태운다.
+    """
+    from app.services.sales.org import join as mod
+
+    msgs: set[str] = set()
+
+    # ① 플랫폼에 없는 이메일
+    with pytest.raises(ValueError) as e1:
+        await mod.resolve_sponsor_node(_RecordingDB(), uuid.uuid4(), "ghost@example.com")
+    msgs.add(str(e1.value))
+
+    # ② 있으나 이 현장 구성원이 아님
+    with pytest.raises(ValueError) as e2:
+        await mod.resolve_sponsor_node(
+            _RecordingDB(_rows_for(name=(uuid.uuid4(),))), uuid.uuid4(), "outsider@example.com")
+    msgs.add(str(e2.value))
+
+    # ③ 구성원이나 직급이 아래를 못 둠
+    with pytest.raises(ValueError) as e3:
+        await mod.resolve_sponsor_node(
+            _RecordingDB(_rows_for(name=(uuid.uuid4(),), member=_Node("MEMBER", "a1.t1.m1"))),
+            uuid.uuid4(), "member@example.com")
+    msgs.add(str(e3.value))
+
+    assert len(msgs) == 1, f"세 실패가 서로 다른 말을 한다(오라클): {msgs}"
+    # ★공허 방지 — 셋 다 빈 문자열이면 위 단언이 참이지만 아무것도 안 지킨다.
+    assert len(next(iter(msgs))) > 10
 
 
 def test_self_approval_is_blocked() -> None:
@@ -971,3 +1033,84 @@ def test_self_approval_is_blocked() -> None:
             assert raised, f"비교는 하는데 거부하지 않는다: {test}"
             guarded = True
     assert guarded, "자기 신청을 스스로 승인할 수 있다 — 승인은 **남이 하는 것**이다"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# H. 락이 **사라지지 않게** — 산문이 아니라 기계 검사 (R3 리뷰 M-5)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_no_lock_was_deleted_in_this_branch() -> None:
+    """★★이 브랜치가 만든 테스트 중 **사라진 것이 없는가** — 이름 집합의 차집합.
+
+    ★★2026-09-09. R2 가 «내가 「락 무결성」 제목의 커밋에서 락 4건을 지웠다» 를 찾았다.
+      신호가 둘 있었는데 둘 다 놓쳤다 — **테스트 수 15→16**(순증이 순삭제를 덮었다)과
+      **삭제 가드 발화**(파일 소유만 확인하고 무엇이 지워졌는지는 안 봤다).
+
+      R3 의 지적: 그 재발 방지가 **주석 한 블록**뿐이다.
+      *"산문은 「다음에 조심」, 락은 「다음에 불가능」"* — 그래서 기계로 만든다.
+
+    ★축은 **개수가 아니라 이름 집합**이다. 개수는 상쇄되지만 이름은 안 된다.
+    """
+    root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=_API, capture_output=True, text=True, check=True).stdout.strip()
+    base = subprocess.run(
+        ["git", "merge-base", "HEAD", "origin/fix/commission-orphan-node-integrity"],
+        cwd=root, capture_output=True, text=True, check=False).stdout.strip()
+    if not base:
+        pytest.skip("base 를 해석하지 못했다(얕은 클론 등) — CI 에서 판정한다")
+
+    import re
+    pat = re.compile(r"^(?:async )?def (test_[a-z0-9_]+)", re.M)
+    watched = [
+        "propai-platform/apps/api/tests/test_site_join_pipeline.py",
+        "propai-platform/apps/api/tests/test_transition_atomicity.py",
+    ]
+
+    # ★**정당한 개명은 사유를 적어야 통과한다** — 「사라짐」과 「더 강한 것으로 바뀜」은 다르다.
+    #   비워 두면 개명이 삭제로 오인되고, 사유 없이 넣으면 삭제가 개명으로 위장한다.
+    renamed: dict[str, str] = {
+        "test_discover_does_not_leak_the_tenant_identifier":
+            "→ …read_the_tenant_column_into_the_response (축: 응답 키 이름 → `ast.Attribute` 값의 출처)",
+        "test_module_has_no_uncommitted_mutation_sentinel":
+            "→ …mutation_sentinel_in_head (git 경로 파생 + 조용한 skip 을 assert 로)",
+        "test_every_status_update_is_conditional":
+            "→ …every_status_transition_is_conditional_or_exempted (2파일 목록 → 도메인 파생)",
+        "test_sponsor_email_is_required_on_the_request_body":
+            "→ …requirement_is_conditional_on_the_site_having_an_org "
+            "(무조건 필수는 조직도 없는 현장의 신청을 원리적으로 막았다 — R3 C-1)",
+    }
+
+    lost: list[str] = []
+    checked = 0
+    for rel in watched:
+        # 이 브랜치의 **모든 커밋**에서 그 파일이 가진 적 있는 이름을 모은다.
+        revs = subprocess.run(
+            ["git", "rev-list", f"{base}..HEAD", "--", rel],
+            cwd=root, capture_output=True, text=True, check=True).stdout.split()
+        ever: set[str] = set()
+        for rev in revs:
+            blob = subprocess.run(["git", "show", f"{rev}:{rel}"],
+                                  cwd=root, capture_output=True, text=True, check=False)
+            if blob.returncode == 0:
+                ever |= set(pat.findall(blob.stdout))
+        if not ever:
+            continue
+        now = set(pat.findall((Path(root) / rel).read_text(encoding="utf-8")))
+        checked += len(ever)
+        lost += [f"{rel}::{n}" for n in sorted(ever - now) if n not in renamed]
+
+    # ★공허 진리 가드 — 이력에서 이름을 하나도 못 모으면 아래 «사라진 것 0» 이 무의미하다.
+    assert checked >= 10, f"이력에서 테스트 이름을 {checked}개만 모았다 — 조회기가 죽었다"
+    # ★죽은 개명 기록도 실패시킨다 — 안 그러면 목록이 «면제 창고» 가 된다.
+    all_now: set[str] = set()
+    for rel in watched:
+        all_now |= set(pat.findall((Path(root) / rel).read_text(encoding="utf-8")))
+    stale = [k for k in renamed if k in all_now]
+    assert not stale, f"개명했다고 적었는데 그 이름이 아직 있다: {stale}"
+
+    assert not lost, (
+        "이 브랜치에서 **락이 사라졌다** — 개명이면 이 목록에 사유를 남기고, 아니면 되살려라:\n"
+        + "\n".join(f"  - {x}" for x in lost)
+        + "\n  ★개수(N passed)는 순삭제를 덮는다. 이름 집합으로 봐야 보인다."
+    )

@@ -32,6 +32,11 @@ from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
 
 logger = logging.getLogger(__name__)
 
+# ★sponsor 해석 실패의 **단일 표면**. 세 갈래(미가입·현장 밖·직급 부족)가 같은 말을 한다 —
+#   갈라 말하면 그 자체가 계정 열거·소속·직급 오라클이 된다(R3 리뷰 M-2).
+_SPONSOR_OPAQUE = (
+    "이 현장의 담당자로 확인되지 않습니다 — 이메일과 담당자 소속을 확인해 주세요")
+
 # 승인할 수 있는 **현장 내 역할** — 「관리자 및 상위레벨」(사용자 요구)의 기계적 정의.
 # ★MEMBER 는 없다: 서열 최하위라 아래를 승인할 대상이 없다(`_ORG_RANK` 와 정합).
 APPROVER_NODE_TYPES = frozenset(
@@ -118,31 +123,64 @@ async def resolve_sponsor_node(db: AsyncSession, site_id, sponsor_email: str):
     이메일은 **신청자가 이미 아는 정보**(나를 부른 사람)라 새 노출이 0 이다.
     ★해석 패턴은 새로 만들지 않았다 — `org/service.assign_user_to_node` 가 쓰는 그 SQL 이다.
     """
+    # ★★**세 실패를 한 문구로 합친다**(2026-09-09 R3 리뷰 M-2).
+    #   앞 판은 «플랫폼에 없는 이메일» · «있으나 이 현장 멤버 아님» · «멤버이나 직급 부족» 을
+    #   **서로 다른 문구**로 갈랐다. 그리고 바로 위 주석이 «계정 존재 여부가 새지 않게
+    #   뭉뚱그린다» 고 적었는데 **다음 분기가 그 뭉뚱그림을 깼다** — 없는 면역을 주장한 것이다.
+    #
+    #   공격 조건이 낮다: `/sites/discover` 가 **모든 인증 사용자에게 전 현장 id** 를 주고,
+    #   신청은 멤버십이 필요 없으며, 자기 신청은 스스로 취소할 수 있어 **무제한 반복**된다.
+    #   그러면 «임의 이메일의 가입 여부 + 임의 현장 소속 여부 + 정확한 직급» 이 새어 나간다 —
+    #   이 모듈이 `organization_id` 한 컬럼을 감추려고 쓴 독스트링보다 **훨씬 넓은 표면**이다.
+    #
+    #   ⇒ **표면은 하나**, 예외 클래스는 그대로(호출부가 상태코드를 가르는 데 쓴다).
+    #     상세는 로그로만 남긴다.
     em = (sponsor_email or "").strip()
     if not em:
-        raise SponsorNotFoundError("희망 직속 상위의 이메일을 입력하세요")
+        raise SponsorNotFoundError(_SPONSOR_OPAQUE)
 
     row = (await db.execute(text(
         "SELECT id FROM users WHERE lower(email)=lower(:em)"), {"em": em})).first()
     if row is None:
-        # ★계정 존재 여부가 새지 않게 «그 현장에서 못 찾았다» 로 뭉뚱그린다.
-        raise SponsorNotFoundError(
-            f"'{em}' 을(를) 이 현장의 담당자로 찾을 수 없습니다(이메일을 확인하세요)")
+        logger.info("sponsor 해석 실패: 플랫폼에 없는 이메일(site=%s)", site_id)
+        raise SponsorNotFoundError(_SPONSOR_OPAQUE)
 
     nodes = (await db.execute(select(SalesOrgNode).where(
         SalesOrgNode.site_id == site_id, SalesOrgNode.user_id == row[0],
         SalesOrgNode.active.is_(True),
         SalesOrgNode.deleted_at.is_(None)))).scalars().all()
     if not nodes:
-        raise SponsorNotFoundError(
-            f"'{em}' 은(는) 이 현장의 조직 구성원이 아닙니다")
+        logger.info("sponsor 해석 실패: 이 현장의 구성원이 아님(site=%s)", site_id)
+        raise SponsorNotFoundError(_SPONSOR_OPAQUE)
 
     # ★복수 노드면 **권한 우선순위**로 고른다(형제 셋과 같은 기준).
     node = min(nodes, key=lambda n: (node_priority(str(n.node_type)), str(n.path), str(n.id)))
     if str(node.node_type) not in APPROVER_NODE_TYPES:
-        raise SponsorNotEligibleError(
-            f"'{em}' 의 직급({node.node_type})으로는 아래에 팀원을 둘 수 없습니다")
+        logger.info("sponsor 해석 실패: 직급이 아래를 둘 수 없음(site=%s, type=%s)",
+                    site_id, node.node_type)
+        raise SponsorNotEligibleError(_SPONSOR_OPAQUE)
     return node
+
+
+async def site_has_approver_nodes(db: AsyncSession, site_id) -> bool:
+    """이 현장에 **아래를 둘 수 있는 조직 노드가 하나라도** 있나.
+
+    ★★2026-09-09 R3 리뷰 C-1. `sponsor_email` 을 **무조건 필수**로 만들었더니,
+      **조직도가 없는 현장은 어떤 이메일을 넣어도 400** 이 됐다 — 신청이 원리적으로 불가능해졌다.
+      그런데 같은 PR 이 *"라이브 13현장 중 10현장이 조직도 미시드"* 라고 적는다.
+      **두 문장은 동시에 참일 수 없다** — 사용자 요구(«모든 회원이 모든 현장에 신청»)를
+      **다수 현장에서 막은 것**이다.
+
+    ⇒ sponsor 는 «조직도가 있는 현장» 에서만 필수다. 없는 현장은 sponsor 없이 신청을 받고
+      승인 시 `ORG_NOT_SEEDED` 보류로 간다(그 경로는 이미 있다).
+      ★«없으면 그냥 통과» 가 아니라 **현장의 상태로 갈라진다** — 조용한 우회로가 아니다.
+    """
+    row = (await db.execute(select(SalesOrgNode.id).where(
+        SalesOrgNode.site_id == site_id,
+        SalesOrgNode.node_type.in_(sorted(APPROVER_NODE_TYPES)),
+        SalesOrgNode.active.is_(True),
+        SalesOrgNode.deleted_at.is_(None)).limit(1))).first()
+    return row is not None
 
 
 async def link_membership(db: AsyncSession, site_id, applicant_user_id, approver_node,
@@ -194,3 +232,42 @@ async def link_membership(db: AsyncSession, site_id, applicant_user_id, approver
         logger.exception("현장 등록승인: 멤버십 노드 생성이 거부됐다(site=%s)", site_id)
         return "ORG_NOT_SEEDED"
     return "LINKED"
+
+
+async def prepare_join_request(db: AsyncSession, site_id, sponsor_email: str | None):
+    """신청을 만들기 **전에** sponsor 를 확정한다 — 조직도 유무로 갈라서.
+
+    반환: `sponsor_node_id 또는 None`
+
+    ★★2026-09-09 R3 리뷰 M-1: 이 판정이 라우터에 흩어져 있었고, 그래서 **무잠금**이었다
+      (변이 4종이 전부 생존 — 저장·전달·차단·재확인). 이 PR 이 스스로 선언한 원칙
+      *"판정은 라우터가 아니라 서비스 층에 산다"* 를 **이번 라운드에 만든 판정에는 안 썼다.**
+
+    ⇒ «조직도가 있나 → 있으면 sponsor 필수, 없으면 sponsor 없이 진행» 을 **한 값 흐름**으로.
+      라우터에는 HTTP 매핑만 남는다.
+    """
+    if not await site_has_approver_nodes(db, site_id):
+        # ★조직도가 아직 없는 현장 — sponsor 를 요구하면 **신청 자체가 불가능**해진다(C-1).
+        #   승인 시 `ORG_NOT_SEEDED` 보류로 가고, 조직도를 시드한 뒤 재승인으로 풀린다.
+        return None
+    sponsor = await resolve_sponsor_node(db, site_id, sponsor_email or "")
+    return sponsor.id
+
+
+async def reload_sponsor_node(db: AsyncSession, site_id, sponsor_node_id):
+    """신청에 박힌 sponsor 를 **승인 시점에 다시 확인**한다(그 사이 해촉될 수 있다).
+
+    ★현장 술어를 **함께** 건다(R3 리뷰 M-3). 앞 판은 `id` 만 봐서 이론상 타 현장 노드가
+      부모로 올 수 있었고, 2차 방어(`create_node` 의 부모 site 스코프)가 막긴 하지만
+      그때 사용자에게 가는 말이 **틀린 사유**가 된다(«조직도를 시드하라» ← 실제는 «상위가 죽었다»).
+
+    살아 있지 않으면 `None` — 조용히 승인자 노드로 **바꿔치기하지 않는다**
+    (바꿔치기하면 «클릭 순서가 체인을 정한다» 가 되살아난다).
+    """
+    if sponsor_node_id is None:
+        return None
+    return (await db.execute(select(SalesOrgNode).where(
+        SalesOrgNode.id == sponsor_node_id,
+        SalesOrgNode.site_id == site_id,
+        SalesOrgNode.active.is_(True),
+        SalesOrgNode.deleted_at.is_(None)))).scalars().first()
