@@ -72,6 +72,22 @@ describe("배선 — 패널이 앱에 실제로 붙어 있는가", () => {
     ).toBe(true);
   });
 
+  it.each(MOUNTS)("★★$panel 이 **상수 거짓 게이트 뒤에 숨지 않는다**", ({ panel, host }) => {
+    // ★2026-09-09 R2 리뷰 J-4: 앞 판의 축은 «`<Panel` 텍스트가 있는가» 뿐이라
+    //   `{false && <Panel/>}` 로 **안 그리게 만들어도 초록**이었다(::VERDICT=SURVIVED).
+    //   존재를 잠그면 행위는 안 잠긴다 — 그 형태를 여기서 직접 막는다.
+    //   ★기계 변이는 「삭제」 축만 만들므로 이 형태는 도구가 영원히 못 낸다(손으로 넣어야 한다).
+    const src = codeOnly(source(host));
+    const idx = src.indexOf(`<${panel}`);
+    expect(idx, `${panel} 을 그리는 자리를 못 찾았다`).toBeGreaterThan(-1);
+
+    // 그 JSX 바로 앞 120자에 상수 거짓 게이트가 있으면 렌더되지 않는다.
+    const before = src.slice(Math.max(0, idx - 120), idx);
+    for (const dead of ["false &&", "false&&", "null &&", "0 &&"]) {
+      expect(before.includes(dead), `${panel} 이 \`${dead}\` 뒤에 숨어 렌더되지 않는다`).toBe(false);
+    }
+  });
+
   it("★승인 패널은 **사유를 사람 말로 옮기는 공용 모듈**을 쓴다", () => {
     // 형제 문(JobMarketPanel)이 쓰는 그것을 새 문도 쓴다 — 번역표가 두 벌이 되면 하나가 낡는다.
     const src = codeOnly(source("components/sales-app/JoinRequestsPanel.tsx"));

@@ -32,8 +32,56 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-_MARKET = Path(__file__).resolve().parents[1] / "app/api/endpoints/sales/market.py"
+_API = Path(__file__).resolve().parents[1]
+_MARKET = _API / "app/api/endpoints/sales/market.py"
 _FN = "_link_membership_on_accept"
+
+# ★★2026-09-09 R2 리뷰 J-5: 이 락의 축이 **`market.py` 한 파일**이었는데, PR #1022 가
+#   사유 **생산자를 둘 늘렸다**(`org/join.py` · `site_join.py`). 그래서 새 생산자가
+#   목록 밖 값을 내도 초록이었다 — 실측: `reason = "DECLINED"` → `"REFUSED"` ::VERDICT=SURVIVED.
+#   그 변이의 효과는 조용하지 않다: 프론트가 미지 사유 분기로 떨어져 **정상적인 「거절」마다**
+#   «승인은 되었지만 조직도 배치 결과를 알 수 없습니다(사유: REFUSED)» 라는 위양성 경고를 띄운다.
+#
+# ⇒ 축을 **생산자 파생**으로: `_MEMBERSHIP_REASONS`/`_LINKED_REASONS` 를 임포트하는 모든 모듈.
+_PRODUCER_SCOPES = ("app/api/endpoints/sales", "app/services/sales")
+
+
+def _reason_producers() -> list[str]:
+    """사유를 **실제로 내는** 모듈 전수 — 축이 「임포트」가 아니라 **「값의 생산」**이다.
+
+    ★첫 시도는 `_LINKED_REASONS` 를 **임포트하는** 모듈로 잡았는데, 정작 사유를 만드는
+      `org/join.py` 는 그 상수를 임포트하지 않고 **문자열을 반환**한다 — 축이 한 칸 위였다.
+      («파생으로 바꿔도 축이 한 단계 위면 그 아래는 무잠금» 의 재현.)
+
+    ⇒ 판정: **선언된 사유 중 하나라도 반환하는 모듈**은 생산자다.
+
+    ★한계(정직하게): 선언 목록의 값을 **하나도** 안 쓰면서 새 사유만 내는 모듈은 이 파생이
+      못 잡는다. 현실적으로 새 사유는 기존 것 옆에 추가되므로 실효가 있지만, **원리적 완전성은
+      없다**. 그 경우를 잡으려면 응답 계약(`membership_reason` 키) 쪽에서 잡아야 한다 — 부채.
+    """
+    declared = set(_declared_reasons())
+    out: list[str] = [str(_MARKET.relative_to(_API))]
+    for scope in _PRODUCER_SCOPES:
+        for f in sorted((_API / scope).rglob("*.py")):
+            rel = str(f.relative_to(_API))
+            if rel in out:
+                continue
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+            emits = {
+                n.value.value
+                for n in ast.walk(tree)
+                if isinstance(n, ast.Return) and isinstance(n.value, ast.Constant)
+                and isinstance(n.value.value, str)
+            } | {
+                n.value.value
+                for n in ast.walk(tree)
+                if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+                and isinstance(n.value.value, str)
+                and any(isinstance(t, ast.Name) and "reason" in t.id.lower() for t in n.targets)
+            }
+            if emits & declared:
+                out.append(rel)
+    return sorted(out)
 
 
 def _tree() -> ast.Module:
@@ -191,3 +239,56 @@ def test_linked_flag_is_derived_from_reason() -> None:
             )
             return
     raise AssertionError("`_LINKED_REASONS` 선언을 찾지 못했다")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 생산자 전수 — 축이 「정의처 1파일」이 아니라 「어휘를 쓰는 모든 곳」이다
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_producer_population_is_not_empty() -> None:
+    """★공허 진리 가드 + **두 생산자가 모두 잡히는가**(하나만 세면 형제가 무잠금이다)."""
+    prods = _reason_producers()
+    assert len(prods) >= 3, f"사유 생산자 수집이 비정상: {prods}"
+    for expected in ("app/api/endpoints/sales/market.py",
+                     "app/api/endpoints/sales/site_join.py",
+                     "app/services/sales/org/join.py"):
+        assert expected in prods, f"{expected} 가 축에 없다 — 실측: {prods}"
+
+
+def test_every_producer_emits_only_declared_reasons() -> None:
+    """★★**전수** — 어느 모듈이 내든 사유는 `_MEMBERSHIP_REASONS` 안이다.
+
+    ★프론트는 이 목록에서 문구를 파생한다. 목록 밖 값은 «알 수 없음» 으로 떨어져
+      **정상 흐름에 위양성 경고**를 띄운다(사용자에게 보이는 결함).
+    """
+    declared = set(_declared_reasons())
+    assert len(declared) >= 5, f"선언 목록이 비었거나 좁다: {declared}"
+
+    # 사유 이름의 모양 — 목록의 값들이 공유하는 형태(대문자+밑줄)만 후보로 본다.
+    import re
+    shape = re.compile(r"^[A-Z][A-Z_]{3,}$")
+
+    offenders: list[str] = []
+    scanned = 0
+    for rel in _reason_producers():
+        tree = ast.parse((_API / rel).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            # `return "X"` 와 `<name> = "X"` 둘 다 — 사유는 이 두 모양으로만 만들어진다.
+            vals: list[ast.Constant] = []
+            if isinstance(node, ast.Return) and isinstance(node.value, ast.Constant):
+                vals = [node.value]
+            elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+                if any(isinstance(t, ast.Name) and "reason" in t.id.lower() for t in node.targets):
+                    vals = [node.value]
+            for v in vals:
+                if isinstance(v.value, str) and shape.match(v.value):
+                    scanned += 1
+                    if v.value not in declared:
+                        offenders.append(f"{rel}:{v.lineno} → {v.value!r}")
+
+    # ★공허 방지 — 후보를 하나도 못 찾으면 아래 «위반 0» 이 «파서가 죽었다» 와 같다.
+    assert scanned >= 6, f"사유 모양의 리터럴을 {scanned}개만 찾았다 — 조회기가 죽었다"
+    assert not offenders, (
+        "선언 목록 밖의 사유를 내는 곳이 있다 — 프론트가 번역하지 못해 **정상 흐름에 경고**가 뜬다:\n"
+        + "\n".join(f"  - {o}" for o in offenders)
+    )

@@ -725,3 +725,45 @@ async def test_every_org_node_query_is_site_scoped(fn_name: str, monkeypatch) ->
     assert (str(site) in q) or (site.hex in q), f"[{fn_name}] **이 현장**이 아니다"
     assert "deleted_at IS NULL" in q, f"[{fn_name}] 소프트 삭제된 노드를 살아 있다고 센다"
     assert "active" in q, f"[{fn_name}] 비활성 노드를 멤버로 센다"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# E. 재승인 — **멱등이 「아무것도 안 함」이 되면 막다른 길이 된다**(R2 리뷰 J-1)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_reapproval_retries_membership_instead_of_short_circuiting() -> None:
+    """★★이미 `approved` 인 신청을 **다시 승인**하면 멤버십 연결을 **재시도**하는가.
+
+    ★`ORG_NOT_SEEDED` 로 보류되면 신청은 이미 `approved` 다. 앞 판은 «같은 상태면 단락» 이라
+      조직도를 시드하고 다시 승인해도 **연결이 원리적으로 다시 안 불렸다.**
+      그리고 이 PR 이 그 안내를 화면에 올렸다 — «조직도를 만든 뒤 **다시 승인해 주세요**» →
+      지시대로 하면 «이미 처리된 신청이라 변경된 것이 없습니다». **승인자가 갇힌다.**
+      라이브 13현장 중 10현장이 조직도 미시드라 **드문 경로가 아니다.**
+
+    ★축은 **재승인 분기의 호출**이다 — 「단락 분기가 있다」가 아니라
+      **「그 분기 안에서 `link_membership` 이 불린다」**.
+    """
+    fn = _fn("decide_join_request")
+
+    branch = None
+    for node in ast.walk(fn):
+        if (isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
+                and "cur_status" in ast.unparse(node.test)):
+            branch = node
+            break
+    assert branch is not None, "멱등 단락 분기를 못 찾았다 — 축이 죽었다"
+
+    calls = {
+        c.func.id for c in ast.walk(branch)
+        if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+    }
+    assert "link_membership" in calls, (
+        "재승인이 멤버십 연결을 **다시 태우지 않는다** — 보류된 승인이 영원히 복구 불가다.\n"
+        "  ★멱등은 「부작용 없음」이지 「아무것도 안 함」이 아니다."
+    )
+
+    # ★반대편 — **거절** 재시도는 연결을 부르지 않는다(불필요한 조회·부작용 금지).
+    src = ast.unparse(branch)
+    assert "not body.approve" in src, (
+        "승인/거절을 가르지 않는다 — 거절 재시도에서도 멤버십 연결을 태우게 된다"
+    )

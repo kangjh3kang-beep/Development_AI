@@ -41,7 +41,9 @@ from app.api.deps import get_current_user, get_db
 
 # ★사유 어휘를 **채용 승인 경로와 공유한다**. 두 승인 경로가 서로 다른 말을 하면
 #   화면이 번역표를 두 벌 갖게 되고, 그 순간 하나가 낡는다.
-#   (순환 없음 — `market` 은 이 모듈을 임포트하지 않는다. 락이 그 방향까지 잠근다.)
+#   (순환 없음 — `market` 은 이 모듈을 임포트하지 않는다.
+#    ★그 방향은 `tests/test_site_join_pipeline.py::test_no_import_cycle_market_does_not_depend_on_join`
+#      이 잠근다. 앞 판은 그 락을 **내가 지워 놓고** 이 주석만 남겨 «면역» 을 거짓 주장했다.)
 from app.api.endpoints.sales.market import _LINKED_REASONS
 
 # ★판정은 **서비스 층**에 산다(`org/join.py`) — 라우터에 두면 FastAPI 의존 때문에
@@ -305,10 +307,23 @@ async def decide_join_request(request_id: uuid.UUID, body: DecideBody,
 
     new_status = "approved" if body.approve else "rejected"
     if cur_status == new_status:
-        # 멱등 — 같은 결정을 두 번 눌러도 부작용이 없다.
-        return {"request_id": str(request_id), "status": new_status,
-                "idempotent": True, "membership_linked": False,
-                "membership_reason": "IDEMPOTENT_NO_CHANGE"}
+        # ★★**멱등은 「부작용 없음」이지 「아무것도 안 함」이 아니다**(2026-09-09 R2 리뷰 J-1).
+        #   앞 판은 여기서 무조건 단락했다. 그런데 `ORG_NOT_SEEDED` 로 보류되면 신청은 이미
+        #   `approved` 이므로, 조직도를 시드하고 **다시 승인해도 이 분기에 먼저 걸려**
+        #   멤버십 연결이 **원리적으로 다시 안 불렸다.**
+        #   ★그리고 이 PR 이 그 안내를 화면에 올렸다 — «조직도를 만든 뒤 다시 승인해 주세요» →
+        #   지시대로 하면 «이미 처리된 신청이라 변경된 것이 없습니다». **승인자가 막다른 길에 갇힌다.**
+        #   라이브 13현장 중 10현장이 조직도 미시드라 이건 드문 경로가 아니다.
+        #   ⇒ 승인 재시도는 **멤버십 부재를 다시 확인**하고, 없으면 연결을 다시 태운다.
+        if not body.approve:
+            return {"request_id": str(request_id), "status": new_status,
+                    "idempotent": True, "membership_linked": False,
+                    "membership_reason": "IDEMPOTENT_NO_CHANGE"}
+        retry_reason = await link_membership(db, site_id, applicant_id, approver_node)
+        await db.commit()
+        return {"request_id": str(request_id), "status": new_status, "idempotent": True,
+                "membership_linked": retry_reason in _LINKED_REASONS,
+                "membership_reason": retry_reason}
     if cur_status != "pending":
         raise HTTPException(409, f"이미 처리된 신청입니다(현재 상태: {cur_status})")
 
