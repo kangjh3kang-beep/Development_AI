@@ -5,6 +5,7 @@ import { Button, Card, CardContent, Input } from "@propai/ui";
 import { useFeasibilityV2Store, type FeasibilityInput } from "@/store/use-feasibility-v2-store";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { siteDerivedFeasibilityFields } from "@/lib/feasibility-seed";
+import { wireBackedUseOptions } from "@/lib/building-use";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { motion } from "framer-motion";
 import { NumberInput as CommaInput } from "@/components/common/NumberInput";
@@ -16,13 +17,16 @@ const LAND_CATEGORIES = [
   { value: "forest", label: "임야" },
 ];
 
-const BUILDING_TYPES = [
-  { value: "apartment", label: "아파트" },
-  { value: "officetel", label: "오피스텔" },
-  { value: "office", label: "오피스" },
-  { value: "commercial", label: "상가" },
-  { value: "mixed", label: "복합" },
-];
+// ★건축물 용도는 **정본에서 파생**한다(2026-09-09 · lib/building-use.ts).
+//   종전엔 여기 5종을 손으로 적었고, 저장소 전체에 같은 목록이 **4벌** 있었다
+//   (design-references·DesignStudio·CostEstimationClient·여기).
+//   ★`wireBackedUseOptions()` 를 쓰는 이유: 백엔드 공사비 엔진이
+//     DEFAULT_DIRECT_COST_PER_SQM 에 없는 값을 받으면 **apartment 로 조용히 폴백**한다.
+//     그래서 단가를 아는 용도만 선택지에 올린다 — 전선 값(`value`)은 **종전과 동일**하다.
+//   ★종전 "복합"(mixed)은 엔진에 단가가 없어 아파트 단가로 계산되고 있었다.
+//     그 조용한 오류를 이어받지 않기 위해 선택지에서 뺀다(★값이 저장된 기존 프로젝트는
+//     normalizeBuildingUse 가 여전히 읽는다 — 표시만 사라지고 데이터는 보존된다).
+const BUILDING_TYPES = wireBackedUseOptions().map((o) => ({ value: o.wire, label: o.label }));
 
 /**
  * 구조유형 — ★**정본은 백엔드** `app/services/cost/overview_estimator.py` 의 구조계수 표다.

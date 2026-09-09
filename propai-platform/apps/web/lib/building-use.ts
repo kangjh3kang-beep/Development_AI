@@ -105,3 +105,45 @@ export function normalizeBuildingUse(raw: string | null | undefined): BuildingUs
 export function buildingUseOptions(): { code: BuildingUseCode; label: string }[] {
   return BUILDING_USE_CODES.map((code) => ({ code, label: BUILDING_USE_LABEL[code] }));
 }
+
+/**
+ * 정본 코드 → **전선 값**(백엔드 `building_type`).
+ *
+ * ★2026-09-09 실측 — 전선 값을 바꾸면 **조용히 틀린다**:
+ *   `app/services/feasibility/construction_cost_engine.py`
+ *     DEFAULT_DIRECT_COST_PER_SQM = { apartment · officetel · commercial · office ·
+ *                                     warehouse · townhouse · single_house }
+ *     _resolve_direct_unit_cost() 는 **모르면 apartment 로 폴백**한다.
+ *   즉 `retail` 을 보내면 상가 단가(220만)가 아니라 **아파트 단가(240만)** 가 쓰이고
+ *   아무 오류도 나지 않는다. 그래서 정본 코드는 **내부용**이고 전선은 이 표로 나간다.
+ *
+ * ★엔진이 모르는 용도는 **null** — 호출부가 「이 용도는 단가를 모른다」를 알아야 한다.
+ *   임의로 apartment 를 보내면 그 폴백을 우리가 대신 저지르는 것이다.
+ */
+const CODE_TO_WIRE: Record<BuildingUseCode, string | null> = {
+  apartment: "apartment",
+  rowhouse: "townhouse",
+  detached: "single_house",
+  officetel: "officetel",
+  office: "office",
+  retail: "commercial",
+  knowledge: "warehouse",
+  // ★엔진에 단가가 없는 용도 — 전선 값을 지어내지 않는다
+  neighborhood: null,
+  lodging: null,
+  education: null,
+  mixed: null,
+};
+
+/** 정본 코드를 백엔드 `building_type` 값으로. 엔진이 모르는 용도면 **null**. */
+export function toWireBuildingType(code: BuildingUseCode): string | null {
+  return CODE_TO_WIRE[code];
+}
+
+/** 전선 값을 가진 코드만 — 기존 폼의 선택지를 넓히되 **깨지지 않게** 한다. */
+export function wireBackedUseOptions(): { code: BuildingUseCode; label: string; wire: string }[] {
+  return BUILDING_USE_CODES.flatMap((code) => {
+    const wire = CODE_TO_WIRE[code];
+    return wire === null ? [] : [{ code, label: BUILDING_USE_LABEL[code], wire }];
+  });
+}

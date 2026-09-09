@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   BUILDING_USE_CODES,
+  toWireBuildingType,
+  wireBackedUseOptions,
   BUILDING_USE_LABEL,
   buildingUseOptions,
   normalizeBuildingUse,
@@ -81,5 +83,49 @@ describe("건축물 용도 정본", () => {
     expect(list.length, "원천 목록이 비었다 — 판정 불가").toBeGreaterThanOrEqual(5);
     const unmapped = list.filter((x) => normalizeBuildingUse(x) === null);
     expect(unmapped, "정본이 못 덮는 원천 항목").toEqual([]);
+  });
+});
+
+describe("★전선 값 — 바꾸면 조용히 틀린다", () => {
+  /**
+   * 2026-09-09 실측: construction_cost_engine.py 의
+   * DEFAULT_DIRECT_COST_PER_SQM 은 7키뿐이고 **모르면 apartment 로 폴백**한다.
+   * 즉 잘못된 전선 값은 오류 없이 **아파트 단가**로 계산된다.
+   */
+  const ENGINE_KEYS = [
+    "apartment",
+    "officetel",
+    "commercial",
+    "office",
+    "warehouse",
+    "townhouse",
+    "single_house",
+  ];
+
+  it("★전선 값은 엔진이 아는 키에서만 나온다", () => {
+    const opts = wireBackedUseOptions();
+    expect(opts.length).toBeGreaterThanOrEqual(7); // 모집단 하한
+    for (const o of opts) expect(ENGINE_KEYS, `${o.code} → ${o.wire}`).toContain(o.wire);
+  });
+
+  it("★단가를 모르는 용도는 **전선 값을 지어내지 않는다**", () => {
+    for (const code of ["neighborhood", "lodging", "education", "mixed"] as const) {
+      expect(toWireBuildingType(code), code).toBeNull();
+    }
+    // ★대조군 — 아는 용도는 값이 나온다(위 단언이 「전부 null」로 공허해지지 않게)
+    expect(toWireBuildingType("apartment")).toBe("apartment");
+  });
+
+  it("★기존 5종의 전선 값이 **종전과 동일**하다(계약 불변)", () => {
+    // 이관 전 ModuleInputForm 이 내보내던 값
+    expect(toWireBuildingType("apartment")).toBe("apartment");
+    expect(toWireBuildingType("officetel")).toBe("officetel");
+    expect(toWireBuildingType("office")).toBe("office");
+    expect(toWireBuildingType("retail")).toBe("commercial"); // ★상가는 commercial 로 나가야 한다
+  });
+
+  it("★전선 값이 서로 겹치지 않는다(두 용도가 같은 단가로 합쳐지면 안 된다)", () => {
+    const wires = wireBackedUseOptions().map((o) => o.wire);
+    expect(new Set(wires).size).toBe(wires.length);
   });
 });
