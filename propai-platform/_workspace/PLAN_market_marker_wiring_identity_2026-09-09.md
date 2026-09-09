@@ -55,8 +55,16 @@
 
 회귀가 아닌 근거: 옮기는 것은 **순차 코드 묶음**이고, effect 에서 오던 값(`kind`·`pyeongFirst`·
 `ordinal`·`typeLabelLimit`·`group`)은 **전부 인자로 넘겨 같은 값이 그대로 흐른다**. 호출 순서도
-동일하다(`addTo` 는 종전에도 `bindSatongLabel` 뒤였다). 동작은 같고 달라지는 것은
-**태울 수 있는가**뿐이다.
+★**정정(R2 MAJOR-5)**: 초판은 *"호출 순서도 동일하다(`addTo` 는 종전에도 `bindSatongLabel`
+뒤였다)"* 라고 적었는데 **정확히 반대였다** — `origin/main` 실측: `.bindPopup(...).addTo(group)`
+이 **먼저**고 `bindSatongLabel(marker, …)` 이 **나중**이었다. 지금은 그 반대다. **순서는 바뀌었다.**
+
+★**그런데 동작 회귀는 없다**(관측): `node_modules/leaflet/dist/leaflet-src.js:10876`(바인드 시
+이미 맵 위면 즉시 open) · `:10910`(`events.add = this._openTooltip`) 때문에 **두 순서 모두
+permanent 툴팁이 열린다**. `group: map` 을 주는 테스트들이 그것을 태운다. 그러므로 이 항목은
+**「문서의 거짓」이지 「회귀」가 아니다** — 그래도 고친다. ***정정문이 새 부패의 운반체가
+된다***(§27-c): 다음 사람이 *"순서는 안 건드렸구나"* 로 읽고 재검증을 생략한다.
+달라지는 것은 **태울 수 있는가**다.
 
 ### 2-b. ★하지 않는 것
 
@@ -72,14 +80,23 @@
 1. **실브라우저 실측 없음** — jsdom 은 레이아웃·CSS 를 안 잰다. 마커가 **화면에 보이는지**는 배포 후.
 2. **형제 마커는 여전히 무잠금** — ★**정정(적대 리뷰 MAJOR-4)**: 초판은 이것을 **「미측정」**
    이라 적었으나 **틀렸다. 실측했고 SURVIVED 였다**(2026-09-09):
-   · 분양 `status` 를 `"미정"` 으로 고정 → **386파일 3,528건 초록**
+   · 분양 `status` 를 `"미정"` 으로 고정 → **386파일 초록**(`npx vitest run components lib` · R2 재현: 3,534 green)
    · POI 색을 하나로 고정 → 같음
    ★**대조군**: 같은 도구·같은 스코프에서 실거래 축 변이는 **CAUGHT** 다 — 도구가 죽은 것이 아니다.
    ★**지금 구조로는 행위 검증이 불가능하다** — `presalePopupHtml`·`auctionPopupHtml` 은
    **export 조차 안 돼 있다**. 별건 PR 에서 `buildMarketMarker` 와 같은 형태로 꺼낸다.
    부채는 `SatongMultiMap.markerWiring.test.ts` 의 **`it.todo` 로 초록 안에** 있다(§C-13).
    ★초판은 이 `it.todo` 를 **산문으로만 약속하고 코드에 0건**이었다 — 리뷰가 산출물로 잡았다(§F-24).
-3. §0 조회 신뢰도(볼트 훼손).
+3. **`bounds.extend` 무잠금** — ★**미측정이 아니라 실측 SURVIVED**(R2 MINOR-1):
+   그 줄을 지우면 지도가 실거래 마커로 **fit 하지 않는데 228건 초록**이다. 이 PR 이 그 줄을
+   건드리지 않았으므로 **선재 부채**로 남긴다(초록 안 `it.todo`). ★초판 §2-a 는 그것을
+   *"누적 상태라 마커 하나의 관심사가 아니다"* 로 정당화했는데, **그 논법이 바로 `addTo` 에서
+   기각당한 그 논법**이다 — 정당화를 지우고 부채로 적는다.
+4. **전체 스코프(`npx vitest run`)로는 변이 판정이 안 난다** — 이 머신에서 430파일
+   **4,037 passed · 실패 0** 인데 `[vitest-worker]: Timeout calling "onTaskUpdate"` 때문에
+   **rc=1** 이라 도구가 `exit 13 / UNDECIDED` 를 낸다(R2 MINOR-4 실측). 증거를 낼 때는
+   `components lib`(386파일) 또는 `components/map/__tests__`(32파일)을 쓴다.
+5. §0 조회 신뢰도(볼트 훼손).
 
 ---
 
@@ -105,18 +122,40 @@
 | **점 클릭 격리** | `bubblingMouseEvents: false` 가 유지된다(지도 클릭으로 안 번진다) |
 | **호출부 배선** | effect 가 `entry` 를 **통째로** 넘긴다(소스 락 — 약함을 명시) |
 
-### ★변이 실측 — 기준선 초록 218건 · 스코프 `components/map/__tests__`(31파일)
+### ★변이 실측 — R1·R2 **두 라운드**
 
-| # | 변이 | 판정 | 잡은 수 |
+★**«N/N CAUGHT» 뒤에 «그 N 을 누가 골랐나»를 붙인다.** R1 후 내가 고른 6개는 **전부 함수 안
+층**이었고 6/6 CAUGHT 였다. 그런데 독립 리뷰가 **한 층 위(호출부 `opts`)** 에 넣자
+**8/8 SURVIVED** 였다 — 내가 고친 결함이 **한 칸 옮겨갔을 뿐**이었다.
+
+| # | 변이 | R1 후 | R2 반영 후 |
 |---|---|---|---|
-| M1 | `addTo(opts.group)` → `void opts;` (**리뷰어의 재현**) | **CAUGHT** | 4 |
-| M2 | `pyeongFirst` 를 `false` 로 고정 | **CAUGHT** | 1 |
-| M3 | `permanent: true` (버짓 무시) | **CAUGHT** | 2 |
-| M3b | 경계 `<` → `<=` | **CAUGHT** | 1 |
-| M4 | `bindSatongLabel` 의 `interactive` → `false` (#1024 되돌리기) | **CAUGHT** | 1 |
-| M5 | `opts.kind` → `"trade"` 고정 | **CAUGHT** | 2 |
+| M1 | `addTo(opts.group)` → `void opts;` | CAUGHT | CAUGHT |
+| M2 | 함수 안 `pyeongFirst` → `false` | CAUGHT | CAUGHT |
+| M3 | 함수 안 `permanent: true` | CAUGHT | CAUGHT |
+| M3b | 경계 `<` → `<=` | CAUGHT | CAUGHT |
+| M4 | `interactive` → `false`(#1024) | CAUGHT | CAUGHT |
+| M5 | 함수 안 `opts.kind` → `"trade"` | CAUGHT | CAUGHT |
+| **R2-1** | **호출부** `ordinal: 0` 고정 | **SURVIVED** | **CAUGHT** |
+| **R2-2** | **호출부** `typeLabelLimit: 999` | **SURVIVED** | **CAUGHT** |
+| **R2-3** | **호출부** `pyeongFirst: false` 고정 | **SURVIVED** | **CAUGHT** |
+| **R2-4** | **호출부** `kind: "trade"` 고정 | **SURVIVED** | **CAUGHT** |
+| **R2-5** | 버짓 밖에 라벨을 **아예 안 붙인다** | **SURVIVED** | **CAUGHT** |
+| **R2-6** | `pyeongFirst: !opts.pyeongFirst`(방향 반전) | **SURVIVED** | **CAUGHT** |
+| **R2-8** | 대칭 테스트의 프로덕션 호출 삭제(공허성) | **SURVIVED** | **CAUGHT** |
+| R2-7 | `bounds.extend` 제거 | SURVIVED | **SURVIVED**(§3-3 부채) |
 
-★M5 는 **첫 시도에서 주입 실패**(줄번호 1줄 오차)했고 도구가 `§B8` 로 **중단**시켰다 —
-`grep -c` 를 믿었으면 «초록 = SURVIVED» 로 오독했을 자리다.
+기준선 초록 **222건**(스코프 `components/map/__tests__` · 32파일).
 
-★**닫지 못하는 것**: 실브라우저(§3-1) · **형제 마커(§3-2 — 미측정이 아니라 실측 SURVIVED)**.
+★**처방의 축**: 「호출부를 소스로 잠근다」가 아니라 **effect 자체를 태운다**.
+`lib/leaflet-loader.ts` 가 CDN 이 아니라 **번들 `import("leaflet")`** 이라
+`render(<SatongMultiMap …/>)` 만으로 **진짜 지도가 뜨고 마커가 DOM 에 그려진다**
+(실측 — 형제 스모크의 *"CDN 이라 onload 가 발화하지 않는다"* 주석은 **낡았다**).
+새 하네스 `components/map/__tests__/SatongMultiMap.marketEffectWiring.test.tsx` 가 **사용자가 보는 DOM**(마커 `path` ·
+`.leaflet-tooltip` 텍스트)으로 네 축을 한 번에 잠근다.
+
+★**내 픽스처가 한 축을 무력화했다**(실측): 전월세 그룹에 매매가를 안 실어서 `kind` 고정
+변이가 **바꿀 것이 없어 SURVIVED** 했다. ***분기를 만들었으면 그 분기를 태우는 행이
+픽스처에 있어야 한다*** — 가격 필드를 양쪽 다 싣자 CAUGHT 로 뒤집혔다.
+
+★**닫지 못하는 것**: 실브라우저(§3-1) · **형제 마커**(§3-2) · **`bounds.extend`**(§3-3) — 셋 다 **미측정이 아니라 실측 SURVIVED** 다.

@@ -162,10 +162,19 @@ describe("★배선 동일성 — 팝업 유형과 마커 색이 **같은 entry*
     expect(group.getLayers().length, "두 번째 마커가 안 붙었다").toBe(2);
   });
 
-  it("★대칭 — `group` 을 안 주면 **붙이지 않는다**(«항상 붙인다» 배제)", () => {
+  it("★대칭 — `group` 을 **준 것만** 붙는다(«인자를 무시하고 항상 붙인다» 배제)", () => {
+    // ★★초판은 `group` 을 **넘기지도 않고** 그 group 이 비었다고 단언했다 — `0 === 0`,
+    //   즉 **공허한 참**이었다. 적대 리뷰가 실증했다: 프로덕션 호출 줄을 통째로 지워도
+    //   초록이었다(SURVIVED). ***단언이 무엇을 배제하는지 물어야 한다.***
+    //   지금은 **같은 실행에서 두 모집단**을 만든다 — 준 마커는 붙고 안 준 마커는 안 붙는다.
     const group = L.layerGroup();
-    mk("apt", {}, {});
-    expect(group.getLayers().length).toBe(0);
+    expect(group.getLayers().length, "공허 진리 가드").toBe(0);
+    mk("apt", {}, { group });
+    mk("land", {}, {});
+    expect(
+      group.getLayers().length,
+      "1이 아니다 — 0이면 준 것도 안 붙었고, 2면 안 준 것까지 붙었다",
+    ).toBe(1);
   });
 
   it("★★MAJOR-3 — 라벨 버짓이 판정된다(`ordinal < typeLabelLimit`)", () => {
@@ -175,11 +184,19 @@ describe("★배선 동일성 — 팝업 유형과 마커 색이 **같은 entry*
     expect(build("apt", {}, { group: map, ordinal: 0, typeLabelLimit: 3 }).tooltipText ?? "").toContain(
       "화도읍 창현리 736-1",
     );
-    // ★두 모집단 — 버짓 밖 → hover(열기 전엔 DOM 없음)
+    // ★★두 모집단 — 버짓 밖은 **hover 라벨**이어야 한다.
+    //   초판은 `tooltipText === null` 만 봤는데, 그건 **라벨을 아예 안 붙여도 참**이다
+    //   (적대 리뷰 실측: 버짓 밖에 `bindSatongLabel` 을 아예 안 부르는 변이가 SURVIVED —
+    //   hover 라벨이 통째로 사라져도 초록이었다). 「없음」과 「안 열림」을 갈라 단언한다.
+    const 버짓밖 = mk("apt", {}, { group: map, ordinal: 3, typeLabelLimit: 3 }) as {
+      getTooltip: () => { options: { permanent?: boolean } } | undefined;
+    };
+    expect(버짓밖.getTooltip(), "버짓 밖 마커에 라벨이 **아예 없다** — hover 로도 못 본다").toBeTruthy();
     expect(
-      build("apt", {}, { group: map, ordinal: 3, typeLabelLimit: 3 }).tooltipText,
+      버짓밖.getTooltip()!.options.permanent,
       "버짓을 넘겼는데 상시 라벨이다 — 라벨 스팸",
-    ).toBeNull();
+    ).toBe(false);
+    expect(readMarker(버짓밖).tooltipText, "hover 라벨인데 열기 전부터 DOM 에 떠 있다").toBeNull();
     // ★경계 — 정확히 `<` 인가(`<=` 면 하나 더 샌다)
     expect(build("apt", {}, { group: map, ordinal: 2, typeLabelLimit: 3 }).tooltipText ?? "").toContain(
       "화도읍",
@@ -190,14 +207,33 @@ describe("★배선 동일성 — 팝업 유형과 마커 색이 **같은 entry*
     const map = onMap();
     const 총액먼저 = build("apt", {}, { group: map, pyeongFirst: false }).tooltipText ?? "";
     const 평당먼저 = build("apt", {}, { group: map, pyeongFirst: true }).tooltipText ?? "";
-    expect(총액먼저, "가격 표기가 비었다 — 아래 대조가 공허하다").not.toBe("");
-    expect(평당먼저, "`pyeongFirst` 가 라벨에 아무 영향이 없다 — 배선이 끊겼다").not.toBe(총액먼저);
+    // ★★초판은 `not.toBe` 뿐이라 **뒤집힌 구현도 통과**했다(적대 리뷰 실측:
+    //   `pyeongFirst: !opts.pyeongFirst` 변이가 SURVIVED — 「평당 우선」을 켜면 총액이
+    //   앞에 오는 상태다). ***방향이 있는 결함에는 방향이 있는 단언을 건다.***
+    expect(총액먼저, "가격 표기가 비었다 — 아래 대조가 공허하다").toContain("8,250만");
+    expect(총액먼저, "평당 표기가 없다").toContain("842만/평");
+    expect(
+      총액먼저.indexOf("8,250만"),
+      "`pyeongFirst:false` 인데 총액이 평당보다 뒤에 온다",
+    ).toBeLessThan(총액먼저.indexOf("842만/평"));
+    expect(
+      평당먼저.indexOf("842만/평"),
+      "`pyeongFirst:true` 인데 총액이 앞에 온다 — 순서가 반대로 배선됐다",
+    ).toBeLessThan(평당먼저.indexOf("8,250만"));
   });
 
   it("★★전월세 모집단 — `kind:\"rent\"` 도 돈다(매매만 태우면 절반이 샌다)", () => {
     const 월세 = build("apt", { avg_deposit_10k: 1000, avg_monthly_10k: 50 }, { kind: "rent" });
     expect(월세.html, "전월세 팝업이 보증금 축을 안 그린다").toContain("보증금");
     expect(월세.html, "전월세인데 유형이 안 실렸다").toContain("아파트");
+    // ★라벨 계약도 함께 — `composeMarketPriceTag` 는 전월세에 가격을 **안 붙인다**.
+    //   그 계약이 이 하네스에서 0건 단언이었다(적대 리뷰 MINOR-7).
+    const map = onMap();
+    const 월세라벨 =
+      build("apt", { avg_price_10k: 8250, avg_deposit_10k: 1000 }, { kind: "rent", group: map })
+        .tooltipText ?? "";
+    expect(월세라벨, "전월세 라벨에 이름이 없다 — 대조가 공허하다").toContain("화도읍");
+    expect(월세라벨, "전월세 라벨에 **매매가**가 붙었다").not.toContain("8,250만");
   });
 
   it("★순서 의존 — `bindPopup` 이 라벨보다 **먼저**여야 라벨이 클릭 가능해진다(#1024)", () => {
@@ -221,11 +257,32 @@ describe("★배선 동일성 — 팝업 유형과 마커 색이 **같은 entry*
   //   적고 코드에 0건이었다 — 적대 리뷰가 산출물로 잡았다(§F-24).
   it.todo(
     "★형제 마커의 동일성 축 — **미측정이 아니라 실측 SURVIVED ×2**(2026-09-09 적대 리뷰): " +
-      "분양 `status` 를 \"미정\"으로 고정 → 386파일 3528건 초록 · POI 색을 하나로 고정 → 같음. " +
+      "분양 `status` 를 \"미정\"으로 고정 → 386파일 3,534건 초록 · POI 색을 하나로 고정 → 같음. " +
       "★대조군: 같은 도구·스코프에서 실거래 축 변이는 CAUGHT 다(도구 사망 아님). " +
       "★`presalePopupHtml`·`auctionPopupHtml` 은 **export 조차 안 돼** 지금 구조로는 행위 검증 불가 — " +
       "별건 PR 에서 이 함수와 같은 형태로 꺼낸다",
   );
+  it.todo(
+    "★`bounds.extend` 무잠금 — **미측정이 아니라 실측 SURVIVED**(R2 MINOR-1): 그 줄을 지우면 " +
+      "지도가 실거래 마커로 fit 하지 않는데 228건 초록이다. 이 PR 이 그 줄을 건드리지 않았으므로 " +
+      "**선재 부채**로 남긴다 — 화면 fit 을 DOM 에서 판정할 매체를 먼저 정해야 한다",
+  );
+
+  it("★★부채 목록이 **목록형이 아니다** — 마커 생성 지점을 소스에서 파생시켜 센다", () => {
+    // ★★초판 `it.todo` 는 형제를 **손으로 셋(분양·경매·POI)** 적었는데, 실제 모집단은
+    //   `L.circleMarker|L.marker(` 기준 **14곳**이다(개발계획·중심 마커 등이 빠져 있었다).
+    //   ***목록은 곧 상한이 된다*** — 새 마커 경로가 생겨도 그 목록은 조용하다.
+    //   그래서 **수를 파생**시켜 못 박는다: 늘면 여기서 빨개지고, 그때 부채도 함께 센다.
+    const raw = readFileSync(resolve(process.cwd(), "components/map/SatongMultiMap.tsx"), "utf-8");
+    const src = __stripCommentsForScan(raw, "components/map/SatongMultiMap.tsx");
+    const 지점 = (src.match(/L\.(circleMarker|marker)\(/g) ?? []).length;
+    expect(지점, "공허 진리 가드 — 조회기가 죽었다").toBeGreaterThan(5);
+    expect(
+      지점,
+      "마커 생성 지점 수가 바뀌었다 — 새 경로가 생겼다면 그 유형·상태 동일성 축이 " +
+        "잠겨 있는지 확인하고 이 수를 갱신하라(지금 행위로 잠긴 것은 `buildMarketMarker` 하나뿐)",
+    ).toBe(14);
+  });
 });
 
 describe("★호출부 배선 — effect 가 `entry` 를 **통째로** 넘긴다(소스 락 · 약함을 명시)", () => {
