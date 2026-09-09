@@ -31,6 +31,7 @@ from __future__ import annotations
 import sys
 import uuid
 
+import bcrypt
 import pytest
 
 _NEEDS_311 = pytest.mark.skipif(
@@ -136,8 +137,78 @@ def test_password_is_optional_in_the_request_schema() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# B. 행위 — 두 모집단(CI 3.12)
+# B. 판정 — **서비스 층이라 로컬에서 돈다**(핵심 행위 락)
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# ★★2026-09-09: 앞 판은 이 판정이 라우터 안에 있어 행위 락이 전부 `skipif`(CI 전용)였고,
+#   **CI 에서 처음 실행돼 빨개졌다** — 내 스텁이 SQLAlchemy Row 를 튜플로 흉내 냈기 때문
+#   (`AttributeError: 'tuple' object has no attribute 'password_hash'`).
+#   **skip 된 락은 「통과」가 아니라 「아직 모른다」다.**
+#   ⇒ 판정을 의존 없는 `app/services/sales/site_entry.py` 로 내렸다.
+
+
+def test_no_secret_means_membership_is_enough() -> None:
+    """★★비번이 **설정돼 있지 않으면** 멤버십으로 진입한다 — 라이브 11/14 현장의 차단 요인."""
+    from app.services.sales.site_entry import verify_site_secret
+
+    assert verify_site_secret(None, None) == "membership"
+    assert verify_site_secret("", "아무거나") == "membership"
+
+
+def test_correct_secret_is_accepted_and_wrong_is_rejected() -> None:
+    """★★**반대편 모집단** — 설정돼 있으면 **여전히 검증**한다(맞으면 통과·틀리면 거부).
+
+    이것이 없으면 위 단언이 «비번을 통째로 걷어냈다» 와 구별되지 않는다.
+    """
+    from app.services.sales.site_entry import verify_site_secret
+
+    h = bcrypt.hashpw(b"correct-horse", bcrypt.gensalt()).decode()
+    assert verify_site_secret(h, "correct-horse") == "password"
+    assert verify_site_secret(h, "wrong") == "reject"
+    assert verify_site_secret(h, None) == "reject"
+    assert verify_site_secret(h, "") == "reject"
+
+
+def test_broken_hash_is_rejected_not_waved_through() -> None:
+    """★깨진 해시는 **거부**한다(fail-closed) — «파싱 못 하니 통과» 는 그 자체가 우회로다."""
+    from app.services.sales.site_entry import verify_site_secret
+
+    for broken in ("not-a-hash", "$2b$xx$짧음", "x" * 5):
+        assert verify_site_secret(broken, "무엇이든") == "reject", broken
+
+
+def test_three_outcomes_are_distinct() -> None:
+    """★세 결과가 **서로 다른 값**이다 — 뭉치면 호출부가 401 과 진입을 못 가른다."""
+    from app.services.sales.site_entry import verify_site_secret
+
+    h = bcrypt.hashpw(b"pw", bcrypt.gensalt()).decode()
+    outs = {verify_site_secret(None, None),
+            verify_site_secret(h, "pw"),
+            verify_site_secret(h, "no")}
+    assert outs == {"membership", "password", "reject"}, f"실측: {outs}"
+
+
+def test_router_delegates_the_decision() -> None:
+    """★배선 — 라우터가 그 판정을 **부르고**, 자기 손으로 bcrypt 를 비교하지 않는가."""
+    import ast
+    fn = _enter_fn()
+    calls = {c.func.id for c in ast.walk(fn)
+             if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+    assert "verify_site_secret" in calls, "판정을 서비스 층에 위임하지 않는다"
+    src = ast.unparse(fn)
+    assert "checkpw" not in src, (
+        "라우터가 여전히 직접 bcrypt 를 비교한다 — 판정이 두 벌이 된다"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# C. 라우터 왕복 — CI 3.12 전용(같은 축을 위 B 가 로컬에서 덮는다)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ★실제 bcrypt 해시(평문 "correct-horse"). 가짜 문자열을 주면 `checkpw` 가 ValueError 를 내
+#   테스트가 «틀린 비번은 401» 이 아니라 «해시가 깨졌다» 를 재게 된다.
+_REAL_HASH = bcrypt.hashpw(b"correct-horse", bcrypt.gensalt()).decode()
+
 
 class _Res:
     def __init__(self, row):
@@ -145,6 +216,19 @@ class _Res:
 
     def first(self):
         return self._row
+
+
+class _PwRow:
+    """★SQLAlchemy Row 는 **속성 접근**을 지원한다 — 튜플로 흉내 내면 실제 코드를 못 태운다.
+
+    실제로 그 차이가 CI 에서 드러났다(2026-09-09):
+    `AttributeError: 'tuple' object has no attribute 'password_hash'`.
+    로컬은 `skipif` 로 이 테스트를 건너뛰어 **CI 에서 처음 실행**됐다 —
+    ★**skip 된 락은 「통과」가 아니라 「아직 모른다」다.**
+    """
+
+    def __init__(self, password_hash: str):
+        self.password_hash = password_hash
 
 
 class _DB:
@@ -158,7 +242,8 @@ class _DB:
         q = " ".join(str(stmt).split())
         self.sql.append(q)
         if "sales_site_passwords" in q:
-            return _Res(("$2b$12$" + "x" * 53,) if self._has else None)
+            # bcrypt 가 파싱할 수 있는 **실제 해시**여야 한다(가짜 문자열이면 ValueError).
+            return _Res(_PwRow(_REAL_HASH) if self._has else None)
         return _Res(None)          # 잠금 이력 없음
 
     async def commit(self):

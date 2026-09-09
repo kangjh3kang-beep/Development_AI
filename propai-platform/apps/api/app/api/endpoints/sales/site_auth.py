@@ -35,6 +35,9 @@ from app.api.deps import get_current_user, get_db
 # 선택 기준(상위 권한 우선)과 일치시킨다(표시=적용 일관).
 from app.api.deps_sales import _SUPERADMIN_ROLES, _node_priority
 from app.core.config import settings
+
+# ★진입 판정은 의존 없는 서비스 모듈에 산다 — 어디서든 태울 수 있게(2026-09-09).
+from app.services.sales.site_entry import verify_site_secret
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
 
 logger = logging.getLogger(__name__)
@@ -357,11 +360,9 @@ async def enter_site(site_id: str, body: EnterRequest,
             "auth": "membership",
         }
 
-    ok = False
-    try:
-        ok = bcrypt.checkpw((body.password or "").encode(), pw.password_hash.encode())
-    except (ValueError, TypeError):
-        ok = False
+    # ★판정은 **서비스 층**이 한다(`site_entry.verify_site_secret`) — 라우터는 3.10 에서
+    #   임포트조차 안 돼(PEP 695 의존) 여기 두면 **CI 에서 처음 실행되는 락**만 남는다.
+    ok = verify_site_secret(pw.password_hash, body.password) == "password"
 
     if not ok:
         # 실패 누적 + 임계 도달 시 잠금
