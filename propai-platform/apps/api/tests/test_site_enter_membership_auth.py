@@ -192,12 +192,28 @@ def test_router_delegates_the_decision() -> None:
     """★배선 — 라우터가 그 판정을 **부르고**, 자기 손으로 bcrypt 를 비교하지 않는가."""
     import ast
     fn = _enter_fn()
+    # ★★축은 «`resolve_entry` 라는 이름이 호출부 **집합**에 있는가» 가 **아니다**.
+    #   실측(2026-09-09 변이 ③): `outcome = verify_site_secret(...)` 로 되돌려도
+    #   멤버십 거부 줄의 `resolve_entry(role, None, None)` 이 그 집합을 만족시켜 **SURVIVED**.
+    #   존재를 잠그면 행위는 안 잠긴다 — 그래서 **«`outcome` 을 누가 만드는가»** 를 본다.
+    producer = None
+    for a in ast.walk(fn):
+        if (isinstance(a, ast.Assign) and len(a.targets) == 1
+                and isinstance(a.targets[0], ast.Name) and a.targets[0].id == "outcome"):
+            assert isinstance(a.value, ast.Call) and isinstance(a.value.func, ast.Name), (
+                "`outcome` 이 호출이 아닌 것으로 만들어진다 — 판정이 라우터 안으로 돌아왔다"
+            )
+            producer = a.value.func.id
+    assert producer == "resolve_entry", (
+        f"`outcome` 을 `{producer}` 가 만든다 — 판정을 **다섯 결과를 내는 층**에 위임하지 않는다"
+    )
+
+    # ★2치 판정 함수는 라우터에서 **아예 불리지 않아야** 한다(두 벌이 되면 갈라진다).
     calls = {c.func.id for c in ast.walk(fn)
              if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
-    # ★판정 함수 이름이 `verify_site_secret` → `resolve_entry` 로 올라갔다(리뷰 C2·M1).
-    #   라우터가 부르는 것은 **다섯 결과를 내는 쪽**이어야 한다 — 참/거짓 두 값짜리를
-    #   부르면 「비멤버」·「안 보냈다」가 다시 라우터 안의 손 분기로 내려온다.
-    assert "resolve_entry" in calls, "판정을 서비스 층에 위임하지 않는다"
+    assert "verify_site_secret" not in calls, (
+        "라우터가 2치 판정을 직접 부른다 — 「비멤버」·「안 보냈다」가 다시 손 분기로 내려온다"
+    )
     src = ast.unparse(fn)
     assert "checkpw" not in src, (
         "라우터가 여전히 직접 bcrypt 를 비교한다 — 판정이 두 벌이 된다"
