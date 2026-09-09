@@ -49,8 +49,10 @@ from app.api.endpoints.sales.market import _LINKED_REASONS
 # ★판정은 **서비스 층**에 산다(`org/join.py`) — 라우터에 두면 FastAPI 의존 때문에
 #   아무도 태울 수 없다(PR #1021 에서 정확히 그 형태로 데였다). 여기 남는 것은 HTTP 매핑뿐이다.
 from app.services.sales.org.join import (
+    SelfApprovalError,
     SponsorNotEligibleError,
     SponsorNotFoundError,
+    assert_not_self_decision,
     link_membership,
     prepare_join_request,
     reload_sponsor_node,
@@ -341,8 +343,10 @@ async def decide_join_request(request_id: uuid.UUID, body: DecideBody,
     #   플랫폼 역할(superadmin/developer)은 조직노드가 없어 「이미 멤버」 검사를 통과해
     #   자기 신청을 만들 수 있고, 그다음 플랫폼 분기로 **자기가 자기를 승인**해
     #   대행사 루트 아래에 자신을 넣을 수 있었다. 승인은 **남이 하는 것**이다.
-    if str(applicant_id) == str(user.id):
-        raise HTTPException(403, "자기 신청은 스스로 승인·거절할 수 없습니다")
+    try:
+        assert_not_self_decision(applicant_id, user.id)
+    except SelfApprovalError as e:
+        raise HTTPException(403, str(e)) from e
 
     can, approver_node = await resolve_approver_node(db, site_id, user)
     if not can:

@@ -1014,25 +1014,44 @@ async def test_sponsor_failures_are_indistinguishable(monkeypatch) -> None:
     assert len(next(iter(msgs))) > 10
 
 
-def test_self_approval_is_blocked() -> None:
-    """★★자기 신청을 스스로 승인할 수 없다(R1 C-5 · R2 가 «여전히 가능» 으로 재확인).
+async def test_self_approval_is_blocked() -> None:
+    """★★자기 신청을 스스로 결정할 수 없다 — **행위로** 태운다.
 
-    플랫폼 역할은 조직노드가 없어 「이미 멤버」 검사를 통과해 자기 신청을 만들 수 있고,
-    그다음 플랫폼 분기로 **자기가 자기를 승인**해 대행사 루트 아래에 자신을 넣을 수 있었다.
-
-    ★축은 **`decide` 함수 안의 비교문**이다(파일 grep 아님 — `user.id` 는 여러 번 나온다).
+    ★★2026-09-09 R3 리뷰 M-1: 앞 판은 이 락이 **AST 모양**(«비교문 + raise»)만 봤다.
+      그래서 `==` 를 `is` 로 바꾸자 — `str(a) is str(b)` 는 새 객체라 **항상 False** 라
+      차단이 **완전히 꺼지는데** — `::VERDICT=SURVIVED` 였다.
+      **존재를 잠그면 행위는 안 잠긴다.** 이제 판정 함수를 직접 부른다.
     """
+    from app.services.sales.org import join as mod
+
+    same = uuid.uuid4()
+    with pytest.raises(mod.SelfApprovalError):
+        mod.assert_not_self_decision(same, same)
+    # ★문자열/UUID 가 섞여 들어와도 같은 사람이면 막는다(라우터는 두 형을 섞어 넘긴다).
+    with pytest.raises(mod.SelfApprovalError):
+        mod.assert_not_self_decision(str(same), same)
+
+    # ★★반대편 모집단 — 남의 신청은 **통과**한다(전부 막으면 파이프라인이 죽는다).
+    mod.assert_not_self_decision(uuid.uuid4(), uuid.uuid4())
+
+
+def test_router_maps_self_approval_to_403() -> None:
+    """★배선 — 라우터가 그 판정을 부르고 **403 으로** 옮기는가."""
     fn = _fn("decide_join_request")
-    guarded = False
-    for node in ast.walk(fn):
-        if not isinstance(node, ast.If):
-            continue
-        test = ast.unparse(node.test)
-        if "applicant_id" in test and "user.id" in test:
-            raised = [r for r in ast.walk(node) if isinstance(r, ast.Raise)]
-            assert raised, f"비교는 하는데 거부하지 않는다: {test}"
-            guarded = True
-    assert guarded, "자기 신청을 스스로 승인할 수 있다 — 승인은 **남이 하는 것**이다"
+    calls = {c.func.id for c in ast.walk(fn)
+             if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+    assert "assert_not_self_decision" in calls, "자기 승인 판정을 안 부른다"
+
+    codes = {
+        c.args[0].value
+        for h in ast.walk(fn) if isinstance(h, ast.ExceptHandler) and h.type is not None
+        and "SelfApprovalError" in ast.unparse(h.type)
+        for c in ast.walk(h)
+        if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+        and c.func.id == "HTTPException" and c.args and isinstance(c.args[0], ast.Constant)
+    }
+    assert codes == {403}, f"자기 승인이 403 이 아니다: {codes}"
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════

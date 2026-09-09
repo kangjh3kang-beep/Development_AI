@@ -271,3 +271,25 @@ async def reload_sponsor_node(db: AsyncSession, site_id, sponsor_node_id):
         SalesOrgNode.site_id == site_id,
         SalesOrgNode.active.is_(True),
         SalesOrgNode.deleted_at.is_(None)))).scalars().first()
+
+
+class SelfApprovalError(ValueError):
+    """자기 신청은 스스로 결정할 수 없다 — **승인은 남이 하는 것**이다."""
+
+
+def assert_not_self_decision(applicant_user_id, decider_user_id) -> None:
+    """신청자와 결정자가 같은 사람인지 — **서비스 층에서** 판정한다.
+
+    ## 왜 라우터가 아니라 여기인가 (2026-09-09 R3 리뷰 M-1)
+
+    앞 판은 이 비교를 라우터에 인라인으로 두고 락은 **AST 모양**(«비교문이 있고 그 안에 raise 가
+    있다»)만 봤다. 그래서 리뷰어가 `==` 를 `is` 로 바꾸자 — 파이썬에서 `str(a) is str(b)` 는
+    **새 객체라 항상 False** 라 차단이 **완전히 꺼지는데** — 모든 락이 초록이었다
+    (`::VERDICT=SURVIVED`). **존재를 잠그면 행위는 안 잠긴다.**
+
+    ★플랫폼 역할(`superadmin`/`developer`)은 조직노드가 **없어서** 「이미 멤버」 검사를
+      통과해 자기 신청을 만들 수 있고, 그다음 플랫폼 분기로 자기가 자기를 승인해
+      대행사 루트 아래에 자신을 넣을 수 있었다.
+    """
+    if str(applicant_user_id) == str(decider_user_id):
+        raise SelfApprovalError("자기 신청은 스스로 승인·거절할 수 없습니다")
