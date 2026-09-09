@@ -22,6 +22,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { bindSatongLabel } from "@/lib/satong-map-labels";
 
+/**
+ * ★Leaflet 의 `bindTooltip` 시그니처는 `content: Tooltip | ((layer)=>Content) | Content` 로
+ *   **좁고**, `bindSatongLabel` 의 인자는 `content: unknown` 을 받는 **구조적 타입**이다.
+ *   반공변성 때문에 실 Leaflet 마커를 그대로 넘기면 `tsc` 가 거부한다(실측: TS2345).
+ *   프로덕션 호출부는 마커가 `any` 경로로 들어와 문제가 없었고, **이 테스트가 처음으로
+ *   진짜 타입을 넘겨 그 간극을 드러냈다.** 여기서만 좁혀 준다 — 런타임 동작은 동일하다.
+ */
+const label = (m: unknown, text: string, opts: { permanent: boolean; offsetY?: number }) =>
+  bindSatongLabel(m as Parameters<typeof bindSatongLabel>[0], text, opts);
+
 type LeafletNS = typeof import("leaflet");
 
 let L: LeafletNS;
@@ -70,7 +80,7 @@ describe("★신고③ 나머지 절반 — 라벨 클릭이 필지 선택으로
     const marker = L.circleMarker([37.5, 127.0], { radius: 8 })
       .bindPopup("<b>상업업무용</b>")
       .addTo(map);
-    bindSatongLabel(marker, "8,250만", { permanent: true, offsetY: 8 });
+    label(marker, "8,250만", { permanent: true, offsetY: 8 });
     let mapClicks = 0;
     map.on("click", () => { mapClicks += 1; });
 
@@ -81,7 +91,7 @@ describe("★신고③ 나머지 절반 — 라벨 클릭이 필지 선택으로
   it("★★두 모집단 — 그런데 **지도 빈 곳 클릭은 여전히 발화**한다", () => {
     // ★위 케이스만 재면 «지도 클릭을 통째로 막는» 구현도 만점이다.
     const marker = L.circleMarker([37.5, 127.0], { radius: 8 }).bindPopup("x").addTo(map);
-    bindSatongLabel(marker, "8,250만", { permanent: true, offsetY: 8 });
+    label(marker, "8,250만", { permanent: true, offsetY: 8 });
     let mapClicks = 0;
     map.on("click", () => { mapClicks += 1; });
 
@@ -93,7 +103,7 @@ describe("★신고③ 나머지 절반 — 라벨 클릭이 필지 선택으로
     const marker = L.circleMarker([37.5, 127.0], { radius: 8 })
       .bindPopup("<b>상업업무용</b> 8,250만")
       .addTo(map);
-    bindSatongLabel(marker, "8,250만", { permanent: true, offsetY: 8 });
+    label(marker, "8,250만", { permanent: true, offsetY: 8 });
     // ★공허 진리 가드 — 시작 상태가 닫힘이어야 아래 전이가 의미를 갖는다.
     expect(marker.isPopupOpen()).toBe(false);
 
@@ -104,7 +114,7 @@ describe("★신고③ 나머지 절반 — 라벨 클릭이 필지 선택으로
   it("★팝업이 **없는** 라벨(측정·선택 앵커)은 아무 일도 안 한다 — 그래도 지도로는 안 샌다", () => {
     // 앵커 3곳(선택 필지 라벨·측정 면적·측정 누적거리)이 이 모집단이다.
     const anchor = L.circleMarker([37.5, 127.0], { radius: 1, opacity: 0 }).addTo(map);
-    bindSatongLabel(anchor, "1,542㎡", { permanent: true, offsetY: 0 });
+    label(anchor, "1,542㎡", { permanent: true, offsetY: 0 });
     let mapClicks = 0;
     map.on("click", () => { mapClicks += 1; });
 
@@ -115,7 +125,7 @@ describe("★신고③ 나머지 절반 — 라벨 클릭이 필지 선택으로
 
   it("★hover 라벨(permanent:false)도 같은 계약이다 — 상시 라벨만 고치면 절반이 샌다", () => {
     const marker = L.circleMarker([37.5, 127.0], { radius: 8 }).bindPopup("x").addTo(map);
-    bindSatongLabel(marker, "8,250만", { permanent: false, offsetY: 8 });
+    label(marker, "8,250만", { permanent: false, offsetY: 8 });
     marker.openTooltip(); // hover 를 흉내 낸다
     let mapClicks = 0;
     map.on("click", () => { mapClicks += 1; });

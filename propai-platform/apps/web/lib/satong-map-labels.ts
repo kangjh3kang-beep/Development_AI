@@ -133,6 +133,12 @@ function bindClickToLabelEl(host: SatongLabelHost): void {
     ev.preventDefault();
     // ★팝업이 있으면 연다. **호출부별 분기를 두지 않는다**(목록은 곧 상한) —
     //   «팝업을 가졌는가»를 물어서 가른다.
+    // ★★`getPopup?.()` 가드를 지우는 변이는 **SURVIVED 이고 그 생존은 등가다** —
+    //   Leaflet 의 `openPopup` 이 `if (this._popup) {…}` 로 시작해 팝업이 없으면 **무동작**이다
+    //   (`leaflet-src.js:10517-10518` 원문 확인). 즉 Leaflet 호스트에서는 가르는 입력이 없다.
+    //   ★그래도 남긴다: 이 함수의 인자는 **구조적 타입**(`SatongLabelHost`)이라 Leaflet 이 아닌
+    //     호스트도 받을 수 있고, 그때 «팝업이 없는데 여는» 호출이 무해하다는 보장이 없다.
+    //     §변이 규율 — **설명할 수 없는 생존만 구멍**이다. 사유를 여기 적고 점수용 단언은 만들지 않는다.
     if (typeof host.openPopup === "function" && host.getPopup?.()) host.openPopup();
   });
 }
