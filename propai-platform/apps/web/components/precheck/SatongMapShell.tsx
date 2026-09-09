@@ -45,7 +45,10 @@ import { useToastOptional } from "@propai/ui"; // UX 트랙 C3 — 내보내기 
 import { ApiClientError, apiClient, apiV1BaseUrl, hasAccessToken } from "@/lib/api-client";
 import { formatArea, formatPercent, formatPercentPoint } from "@/lib/formatters"; // 면적·비율 표기 SSOT(비율=정수 반올림 금지·0과 미확보 구분)
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
-import { AnalysisPipelineStepbar, type PipelineStep } from "@/components/common/AnalysisPipelineStepbar"; // UX 트랙 C4 — 엑셀 업로드 진행표시(기존 프리미티브 재사용)
+import { AnalysisPipelineStepbar, type PipelineStep } from "@/components/common/AnalysisPipelineStepbar";
+import { BuildingOverviewModal } from "@/components/building-overview/BuildingOverviewModal";
+import { deriveLandAreaIntake } from "@/lib/building-overview-intake";
+import type { BuildingOverview } from "@/lib/building-overview"; // UX 트랙 C4 — 엑셀 업로드 진행표시(기존 프리미티브 재사용)
 import { ContextHeader } from "@/components/common/ContextHeader"; // 집계 SSOT 단일표면(UX 트랙 B2)
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { DominantConstraintBanner } from "@/components/precheck/DominantConstraintBanner"; // W1 지배 제약 — 필지 상세 최상단
@@ -850,6 +853,17 @@ export function SatongMapShell({
   const integrityNotice = useMemo(
     () => selectionIntegrityNotice(selectionIntegrity),
     [selectionIntegrity],
+  );
+
+  // ★건축개요 입력(2026-09-09) — 통합 필지에서 연다.
+  //   대지면적은 선택 필지 합계에서 자동 산입하되 **선택 무결성이 허락할 때만**이다.
+  //   위 주석(842행)이 적어 둔 사고 — 15.86km 떨어진 6필지가 「통합 5,781㎡」로 묶인 것 —
+  //   을 그대로 재현하지 않기 위해 `deriveLandAreaIntake` 를 경유한다.
+  const [overviewOpen, setOverviewOpen] = useState(false);
+  const [buildingOverview, setBuildingOverview] = useState<BuildingOverview | null>(null);
+  const landAreaIntake = useMemo(
+    () => deriveLandAreaIntake(selectedParcels.map((p) => p.areaSqm ?? null), selectionIntegrity),
+    [selectedParcels, selectionIntegrity],
   );
   // ★관측(2026-08-24) — 고지는 위에서 하지만 **빈도는 아무도 몰랐다.**
   //   빈도를 모르면 "이미 오염된 프로젝트를 정리할지"를 근거 없이 결정하게 된다.
@@ -4189,6 +4203,29 @@ export function SatongMapShell({
             <div className="mt-4">
               <p className="text-[11px] font-bold leading-4 text-[var(--text-hint)]">
                 완료(등록)·산출물 실행 시 &apos;{deriveProjectNameFromParcels(selectedParcels) ?? "새 프로젝트"}&apos; 프로젝트가 자동 생성됩니다.
+              </p>
+              {/* ★건축개요 입력 진입점 — 필지가 0개면 **비활성**(대지면적이 필지에서 오므로
+                  공허한 입력이 된다). 자동 산입 보류 사유는 모달이 보여 준다. */}
+              <button
+                type="button"
+                data-testid="open-building-overview"
+                disabled={selectedParcels.length === 0}
+                onClick={() => setOverviewOpen(true)}
+                className="mt-2 justify-self-start rounded-lg border border-[var(--line)] px-3 py-1.5 text-xs font-bold text-[var(--text-secondary)] disabled:opacity-40"
+              >
+                건축개요 입력{buildingOverview ? " (입력됨)" : ""}
+              </button>
+              <BuildingOverviewModal
+                open={overviewOpen}
+                intake={landAreaIntake}
+                initial={buildingOverview}
+                onSave={(v) => {
+                  setBuildingOverview(v);
+                  setOverviewOpen(false);
+                }}
+                onCancel={() => setOverviewOpen(false)}
+              />
+              <p className="hidden">
               </p>
               <button
                 type="button"

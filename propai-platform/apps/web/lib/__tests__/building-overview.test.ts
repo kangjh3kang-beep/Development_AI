@@ -15,7 +15,7 @@ import {
   deriveTotalGfaSqm,
   emptyBuildingOverview,
   sumGfaByUse,
-  useLineFromRaw,
+  makeUseLine,
   validateBuildingOverview,
 } from "@/lib/building-overview";
 
@@ -76,7 +76,7 @@ describe("파생 계산 — 두 모집단", () => {
 
 describe("용도 줄 — 원본 보존", () => {
   it("★정규화 전 문자열을 남긴다(정규화가 차이를 지우지 않게)", () => {
-    const line = useLineFromRaw("아파트", 1200, { unitCount: 20 });
+    const line = makeUseLine("아파트", 1200, { unitCount: 20 });
     expect(line).not.toBeNull();
     expect(line!.use).toBe("apartment");
     expect(line!.rawUse).toBe("아파트"); // ★원본
@@ -84,8 +84,8 @@ describe("용도 줄 — 원본 보존", () => {
   });
 
   it("★모르는 용도는 줄을 만들지 않는다(임의 코드로 떨어뜨리지 않는다)", () => {
-    expect(useLineFromRaw("토지", 100)).toBeNull();
-    expect(useLineFromRaw("기타", 100)).toBeNull();
+    expect(makeUseLine("토지", 100)).toBeNull();
+    expect(makeUseLine("기타", 100)).toBeNull();
   });
 });
 
@@ -97,7 +97,7 @@ describe("검증 — 모순만 신고한다", () => {
   it("★용도별 합이 전체를 넘으면 신고", () => {
     const o = base({
       aboveGroundGfaSqm: 1000,
-      uses: [useLineFromRaw("공동주택", 900)!, useLineFromRaw("상가", 300)!],
+      uses: [makeUseLine("공동주택", 900)!, makeUseLine("상가", 300)!],
     });
     expect(validateBuildingOverview(o).map((i) => i.field)).toContain("uses");
   });
@@ -105,7 +105,7 @@ describe("검증 — 모순만 신고한다", () => {
   it("★부동소수 오차를 위반으로 신고하지 않는다", () => {
     const o = base({
       aboveGroundGfaSqm: 1000,
-      uses: [useLineFromRaw("공동주택", 1000.2)!],
+      uses: [makeUseLine("공동주택", 1000.2)!],
     });
     expect(validateBuildingOverview(o)).toEqual([]);
   });
@@ -120,7 +120,7 @@ describe("어댑터 — 소비처 규약을 지킨다", () => {
   it("★공사비: 모르면 **null**(0 을 채우면 공사비가 0원으로 조용히 틀린다)", () => {
     expect(toConstructionCostAreas(base())).toBeNull();
     const got = toConstructionCostAreas(
-      base({ aboveGroundGfaSqm: 2000, uses: [useLineFromRaw("공동주택", 2000)!] }),
+      base({ aboveGroundGfaSqm: 2000, uses: [makeUseLine("공동주택", 2000)!] }),
     );
     expect(got).toEqual({ totalFloorArea: 2000, buildingUse: "공동주택" });
   });

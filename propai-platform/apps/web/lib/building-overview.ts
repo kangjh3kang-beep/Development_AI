@@ -137,8 +137,13 @@ export function validateBuildingOverview(o: BuildingOverview): OverviewIssue[] {
   return issues;
 }
 
-/** 임의 문자열 용도로 한 줄을 만든다 — **원본을 보존**한다. */
-export function useLineFromRaw(
+/**
+ * 임의 문자열 용도로 한 줄을 만든다 — **원본을 보존**한다.
+ *
+ * ★이름에 `use` 접두를 쓰지 않는다 — React 훅 규약이 예약한 형태라
+ *   `react-hooks/rules-of-hooks` 가 **콜백 안 호출을 오류로 신고**한다(2026-09-09 실측).
+ */
+export function makeUseLine(
   raw: string,
   gfaSqm: number,
   extra?: { unitCount?: number | null; avgExclusiveSqm?: number | null },
