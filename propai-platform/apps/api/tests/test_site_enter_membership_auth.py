@@ -45,7 +45,14 @@ _NEEDS_311 = pytest.mark.skipif(
         "라우터가 3.11+ 문법·API 두 가지에 의존한다(datetime.UTC · PEP 695) — CI(3.12)에서 실행된다. "
         "★같은 축을 임포트 없이 보는 AST 락이 아래에 있어 이 스킵이 무잠금을 뜻하지 않는다. "
         "★그래도 **AST 가 원리적으로 못 보는 것**이 있다: `if False:` 로 무력화해도 호출 노드는 "
-        "AST 에 남는다. 그래서 아래 CI 전용 왕복 테스트가 **세 모집단**(멤버십·틀린비번·맞는비번)을 태운다."
+        "AST 에 남는다. 그래서 아래 CI 전용 왕복 테스트가 **세 모집단**(멤버십·틀린비번·맞는비번)을 태운다. "
+        "★★그리고 이 스킵은 **로컬에서 없앨 수 있다**(2026-09-10 실측 — GDAL 불필요): "
+        "  /usr/bin/python3.12 -m venv ~/.venvs/propai312 && ~/.venvs/propai312/bin/pip install "
+        "fastapi 'sqlalchemy[asyncio]' pydantic pydantic-settings bcrypt 'python-jose[cryptography]' "
+        "pytest pytest-asyncio asyncpg httpx python-multipart email-validator geoalchemy2 structlog "
+        "  → ~/.venvs/propai312/bin/python -m pytest tests/test_site_enter_membership_auth.py "
+        "★변이 도구는 `sys.executable` 을 쓰므로 **도구 자체를 그 파이썬으로** 불러라. "
+        "★이 스킵을 방치하면 락이 **CI 에서 처음 실행**된다 — 실제로 CI 가 내 스텁 결함을 두 번 잡았다."
     ),
 )
 
@@ -697,3 +704,164 @@ def test_role_endpoint_exposes_lockout_state() -> None:
     assert "user_id=:u" in src, (
         "잠금 조회가 사용자로 좁혀지지 않는다 — 남의 잠금 상태가 새어 나간다"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# G. 3.12 재감사가 남긴 **설명 불가 생존**을 닫는다 (2026-09-10)
+#
+# ★로컬 3.12 venv 로 라우터를 태울 수 있게 되자 생존이 20 → 13 으로 줄었고,
+#   남은 것 중 **셋이 진짜 구멍**이었다. 셋 다 «내 단언이 그 자리를 안 본다» 였다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _enter(*, has_password: bool, password=None, tenant=None, role="MEMBER", site=None):
+    """두 경로를 **같은 방식으로** 태우는 헬퍼 — 계약 비교를 하려면 축이 같아야 한다.
+
+    ★`site` 를 인자로 받는다. 호출마다 새 현장을 만들면 `site_id` 가 달라져
+      «두 경로의 응답이 갈렸다» 는 **내 픽스처가 만든 거짓 차이**가 된다(실측 위양성).
+    """
+    import pytest as _pytest
+
+    from app.api.endpoints.sales import site_auth as mod
+
+    if site is None:
+        site = type("S", (), {"id": uuid.uuid4(), "site_code": "s1", "site_name": "현장"})()
+
+    async def _get_site(_db, _sid):
+        return site
+
+    async def _role(_db, _site, _user):
+        return ("a1.t1", role)
+
+    async def _ensure(_db):
+        pass
+
+    mp = _pytest.MonkeyPatch()
+    mp.setattr(mod, "_get_site", _get_site, raising=True)
+    mp.setattr(mod, "_resolve_role", _role, raising=True)
+    mp.setattr(mod, "_ensure", _ensure, raising=True)
+    try:
+        user = type("U", (), {"id": uuid.uuid4(), "tenant_id": tenant})()
+        body = mod.EnterRequest(password=password) if password is not None else mod.EnterRequest()
+        return await mod.enter_site(str(site.id), body, db=_DB(has_password=has_password),
+                                    user=user)
+    finally:
+        mp.undo()
+
+
+@_NEEDS_311
+@pytest.mark.asyncio
+async def test_both_entry_paths_return_the_same_response_contract() -> None:
+    """★★두 경로의 응답이 **같은 키 집합**인가 — `auth` 값만 달라야 한다.
+
+    ★변이 실측(2026-09-10 · 3.12): 멤버십 경로의 `token_type`·`expires_in`·`role_label`·
+      `features` 를 **줄삭제해도 생존**했다. 성공 경로(비번)는 필드를 하나씩 단언했는데
+      멤버십 경로는 `auth`·`site_token`·`role` 셋만 봤기 때문이다.
+    ⇒ 축을 «필드를 손으로 나열» 이 아니라 **«두 경로의 키 집합이 같다»** 로 바꾼다.
+      한쪽에서 필드가 빠지면 **양쪽 어디서 빠지든** 이 단언이 깨진다(파생형).
+    """
+    # ★**같은 현장**을 두 경로에 태운다 — 안 그러면 `site_id` 차이가 계약 차이로 오독된다.
+    site = type("S", (), {"id": uuid.uuid4(), "site_code": "s1", "site_name": "현장"})()
+    membership = await _enter(has_password=False, site=site)
+    password = await _enter(has_password=True, password="correct-horse", site=site)
+
+    assert set(membership) == set(password), (
+        "두 진입 경로의 응답 계약이 갈렸다 — 화면이 한쪽에서만 동작하게 된다: "
+        f"membership-only={sorted(set(membership) - set(password))} "
+        f"password-only={sorted(set(password) - set(membership))}"
+    )
+    # ★공허 방지 — 계약이 «비었다» 로 같아지면 안 된다.
+    assert len(membership) >= 8, f"응답 필드가 붕괴했다: {sorted(membership)}"
+
+    # ★구별되는 것은 **`auth` 하나뿐**이어야 한다(그것이 이 필드의 존재 이유다).
+    differing = {k for k in membership if membership[k] != password[k]}
+    assert "auth" in differing, "두 경로가 `auth` 로 구별되지 않는다"
+    assert differing <= {"auth", "site_token"}, (
+        f"`auth`(와 토큰) 말고도 갈리는 필드가 있다: {sorted(differing - {'auth', 'site_token'})}"
+    )
+    assert membership["auth"] == "membership" and password["auth"] == "password"
+
+
+@_NEEDS_311
+@pytest.mark.asyncio
+async def test_site_token_carries_the_users_tenant() -> None:
+    """★발급 토큰이 **그 사용자의 테넌트**를 싣는가.
+
+    ★변이 실측(2026-09-10): `getattr(user, "tenant_id", None)` 의 속성명을 바꿔도 **생존**했다.
+      기존 테스트가 `tenant_id=None` 인 사용자만 태워서 **바뀐 값과 원래 값이 같았다** —
+      두 모집단이 아니라 한 모집단이었다(픽스처가 차를 0으로 만든 전형).
+    """
+    from jose import jwt as _jwt
+
+    tenant = uuid.uuid4()
+    out = await _enter(has_password=False, tenant=tenant)
+    claims = _jwt.get_unverified_claims(out["site_token"])
+    assert claims["tenant_id"] == str(tenant), (
+        "현장 토큰이 사용자의 테넌트를 싣지 않는다 — 하류가 테넌트 스코프를 잃는다"
+    )
+    assert claims["site_role"] == "MEMBER"
+    assert claims["scope"] == "sales_site"
+
+    # ★반대편 모집단 — 테넌트가 없으면 `None` 이다(빈 문자열·문자열 "None" 이 아니라).
+    out2 = await _enter(has_password=False, tenant=None)
+    assert _jwt.get_unverified_claims(out2["site_token"])["tenant_id"] is None
+
+
+@_NEEDS_311
+@pytest.mark.asyncio
+async def test_role_endpoint_reports_lockout_at_runtime(monkeypatch) -> None:
+    """★`/role` 의 잠금 상태를 **행위로** 태운다(종전엔 AST 락뿐이었다).
+
+    ★변이 실측(2026-09-10): `locked_until = att.locked_until if att else None` 을 **줄삭제해도
+      생존**했다(그러면 `NameError` 로 500 이 난다). `site_role` 을 부르는 테스트가 0건이었다.
+    """
+    # ★`UTC` 는 3.11+ 다 — **함수 안에서** 임포트한다(모듈 최상단이면 3.10 수집이 깨진다).
+    from datetime import UTC, datetime
+
+    from app.api.endpoints.sales import site_auth as mod
+
+    site = type("S", (), {"id": uuid.uuid4(), "site_code": "s1", "site_name": "현장"})()
+    when = datetime(2026, 9, 10, 12, 0, tzinfo=UTC)
+
+    class _AttRow:
+        fail_count = 4
+        locked_until = when
+
+    class _RoleDB:
+        def __init__(self, *, attempt):
+            self._attempt = attempt
+
+        async def execute(self, stmt, params=None):
+            q = " ".join(str(stmt).split())
+            if "sales_site_login_attempts" in q:
+                return _Res(self._attempt)
+            if "sales_site_passwords" in q:
+                return _Res((1,))
+            return _Res(None)
+
+        async def commit(self):
+            pass
+
+    async def _get_site(_db, _sid):
+        return site
+
+    async def _role(_db, _site, _user):
+        return ("a1.t1", "MEMBER")
+
+    async def _ensure(_db):
+        pass
+
+    monkeypatch.setattr(mod, "_get_site", _get_site, raising=True)
+    monkeypatch.setattr(mod, "_resolve_role", _role, raising=True)
+    monkeypatch.setattr(mod, "_ensure", _ensure, raising=True)
+    user = type("U", (), {"id": uuid.uuid4(), "tenant_id": None})()
+
+    # 모집단 A — 잠긴 사용자: 언제 풀리는지와 몇 번 틀렸는지를 **말한다**.
+    locked = await mod.site_role(str(site.id), db=_RoleDB(attempt=_AttRow()), user=user)
+    assert locked["locked_until"] == when.isoformat(), "잠금 해제 시각을 말하지 않는다"
+    assert locked["fail_count"] == 4
+    assert locked["password_set"] is True
+
+    # 모집단 B — 이력 없는 사용자: 잠기지 않았음을 **구별 가능하게** 말한다.
+    clean = await mod.site_role(str(site.id), db=_RoleDB(attempt=None), user=user)
+    assert clean["locked_until"] is None
+    assert clean["fail_count"] == 0
