@@ -1201,3 +1201,40 @@ def test_every_link_membership_call_passes_the_reloaded_sponsor() -> None:
             f"{i}번째 호출의 sponsor 가 **재확인 결과가 아니다**: {kw['sponsor_node']}\n"
             "  ★None 이나 딴 값이면 «클릭 순서가 수수료 체인을 정한다» 가 되살아난다."
         )
+
+
+def test_sibling_tenant_guard_is_not_removed() -> None:
+    """★★형제 문(`assign_user_to_node`)의 **교차테넌트 차단이 살아 있는가**.
+
+    ★★2026-09-09 R3 리뷰 M-4. 이 PR 의 가입 승인 경로는 테넌트를 **의도적으로 안 본다**
+      (외부인을 들이는 «통로» — 결정 기록이 그렇게 갈랐다). 그런데 형제는 «같은 조직만» 을
+      명문으로 강제한다. **두 문이 정반대 규칙**이라, 다음 사람이 *"통일하자"* 며
+      **형제의 차단을 지울 위험**이 있다 — 그것이 회귀다.
+
+      결정 기록의 갈림:
+        · 「1인 1소속」(업계 표준 + 공인중개사법 §12②)      ⇒ **지킨다**(형제의 차단)
+        · 「외부인을 들일 통로가 없다」(병목·표준 아님)      ⇒ **고친다**(이 PR 의 문)
+
+    ★축은 «주석이 있나» 가 아니라 **«그 비교가 실행되고 거부로 이어지나»** 다.
+    """
+    svc = (_API / "app/services/sales/org/service.py").read_text(encoding="utf-8")
+    fn = next(
+        n for n in ast.walk(ast.parse(svc))
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "assign_user_to_node"
+    )
+
+    # 테넌트 비교를 담은 `if` 가 있고, 그 안에서 **거부**하는가.
+    guarded = False
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.If):
+            continue
+        test = ast.unparse(node.test)
+        if "org_id" in test and ("tenant" in test or "u[2]" in test):
+            raises = [r for r in ast.walk(node) if isinstance(r, ast.Raise)]
+            assert raises, f"테넌트를 비교하는데 거부하지 않는다: {test}"
+            guarded = True
+    assert guarded, (
+        "형제 문의 **교차테넌트 차단이 사라졌다** — 「1인 1소속」은 지키기로 한 명제다.\n"
+        "  ★이 PR 의 가입 경로가 테넌트를 안 보는 것은 **다른 축**(외부인 통로)이다.\n"
+        "  두 문을 «통일» 하려고 이 차단을 지우면 그것이 회귀다."
+    )
