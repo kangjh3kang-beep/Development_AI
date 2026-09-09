@@ -337,14 +337,21 @@ async def test_heal_log_does_not_swallow_string_watermarks_END_TO_END(monkeypatc
         def scalar(self): return self._scalar
 
     class _Db:
-        def __init__(self): self.n = 0
-        async def execute(self, *a, **k):
-            self.n += 1
-            if self.n == 1:
-                return _Res(scalar=0)          # COUNT(*)
-            if self.n == 2:
-                return _Res(rows=[])           # heal_action 이력(이 테스트의 대상 아님)
-            return _Res(rows=flag_rows)        # platform_settings 활성 플래그
+        """★질의를 **순번이 아니라 SQL 내용**으로 가른다(2026-09-09).
+
+        종전엔 `n == 1/2/else` 로 갈랐는데, 라우터에 질의가 하나만 늘어도 순번이 밀려
+        **엉뚱한 행 모양**이 파서로 들어간다(실제로 `heal_blocked` 질의 2개가 추가되자
+        플래그 행이 blocked 파서로 흘러 `ValidationError` 가 났다).
+        스텁도 계약이다 — 순번은 계약이 아니고 **질의 대상**이 계약이다.
+        """
+
+        async def execute(self, stmt=None, *a, **k):
+            sql = str(stmt) if stmt is not None else ""
+            if "platform_settings" in sql:
+                return _Res(rows=flag_rows)    # 활성 플래그(이 테스트의 대상)
+            if "COUNT(*)" in sql:
+                return _Res(scalar=0)
+            return _Res(rows=[])               # 이력 행(이 테스트의 대상 아님)
 
     out = await gr.heal_log(request=object(), db=_Db())
     got = {f.key: f.value for f in out.active_flags}
