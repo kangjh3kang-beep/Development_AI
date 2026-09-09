@@ -94,3 +94,30 @@ def test_every_interpreter_skip_names_how_to_run_it_locally() -> None:
         "인터프리터 때문에 건너뛰는 락이 **고치는 법을 안 달고** 있다 "
         f"(스킵 사유에 `{REMEDY_TOKEN}` 환경을 적어라): " + ", ".join(violations)
     )
+
+
+def test_the_remedy_token_actually_discriminates() -> None:
+    """★★이 파일의 판정식 자신을 잠근다 — **「0건」 락은 판정 함수를 약화시켜도 초록**이다.
+
+    ★실측(2026-09-10): `REMEDY_TOKEN` 을 `"import"`(거의 모든 파일에 있는 낱말)로 바꾸는
+      변이가 **SURVIVED** 했다. 위반이 0건이 되는 이유가 «다 지켰다» 가 아니라
+      «무엇으로 재도 통과» 였다 — 그 둘이 같은 초록으로 보인다.
+
+    ⇒ 축을 **«토큰을 단 파일 ⊆ 인터프리터 스킵 파일»** 로 잡는다. 토큰이 흔한 낱말이면
+      토큰을 단 파일이 모집단 밖으로 **넘쳐 나오고**, 그것이 곧 판별력 상실의 증거다.
+    """
+    pop = set(_files_with_interpreter_skip())
+    me = pathlib.Path(__file__).name
+    carriers = {
+        p.name for p in TESTS.glob("test_*.py")
+        if p.name != me and REMEDY_TOKEN in p.read_text(encoding="utf-8")
+    }
+    assert carriers, "해법 토큰을 단 파일이 **하나도 없다** — 조회기가 죽었다"
+
+    stray = sorted(carriers - pop)
+    assert not stray, (
+        f"`{REMEDY_TOKEN}` 이 인터프리터 스킵과 **무관한 파일**에도 있다 — 판별력이 0 이라 "
+        f"「위반 0」이 공짜가 된다: {stray[:8]}{'…' if len(stray) > 8 else ''}"
+    )
+    # ★그리고 모집단이 실제로 토큰을 달고 있어야 한다(위 테스트와 양방향).
+    assert carriers == pop, f"모집단인데 토큰이 없는 파일: {sorted(pop - carriers)}"
