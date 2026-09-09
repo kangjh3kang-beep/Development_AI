@@ -1133,3 +1133,41 @@ def test_no_lock_was_deleted_in_this_branch() -> None:
         + "\n".join(f"  - {x}" for x in lost)
         + "\n  ★개수(N passed)는 순삭제를 덮는다. 이름 집합으로 봐야 보인다."
     )
+
+
+def test_stored_sponsor_comes_from_the_resolver() -> None:
+    """★★신청에 저장되는 sponsor 가 **해석 결과에서 온다** — 값의 출처를 잠근다.
+
+    ★★2026-09-09 R3 리뷰 M-1(M5). 해석(400 게이트)은 그대로 두고 **저장만 버려도** 초록이었다
+      (`"sp": str(sponsor_id)` → `"sp": None`, `::VERDICT=SURVIVED`).
+      그러면 `sponsor_node_id` 가 늘 NULL → 부모가 늘 승인자 → **이 PR 의 존재 이유가 통째로
+      무효**인데 아무 락도 안 깨진다.
+
+    ★축은 «해석을 부르는가» 가 아니라 **«저장되는 값이 그 반환으로 대입된 이름인가»** 다
+      (`if False:` 안에서도 호출 노드는 남는다 — 이미 겪은 형태).
+    """
+    fn = _fn("create_join_request")
+
+    # `<이름> = await prepare_join_request(...)` 로 대입되는 이름을 모은다.
+    resolved: set[str] = set()
+    for a in ast.walk(fn):
+        if not isinstance(a, ast.Assign):
+            continue
+        call = a.value.value if isinstance(a.value, ast.Await) else a.value
+        if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                and call.func.id == "prepare_join_request"):
+            resolved |= {t.id for t in a.targets if isinstance(t, ast.Name)}
+    assert resolved, "sponsor 를 해석해 **변수에 담지** 않는다"
+
+    # INSERT 의 `sp` 바인딩이 그 이름에서 오는가.
+    bound: list[str] = []
+    for d in ast.walk(fn):
+        if not isinstance(d, ast.Dict):
+            continue
+        for k, v in zip(d.keys, d.values, strict=False):
+            if isinstance(k, ast.Constant) and k.value == "sp":
+                bound.append(ast.unparse(v))
+    assert bound, "INSERT 에 sponsor 바인딩(`sp`)이 없다 — 저장 자체를 안 한다"
+    assert any(any(name in b for name in resolved) for b in bound), (
+        f"저장되는 sponsor 가 **해석 결과가 아니다**: {bound} (해석 이름: {sorted(resolved)})"
+    )
