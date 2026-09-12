@@ -50,16 +50,32 @@ _API = pathlib.Path(__file__).resolve().parents[1]
 
 
 def _idents(fn) -> set[str]:
-    """함수 안의 **식별자·문자열 상수**(주석·독스트링 배제 — ast 가 애초에 안 본다)."""
+    """함수 안의 **식별자 + 실행되는 문자열 상수**.
+
+    ★★독립 적대 리뷰 MEDIUM-6/8 — 초판 독스트링이 *"주석·독스트링 배제 — ast 가 애초에 안 본다"*
+      라고 적었는데 **거짓**이었다. 주석은 ast 가 안 보지만 **독스트링은 `ast.Constant` 로 남는다.**
+      실측: `feature_flags` 독스트링에 *"…requires_approval 은 **여기서 보지 않는다**"* 를 넣자
+      (행위 0 · 뜻은 **정반대**) 락이 빨개졌다 — **위양성**이고, 이 PR 의 서사가 다음 관리자를
+      정확히 그 문장으로 유도한다.
+    ⇒ **독스트링을 명시적으로 걷어낸다.** 면역은 **얻어서** 주장한다(전역 §C-11).
+    """
     import textwrap
     tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    # ★함수 본문 첫 문장이 문자열이면 그것이 독스트링이다 — 그 노드만 제외한다.
+    doc_nodes = set()
+    for n in ast.walk(tree):
+        body = getattr(n, "body", None)
+        if isinstance(body, list) and body and isinstance(body[0], ast.Expr) \
+                and isinstance(body[0].value, ast.Constant) \
+                and isinstance(body[0].value.value, str):
+            doc_nodes.add(id(body[0].value))
     out: set[str] = set()
     for n in ast.walk(tree):
         if isinstance(n, ast.Name):
             out.add(n.id)
         elif isinstance(n, ast.Attribute):
             out.add(n.attr)
-        elif isinstance(n, ast.Constant) and isinstance(n.value, str):
+        elif isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in doc_nodes:
             out.add(n.value)
     return out
 
@@ -77,9 +93,19 @@ def test_candidate_reader_ignores_the_active_flag() -> None:
 def test_adoption_path_never_reads_the_approval_label() -> None:
     """★채택 경로가 `requires_approval` 을 **0회** 언급한다(대조군: 다른 메타는 읽는다)."""
     src = pathlib.Path(inspect.getfile(FF)).read_text(encoding="utf-8")
-    lits = "".join(
-        n.value for n in ast.walk(ast.parse(src))
-        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    tree = ast.parse(src)
+    # ★독스트링 제외(MEDIUM-6) — 독스트링에 «여기서 보지 않는다» 를 적기만 해도 빨개지던 자리다.
+    doc_nodes = set()
+    for n in ast.walk(tree):
+        body = getattr(n, "body", None)
+        if isinstance(body, list) and body and isinstance(body[0], ast.Expr) \
+                and isinstance(body[0].value, ast.Constant) \
+                and isinstance(body[0].value.value, str):
+            doc_nodes.add(id(body[0].value))
+    # ★MINOR: 구분자 없이 이어 붙이면 **경계를 가로지르는 위양성**이 난다(`requires_` + `approval`).
+    lits = "\n".join(
+        n.value for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in doc_nodes
     )
     # ★대조군 — 이 모듈이 후보 메타를 **실제로** 읽는다(조회기 생존).
     assert "trigger_key" in lits, "대조군 실패 — 파서가 이 모듈의 메타 키를 못 본다"
@@ -88,63 +114,96 @@ def test_adoption_path_never_reads_the_approval_label() -> None:
     )
 
 
-def test_nothing_activates_a_prompt_candidate() -> None:
-    """★`active` 를 True 로 되돌리는 생산자가 **없다** — 그 플래그는 죽어 있다."""
+def _active_sites(want: bool) -> list[str]:
+    """`"active": <want>` **dict 리터럴** 전수(락과 공허방지 가드가 **같은 수집기**를 쓴다).
+
+    ★★독립 적대 리뷰 MAJOR-3 — 초판은 공허방지 가드가 **다른 함수**를 봤다. 수집기 경로를
+      존재하지 않는 디렉토리로 바꿔도 **4 passed**(0.28s) — *"아무도 활성화하지 않는다"* 가
+      **0파일을 훑고** 초록이었다. ⇒ 수집기를 빼고, 가드가 **그 수집기로** 찾을 수 있어야 할 것을 찾는다.
+    ★범위는 `apps/api` **전체**다(초판은 `app/**` 뿐이라 `routers/`·`services/` 등이 밖이었다).
+    """
     hits: list[str] = []
-    for p in (_API / "app").rglob("*.py"):
-        if "/tests/" in str(p):
+    for path in _API.rglob("*.py"):
+        sp = str(path)
+        if "/tests/" in sp or "/.venv/" in sp:
             continue
         try:
-            tree = ast.parse(p.read_text(encoding="utf-8", errors="replace"))
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
         except SyntaxError:
             continue
         for n in ast.walk(tree):
             if isinstance(n, ast.Dict):
                 for k, v in zip(n.keys, n.values, strict=False):
-                    if (isinstance(k, ast.Constant) and k.value == "active"
-                            and isinstance(v, ast.Constant) and v.value is True):
-                        hits.append(f"{p}:{n.lineno}")
-    # ★공허 방지 — 이 수집기가 `active` 키 자체는 찾는가(False 쪽으로).
-    found_false = "active" in _idents(IA._register_candidate)
-    assert found_false, "수집기가 active 키를 못 찾는다(파서 사망)"
-    assert not hits, f"누군가 후보를 활성화한다 — 부채 표식을 갱신하라: {hits}"
+                    if isinstance(k, ast.Constant) and k.value == "active" \
+                            and isinstance(v, ast.Constant) and v.value is want:
+                        hits.append(f"{path.name}:{n.lineno}")
+    return hits
+
+
+def test_nothing_activates_a_prompt_candidate() -> None:
+    """★`active` 를 True 로 되돌리는 생산자가 **없다** — 그 플래그는 죽어 있다.
+
+    ★공허 방지를 **같은 수집기**로 한다(MAJOR-3): 반드시 찾아야 할 것(`"active": False`)을
+      못 찾으면 **수집기가 죽은 것**이지 「True 가 없는 것」이 아니다.
+    """
+    assert _active_sites(False), "수집기가 `active: False` 조차 못 찾는다 — 수집기 사망(공허한 참 방지)"
+    trues = _active_sites(True)
+    assert not trues, f"누군가 후보를 활성화한다 — 부채 표식을 갱신하라: {trues}"
 
 
 def test_adoption_cannot_bootstrap_because_only_one_version_is_served() -> None:
     """★자동 채택의 **콜드 스타트가 구조적으로 불가능**하다 — 그 사실을 잠근다.
 
-    측정(2026-09-12):
-      · `_pick_better_version` 은 `len(scored) < 2` 면 `insufficient_versions` 로 거부한다
-        (`samples >= PROMPT_AB_MIN_SAMPLES == 20` 을 넘는 버전이 **둘** 필요)
-      · `base_interpreter._resolve_prompt_version_async` 는 서비스당 **한 버전**을 해석한다 —
-        **트래픽 분할이 없다**(random·해시 버킷·rollout 0건 · 대조군: 그 파일에 버전 코드 32줄)
-      · `prompt.<service>` 를 **쓰는 곳은 `feature_flags.apply_prompt_ab` 하나뿐**
-    ⇒ 채택하려면 두 버전이 필요하고, 두 번째 버전이 생기려면 채택이 필요하다 — **순환**이다.
-
-    ★그러므로 「표본 부족이라 안 돈다」는 **부정확**하다. 트래픽이 아무리 늘어도 콜드 스타트는
-      안 돈다. **사람이 `POST /growth/settings` 로 한 번 심으면** 그 순환이 끊긴다.
-    ★이 락은 **그 구조가 바뀌면 빨개진다** — 누가 트래픽 분할을 넣거나 두 번째 writer 를
-      만들면, 위 xfail 의 위험 서술도 같이 고쳐야 한다.
+    ★★독립 적대 리뷰 MAJOR-2 가 초판 락을 **양방향으로** 뚫었다:
+      · **위양성** — `# 결정론 — random 선택이 아니다` 라는 **주석 한 줄**(행위 0 · 뜻은 정반대)에 빨개짐
+      · **위음성** — `resolved = chosen or (_PROMPT_VERSION if os.getpid() % 2 else "cand-1")` 로
+        **진짜 50/50 분할**을 넣었는데 **초록**(금지어 목록에 `getpid` 가 없으니까)
+      · **전제 미잠금** — `PROMPT_AB_CANDIDATES = {"market": ["v4","v5"]}` 로 채워도 초록.
+        바로 옆 주석이 `예: "market": ["v2","v3"]` 라고 **권한다** — 가장 현실적인 경로다.
+    ⇒ ***금지어 목록을 버리고 「허용된 모양」을 요구한다***(목록은 곧 그 목록의 상한이다).
     """
+    import textwrap
+
+    from app.routers import growth as _R
+    from app.services.ai import base_interpreter as _BI
     from app.services.growth import feature_flags as _FF
 
     assert _FF.PROMPT_AB_MIN_SAMPLES == 20, f"하한이 바뀌었다: {_FF.PROMPT_AB_MIN_SAMPLES}"
+    assert "len(scored) < 2" in inspect.getsource(_FF._pick_better_version), \
+        "두 버전 요구가 사라졌다 — 위험 서술을 갱신하라"
 
-    pick = inspect.getsource(_FF._pick_better_version)
-    assert "len(scored) < 2" in pick, "두 버전 요구가 사라졌다 — 위험 서술을 갱신하라"
+    # ★전제 ① 후보군이 **비어 있다**(둘 다). 채워지면 순환이 끊기므로 여기가 빨개진다.
+    assert _FF.PROMPT_AB_CANDIDATES == {}, f"정적 후보군이 채워졌다: {_FF.PROMPT_AB_CANDIDATES}"
+    assert _BI._PROMPT_AB_CANDIDATES == {}, f"해석기 후보군이 채워졌다: {_BI._PROMPT_AB_CANDIDATES}"
 
-    bi = (_API / "app" / "services" / "ai" / "base_interpreter.py").read_text(encoding="utf-8")
-    # ★공허 방지 — 이 파일이 정말 버전 해석기인가.
-    assert bi.count("prompt_version") >= 5, "대조군 실패: 버전 코드를 못 찾았다"
-    import re as _re
-    split = _re.findall(r"\b(random|rollout|bucket)\b", bi)
-    assert not split, f"트래픽 분할이 생겼다 — 순환이 끊긴다: {set(split)}"
-
-    writers = [
-        str(p) for p in (_API / "app").rglob("*.py")
-        if "/tests/" not in str(p) and _re.search(r'setting_key\s*=\s*f"prompt\.', p.read_text(encoding="utf-8", errors="replace"))
+    # ★전제 ② 해석기가 **결정적으로 한 값**을 고른다 — 반환식 **모양**을 AST 로 요구한다.
+    #   금지어가 아니라 식 자체를 보므로 **어떤 분할 구현이든** 이 모양을 깨뜨린다.
+    src = textwrap.dedent(inspect.getsource(_BI.BaseInterpreter._resolve_prompt_version_async))
+    shapes = [
+        ast.unparse(n.value) for n in ast.walk(ast.parse(src))
+        if isinstance(n, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "resolved" for t in n.targets)
     ]
-    assert len(writers) == 1, f"prompt.<service> writer 가 늘었다(순환이 끊긴다): {writers}"
+    assert shapes == ["chosen or _PROMPT_VERSION"], (
+        f"버전 해석식이 바뀌었다(분할이 들어왔을 수 있다): {shapes}"
+    )
+
+    # ★전제 ③ `prompt.<service>` **전용** writer 는 하나.
+    #   ★MEDIUM-4 정정 — 초판 `len(writers) == 1` 은 **이미 거짓**이었다: `POST /growth/settings` 가
+    #     **임의 키**를 쓴다(xfail 사유엔 적어 놓고 본문은 반대를 단언했다).
+    #     ⇒ 전용 writer 만 세고, **범용 라이터의 존재를 함께 단언**한다(부재를 지어내지 않는다).
+    import re as _re
+
+    dedicated = sorted(
+        path.name for path in _API.rglob("*.py")
+        if "/tests/" not in str(path)
+        and _re.search(r'setting_key\s*=\s*f"prompt\.',
+                       path.read_text(encoding="utf-8", errors="replace"))
+    )
+    assert dedicated == ["feature_flags.py"], f"전용 writer 가 바뀌었다: {dedicated}"
+    assert hasattr(_R, "set_growth_setting"), (
+        "범용 설정 라이터가 사라졌다 — 그렇다면 「사람이 심으면 순환이 끊긴다」 서술을 갱신하라"
+    )
 
 
 @pytest.mark.xfail(
