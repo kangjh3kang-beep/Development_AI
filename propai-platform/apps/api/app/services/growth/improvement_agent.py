@@ -198,9 +198,15 @@ async def _store_proposal(db, insight_id: str | None, proposal: dict[str, Any]) 
         "source_insight_id": insight_id,
         # ★★2026-09-12 — **이 메타는 라벨이지 게이트가 아니다.** 종전 주석은 «사람 승인 필수
         #   (자동 머지 절대 금지)» 였는데, 그 말을 **강제하는 소비처가 0** 이다(아래 락이 전수로 잠근다).
-        #   읽는 곳 셋은 전부 **게이트가 아니다**: `ledger_adapters.py:69`(원장으로 중계) ·
-        #   `growth_pr_task.py:176`(PR 본문 **문자열**) · `services/domain_agents_service.py`(phase_f —
-        #   **다른 하위체계의 자기 변수**). 위 :196 주석이 phase_f 패턴을 «차용» 한다고 적는데,
+        #   ★★2026-09-12 좌표 정정(독립 리뷰 MEDIUM-7) — 초판이 «읽는 곳 셋» 이라 적었는데
+        #     **셋 다 이 아티팩트를 읽지 않는다**. 좌표를 따라간 다음 사람이 무관한 코드에 도착한다:
+        #       · `ledger_adapters.py` 는 **phase_f `domain_agent_tasks` 행**을 받는다
+        #         (이 모듈은 `ledger` 를 임포트조차 하지 않는다 — 전수 0건)
+        #       · `growth_pr_task.py:176` 은 **하드코딩 리터럴**(`f"- requires_approval: **true**"`)이라
+        #         값을 읽지 않는다 — 아티팩트가 False 여도 `true` 라고 찍는다
+        #       · `services/domain_agents_service.py` 는 **phase_f 자기 변수**다
+        #     ⇒ ***실제 독자는 0이다.*** 결론은 더 강해지고 좌표는 정확해진다.
+        #   위 :196 주석이 phase_f 패턴을 «차용» 한다고 적는데,
         #   **차용한 것은 라벨이고 게이트는 차용하지 않았다.**
         "requires_approval": True,   # 라벨(사람이 읽는 표시) — 강제하는 소비처 없음. 아래 xfail 참조.
         "auto_merge": False,
@@ -314,8 +320,12 @@ async def generate_proposals(db, *, max_proposals: int = MAX_PROPOSALS_PER_RUN,
 #  (a) platform_insights(insight_type='prompt_candidate') 아티팩트로 저장(사람 검토용).
 #  (b) platform_settings('prompt_candidates.<service>') 에 후보 버전 레이블을 **등록**한다.
 # ★자동 채택 아님 — 설계 §6.2 안전장치(사전등록 후보군) 하에서만 이후 A/B 가 채택.
-#   임의 자동 적용 금지: 이 함수는 후보군에 등록만 하고, 실제 프롬프트 버전 전환(채택)은
-#   feature_flags.evaluate(품질지표 기반·가드·감사) 또는 사람 승인을 거친다.
+#   이 함수는 후보군에 **등록만** 한다. 실제 프롬프트 버전 전환(채택)은
+#   feature_flags.evaluate(품질지표 기반·가드·감사)가 **자동으로** 수행한다.
+#   ★★2026-09-12 정정 — 종전 문장은 «… 또는 **사람 승인**을 거친다» 였는데 **거짓**이다:
+#     채택 경로에 승인 단계가 없다(`apply_prompt_ab` 는 `requires_approval`·`active` 를 **0회** 읽는다).
+#     ★오늘 채택이 안 일어나는 이유는 승인이 아니라 **구조**다 — 후보군(`cand-N`) ∩ 실사용(`v4`) = 0
+#       (`effector_firing` 이 「부트스트랩 교착」으로, `effector_reach` 가 `Reach.NONE` 으로 이미 적어 뒀다).
 
 def _new_candidate_label(existing: list[str] | None) -> str:
     """기존 후보 레이블 목록을 보고 새 'cand-N' 레이블을 만든다(순수 함수).

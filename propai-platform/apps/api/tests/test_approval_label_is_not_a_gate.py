@@ -44,7 +44,6 @@ import pytest
 
 from app.services.growth import dynamic_config as DC
 from app.services.growth import feature_flags as FF
-from app.services.growth import improvement_agent as IA
 
 _API = pathlib.Path(__file__).resolve().parents[1]
 
@@ -218,14 +217,21 @@ def test_adoption_cannot_bootstrap_because_only_one_version_is_served() -> None:
            "`apply_prompt_ab` **하나뿐**이다 — 채택하려면 이미 채택돼 있어야 한다. "
            "★그러나 **사람이 `POST /growth/settings` 로 한 번 심으면 그 순환이 끊기고** "
            "그 뒤부터는 자동으로 돈다. 「도달 불가」는 **콜드 스타트에 한정**된다. "
-           "★게이트를 어디에 둘지는 설계 판단이라 이 PR 은 **행위를 바꾸지 않는다**.",
+           "★게이트를 어디에 둘지는 설계 판단이라 이 PR 은 **행위를 바꾸지 않는다**. "
+           "★이 단언이 덮는 상환 경로는 둘(`active` 존중 · `requires_approval` 소비)이고, "
+           "**새 키로 게이트를 만들면 이 단언을 함께 갱신해야 한다**(독립 리뷰 MEDIUM-5 실측).",
 )
 def test_prompt_adoption_has_a_human_gate() -> None:
     """자동 채택 전에 사람 승인이 강제된다(미해결 — strict xfail).
 
-    ★상환 방법(택1, 설계 판단): ①`get_prompt_candidates` 가 `active` 를 존중한다
-      ②`apply_prompt_ab` 가 후보 메타의 `requires_approval` 을 본다 ③승인 상태를 둘 자리를
-      새로 정한다. **어느 쪽이든 이 xfail 이 XPASS 로 빨개져** 라벨과 게이트가 다시 갈리지 않는다.
+    ★상환 방법(택1, 설계 판단):
+      ① `get_prompt_candidates` 가 `active` 를 존중한다              → **이 xfail 이 빨개진다**(실측 CAUGHT)
+      ② `apply_prompt_ab` 가 후보 메타의 `requires_approval` 을 본다 → **빨개진다**(실측 CAUGHT)
+      ③ **새 키**(예: `prompt_gate.<service>`)로 승인 상태를 둔다     → ★**안 빨개진다**
+    ★★독립 적대 리뷰 MEDIUM-5 정정 — 초판은 *"어느 쪽이든 XPASS 로 빨개진다"* 라고 적었는데
+      **③ 은 실측으로 SURVIVED** 였다(진짜 게이트를 넣었는데도 «게이트가 없다» 를 초록으로 계속 주장).
+      ⇒ ***주장을 부풀려 락을 넓히는 대신, 락이 덮는 범위를 정확히 적는다.***
+        ③ 으로 가려면 **이 단언의 이름 집합을 함께 갱신**해야 한다 — 그 사실을 여기 남긴다.
     """
     idents = _idents(DC.get_prompt_candidates) | _idents(FF.apply_prompt_ab)
     assert "active" in idents or "requires_approval" in idents, (
