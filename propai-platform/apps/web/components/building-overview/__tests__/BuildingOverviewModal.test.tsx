@@ -120,3 +120,58 @@ describe("건축개요 모달", () => {
     expect(codes).not.toContain("토지");
   });
 });
+
+describe("★용도별 입력항목 — 요청의 「평형·상가·오피스」 부분", () => {
+  it("★★용도를 바꾸면 **묻는 항목이 바뀐다** — 같은 칸이면 「용도별 구성」이 장식이다", async () => {
+    const user = userEvent.setup();
+    open();
+    await user.click(screen.getByTestId("add-use"));
+    const sel = screen.getByTestId("use-0") as HTMLSelectElement;
+
+    await user.selectOptions(sel, "apartment");
+    expect((screen.getByTestId("use-units-0") as HTMLInputElement).placeholder).toBe("세대수");
+    await user.selectOptions(sel, "retail");
+    expect((screen.getByTestId("use-units-0") as HTMLInputElement).placeholder).toBe("점포수");
+    await user.selectOptions(sel, "lodging");
+    expect((screen.getByTestId("use-units-0") as HTMLInputElement).placeholder).toBe("객실수");
+    expect((screen.getByTestId("use-avg-0") as HTMLInputElement).placeholder).toBe("평균 객실면적 (m²)");
+  });
+
+  it("★평형은 **주거계열에만** 뜬다 — 상가·오피스에 억지로 붙이면 오독을 만든다", async () => {
+    const user = userEvent.setup();
+    open();
+    await user.click(screen.getByTestId("add-use"));
+    const sel = screen.getByTestId("use-0") as HTMLSelectElement;
+
+    await user.selectOptions(sel, "apartment");
+    expect(screen.queryByTestId("use-pyeong-0")).not.toBeNull();
+    await user.selectOptions(sel, "office");
+    expect(screen.queryByTestId("use-pyeong-0"), "오피스에 평형이 떴다").toBeNull();
+  });
+
+  it("★★못 재면 「—」 — **0평이라고 쓰지 않는다**", async () => {
+    const user = userEvent.setup();
+    open();
+    await user.click(screen.getByTestId("add-use"));
+    await user.selectOptions(screen.getByTestId("use-0"), "apartment");
+    expect(screen.getByTestId("use-pyeong-0").textContent).toBe("—");
+    await user.type(screen.getByTestId("use-avg-0"), "84");
+    // 84㎡ / 3.3058 = 25.4평
+    expect(screen.getByTestId("use-pyeong-0").textContent).toBe("25.4평");
+  });
+
+  it("★평형·세대수는 **저장 payload 에 들어가고**, 평형은 **들어가지 않는다**(파생값 저장 금지)", async () => {
+    const user = userEvent.setup();
+    const onSave = open();
+    await user.click(screen.getByTestId("add-use"));
+    await user.selectOptions(screen.getByTestId("use-0"), "apartment");
+    await user.type(screen.getByTestId("use-units-0"), "120");
+    await user.type(screen.getByTestId("use-avg-0"), "84");
+    await user.click(screen.getByTestId("overview-save"));
+
+    const payload = onSave.mock.calls[0][0];
+    expect(payload.uses[0].unitCount).toBe(120);
+    expect(payload.uses[0].avgExclusiveSqm).toBe(84);
+    expect(JSON.stringify(payload)).not.toContain("pyeong");
+  });
+});

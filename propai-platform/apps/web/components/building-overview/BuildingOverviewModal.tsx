@@ -18,8 +18,10 @@ import {
   type BuildingOverview,
   deriveBcrPct,
   deriveFarPct,
+  derivePyeong,
   deriveTotalGfaSqm,
   emptyBuildingOverview,
+  fieldsForUse,
   validateBuildingOverview,
 } from "@/lib/building-overview";
 import { type LandAreaIntake } from "@/lib/building-overview-intake";
@@ -212,6 +214,51 @@ export function BuildingOverviewModal({ open, intake, initial, onSave, onCancel 
                 placeholder="연면적 (m²)"
                 className="flex-1 rounded-xl border border-[var(--line-strong)] bg-[var(--surface)] px-3 py-2 text-sm"
               />
+              {/* ★용도에 따라 **다른 항목**을 묻는다(요청: 평형·상가·오피스별 입력항목).
+                  구성은 `fieldsForUse` 가 정본 코드에서 결정한다 — 여기서 분기를
+                  손으로 적으면 새 용도가 조용히 기본값으로 떨어진다. */}
+              <input
+                data-testid={`use-units-${i}`}
+                inputMode="numeric"
+                value={numField(line.unitCount)}
+                onChange={(e) =>
+                  setO((p) => {
+                    const uses = [...p.uses];
+                    uses[i] = { ...uses[i], unitCount: parseNum(e.target.value) };
+                    return { ...p, uses };
+                  })
+                }
+                placeholder={fieldsForUse(line.use).unitLabel}
+                aria-label={`${fieldsForUse(line.use).unitLabel} ${i + 1}`}
+                className="w-24 rounded-xl border border-[var(--line-strong)] bg-[var(--surface)] px-3 py-2 text-sm"
+              />
+              <input
+                data-testid={`use-avg-${i}`}
+                inputMode="decimal"
+                value={numField(line.avgExclusiveSqm)}
+                onChange={(e) =>
+                  setO((p) => {
+                    const uses = [...p.uses];
+                    uses[i] = { ...uses[i], avgExclusiveSqm: parseNum(e.target.value) };
+                    return { ...p, uses };
+                  })
+                }
+                placeholder={fieldsForUse(line.use).areaLabel}
+                aria-label={`${fieldsForUse(line.use).areaLabel} ${i + 1}`}
+                className="w-36 rounded-xl border border-[var(--line-strong)] bg-[var(--surface)] px-3 py-2 text-sm"
+              />
+              {/* ★평형은 **파생 표시**다(저장하지 않는다). 못 재면 「—」 — 0평이라 쓰지 않는다.
+                  평형을 관행적으로 쓰지 않는 용도(상가·오피스 등)에는 아예 안 보여 준다. */}
+              {fieldsForUse(line.use).pyeong ? (
+                <span
+                  data-testid={`use-pyeong-${i}`}
+                  className="self-center text-xs font-bold text-[var(--text-secondary)]"
+                >
+                  {derivePyeong(line.avgExclusiveSqm) === null
+                    ? "—"
+                    : `${derivePyeong(line.avgExclusiveSqm)!.toFixed(1)}평`}
+                </span>
+              ) : null}
             </div>
           ))}
           <button

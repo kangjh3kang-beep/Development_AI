@@ -158,3 +158,48 @@ export function makeUseLine(
     rawUse: raw,
   };
 }
+
+/** 1평 = 3.3058㎡(부동산 관행 · 공식 환산치). 표시 전용 — **저장하지 않는다.** */
+export const SQM_PER_PYEONG = 3.3058;
+
+/**
+ * 용도별 **입력 항목 구성** — 사용자 요청의 *«평형·상가·오피스 등 건축물 종목에 따른 입력항목»*.
+ *
+ * ★`Record<BuildingUseCode, …>` 인 이유 — 정본에 코드를 추가하면 **타입이 컴파일을 막는다.**
+ *   목록형으로 두면 새 용도가 조용히 기본값으로 떨어져 *"왜 이 칸이 안 뜨지"* 가 된다.
+ * ★★이름에 `use` 접두를 쓰지 않는다 — `react-hooks/rules-of-hooks` 가 **훅으로 오인**해
+ *   콜백 안 호출을 전부 에러로 낸다. 이 PR 에서 `useLineFromRaw`→`makeUseLine` 으로 한 번
+ *   고쳤는데 **같은 파일에서 또 만들었다**(`useLineFieldsFor`). 《방금 고친 결함을 다음
+ *   자리에서 내가 만든다》의 실증 — 잡아 준 것은 기억이 아니라 **lint** 였다.
+ * ★`pyeong: true` 는 **평형을 관행적으로 쓰는 용도**만이다. 상가·오피스는 전용면적(㎡)으로
+ *   말하는 것이 현장 관행이라 평형을 억지로 보여 주면 오히려 오독을 만든다.
+ */
+export type UseLineFields = { unitLabel: string; areaLabel: string; pyeong: boolean };
+
+const USE_LINE_FIELDS: Record<BuildingUseCode, UseLineFields> = {
+  apartment: { unitLabel: "세대수", areaLabel: "평균 전용면적 (m²)", pyeong: true },
+  rowhouse: { unitLabel: "세대수", areaLabel: "평균 전용면적 (m²)", pyeong: true },
+  detached: { unitLabel: "동수", areaLabel: "평균 전용면적 (m²)", pyeong: true },
+  officetel: { unitLabel: "실수", areaLabel: "평균 전용면적 (m²)", pyeong: true },
+  office: { unitLabel: "임대구획 수", areaLabel: "평균 전용면적 (m²)", pyeong: false },
+  retail: { unitLabel: "점포수", areaLabel: "평균 전용면적 (m²)", pyeong: false },
+  neighborhood: { unitLabel: "점포수", areaLabel: "평균 전용면적 (m²)", pyeong: false },
+  lodging: { unitLabel: "객실수", areaLabel: "평균 객실면적 (m²)", pyeong: false },
+  education: { unitLabel: "실수", areaLabel: "평균 실면적 (m²)", pyeong: false },
+  knowledge: { unitLabel: "호실수", areaLabel: "평균 전용면적 (m²)", pyeong: false },
+  mixed: { unitLabel: "구획수", areaLabel: "평균 전용면적 (m²)", pyeong: false },
+};
+
+export function fieldsForUse(code: BuildingUseCode): UseLineFields {
+  return USE_LINE_FIELDS[code];
+}
+
+/**
+ * 평형 표시 — **못 재면 `null`**(0 평이라고 쓰지 않는다).
+ * ★파생 전용이다. 저장하면 전용면적과 갈린다(이 파일의 용적률·건폐율과 같은 규율).
+ */
+export function derivePyeong(avgExclusiveSqm: number | null): number | null {
+  if (avgExclusiveSqm === null || !Number.isFinite(avgExclusiveSqm) || avgExclusiveSqm <= 0)
+    return null;
+  return avgExclusiveSqm / SQM_PER_PYEONG;
+}
