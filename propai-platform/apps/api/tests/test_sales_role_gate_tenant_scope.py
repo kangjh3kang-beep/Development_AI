@@ -21,6 +21,8 @@ SUPERADMIN. `require_role` 은 `ctx.role != "SUPERADMIN"` 으로 모든 역할 �
 """
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from app.api import deps_sales
@@ -126,6 +128,28 @@ def test_tenant_finance_roles_is_derived_from_the_ssot() -> None:
     assert "owner" not in views._TENANT_FINANCE_ROLES
 
 
+def test_the_platform_role_set_is_pinned_to_a_literal() -> None:
+    """★★**파생 모집단은 잠그려는 상수에서 나온다** — 그래서 상수가 줄면 조용히 같이 준다.
+
+    실측(2026-09-12 · 독립 리뷰 ㉣ + 내 재현): `_SUPERADMIN_ROLES` 에서 `platform_admin` 하나를
+    빼는 변이가 **`11 passed` 로 초록**이었다(종전 12). 위 `@parametrize(sorted(...))` 의
+    모집단이 **함께 깎여** 단언이 사라진 것이지, 통과한 것이 아니다.
+
+    ⇒ **리터럴 핀**을 따로 둔다. 파생의 이점(새 라벨이 자동으로 행위 테스트에 들어옴)은 유지하고,
+      **줄어들거나 바꿔치기되는 것**은 여기서 잡는다.
+    ★핀은 «무엇이 있어야 하나» 와 «무엇이 없어야 하나» 를 **둘 다** 적는다 —
+      포함만 적으면 추가는 안 잡히고, 배제만 적으면 삭제가 안 잡힌다.
+    """
+    assert {
+        "superadmin", "super_admin", "총괄관리자", "platform_admin",
+    } == deps_sales._SUPERADMIN_ROLES, (
+        "플랫폼 역할 집합이 바뀌었다. **의도된 변경이면 이 핀을 같이 고쳐라** — "
+        "핀 없이 바꾸면 위 파생 테스트들이 **조용히 줄면서 초록**이 된다: "
+        f"{sorted(deps_sales._SUPERADMIN_ROLES)}"
+    )
+    assert {"developer", "시행사", "dev"} == deps_sales._DEVELOPER_ROLES
+
+
 def test_the_ssot_does_not_carry_the_registration_default() -> None:
     """★**생산자 축** — 가입이 넣는 값이 이 집합에 다시 들어오면 실패한다.
 
@@ -135,19 +159,153 @@ def test_the_ssot_does_not_carry_the_registration_default() -> None:
     import ast
     import pathlib
 
-    # `routers/auth.py` 가 실제로 무엇을 넣는지 AST 로 뽑는다(주석·문자열에 안 뚫린다).
-    src = pathlib.Path(__file__).resolve().parents[1] / "routers" / "auth.py"
-    tree = ast.parse(src.read_text(encoding="utf-8"))
-    assigned = {
-        ast.unparse(kw.value)
-        for call in ast.walk(tree) if isinstance(call, ast.Call)
-        for kw in call.keywords if kw.arg == "role"
-    }
-    assert assigned, "가입 코드에서 `role=` 대입을 못 찾았다 — 축이 죽었다"
-    assert "UserRole.ADMIN.value" in assigned, f"가입이 넣는 값이 바뀌었다: {assigned}"
+    # ★★**파일 목록이 아니라 전수 파생**(2026-09-12 · 독립 리뷰 MAJOR-3).
+    #   종전엔 `routers/auth.py` **한 파일**만 읽었다. 그래서 **소셜 가입**
+    #   (`auth/oauth_common.py:33 _DEFAULT_SOCIAL_ROLE = "admin"` → `:208 role=…`)이
+    #   **축 밖**이었고, 그 값을 `"superadmin"` 으로 바꾸는 변이가 **SURVIVED** 했다
+    #   — 즉 「소셜 가입자 전원이 플랫폼 SUPERADMIN」이 되어도 이 파일의 락이 전부 초록이었다.
+    #   ★내가 그 파일을 못 본 이유도 **조회 범위**였다(`app/`·`routers/` 만 봤고
+    #     `auth/` 는 밖이었다) — 「0건」은 결론이 아니라 조회 결과다.
+    root = pathlib.Path(__file__).resolve().parents[1]
 
-    from packages.schemas.enums import UserRole
+    def _literal_roles(tree: ast.AST) -> set[str]:
+        """모듈 하나에서 **`role=` 로 넘어가는 문자열 리터럴**을 뽑는다(상수 한 단계 해석)."""
+        consts = {
+            t.id: n.value.value
+            for n in ast.walk(tree) if isinstance(n, ast.Assign)
+            and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)
+            for t in n.targets if isinstance(t, ast.Name)
+        }
+        found: set[str] = set()
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call):
+                continue
+            for kw in call.keywords:
+                if kw.arg != "role":
+                    continue
+                v = kw.value
+                if isinstance(v, ast.Constant) and isinstance(v.value, str):
+                    found.add(v.value)            # role="admin"
+                elif isinstance(v, ast.Name) and v.id in consts:
+                    found.add(consts[v.id])       # role=_DEFAULT_SOCIAL_ROLE
+                elif isinstance(v, ast.Attribute) and ast.unparse(v).endswith(".ADMIN.value"):
+                    from packages.schemas.enums import UserRole
+                    found.add(UserRole.ADMIN.value)
+        return found
 
-    assert UserRole.ADMIN.value.lower() not in deps_sales._SUPERADMIN_ROLES, (
-        "가입이 넣는 값이 플랫폼 게이트에 **다시 들어왔다** — 누출이 복원된다"
+    producers: dict[str, set[str]] = {}
+    for path in sorted(root.rglob("*.py")):
+        rel = str(path.relative_to(root))
+        if "/tests/" in rel or rel.startswith("tests/"):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        roles = _literal_roles(tree)
+        if roles:
+            producers[rel] = roles
+
+    # ★공허 방지 + 조회기 생존 — 알려진 두 생산자가 **둘 다** 잡혀야 한다.
+    assert "routers/auth.py" in producers, f"이메일 가입 생산자를 못 찾았다: {sorted(producers)}"
+    assert "auth/oauth_common.py" in producers, (
+        f"**소셜 가입** 생산자를 못 찾았다 — 축이 다시 좁아졌다: {sorted(producers)}"
     )
+
+    # ★본판정 — 어떤 생산자도 **플랫폼 라벨**을 일반 사용자에게 박지 않는다.
+    leaking = {
+        rel: sorted(roles & deps_sales._SUPERADMIN_ROLES)
+        for rel, roles in producers.items()
+        if roles & deps_sales._SUPERADMIN_ROLES
+    }
+    assert not leaking, (
+        "가입/생성 경로가 **플랫폼 전역 라벨**을 박는다 — 그 사용자는 전 테넌트의 현장을 연다: "
+        f"{leaking}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# C. R1 — **누출을 실측한 바로 그 자리**를 태운다 (2026-09-12 · 독립 리뷰 MAJOR-1)
+#
+# ★내 계획서 §5 는 이 자리에 락이 있다고 **선언**했는데 그 이름이 실재하지 않았다.
+#   실재하던 것은 `resolve_site_membership` 을 태우는 락이고 — **그건 「접근 판정」이지
+#   「목록 노출」이 아니다.** 라이브에서 13 vs **14** 로 잰 그 14번째를 만든 자리는
+#   `site_auth.my_sites` 의 `is_super` 분기(`site_auth.py:225`)다.
+#   ⇒ 실측(독립 리뷰 + 내 재현): `is_super = True` 변이가 **SURVIVED**.
+#   ***처방의 범위가 결함의 범위와 갈렸다 — 내가 잰 곳을 내가 안 잠갔다.***
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _MySitesDB:
+    """`my_sites` 의 세 갈래를 **쿼리 내용으로** 라우팅한다(호출 순서가 아니라).
+
+    ★호출 횟수로 라우팅하면 생산 코드가 쿼리를 하나 더하는 순간 조용히 틀린다
+      (이 저장소에서 실제로 CI 를 빨갛게 만든 형태).
+    ★(b)소유와 (c)관리자 전체는 **둘 다 `select(SalesSite)`** 라 SELECT 절이 글자 단위로 같다 —
+      `ORDER BY`(관리자 전체만 정렬한다)로 가른다. 안 그러면 두 갈래가 한 갈래로 뭉쳐
+      「세 갈래」 단언이 공허해진다.
+    """
+
+    def __init__(self, *, nodes, owned, allsites):
+        self._nodes, self._owned, self._all = nodes, owned, allsites
+
+    async def execute(self, stmt, params=None):
+        q = " ".join(str(stmt).split())
+
+        class _R:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def all(self):
+                return self._rows
+
+            def scalars(self):
+                return self
+
+        if "sales_org_nodes" in q and "sales_sites" in q:
+            return _R(self._nodes)
+        if "ORDER BY" in q:
+            return _R(self._all)          # (c) 관리자 전체 — 유일하게 정렬한다
+        if "organization_id =" in q:
+            return _R(self._owned)        # (b) 소유 테넌트
+        return _R([])
+
+    async def commit(self):
+        pass
+
+
+def _site_row(name: str, org):
+    return type("S", (), {
+        "id": uuid.uuid4(), "site_code": name, "site_name": name,
+        "development_type": "APT", "status": "ACTIVE", "organization_id": org,
+    })()
+
+
+@pytest.mark.asyncio
+async def test_my_sites_does_not_show_other_tenants_sites_to_a_registered_user() -> None:
+    """★★**가입 기본값으로는 남의 테넌트 현장이 목록에 안 뜬다** — 라이브 13 vs 14 의 그 자리.
+
+    ★두 모집단을 **같은 실행에서** 본다. 한쪽만 보면 «전부 막는» 구현도 통과한다.
+    """
+    from app.api.endpoints.sales import site_auth as mod
+
+    tenant = uuid.uuid4()
+    mine, theirs = _site_row("mine", tenant), _site_row("theirs", uuid.uuid4())
+
+    def _db():
+        return _MySitesDB(nodes=[], owned=[mine], allsites=[mine, theirs])
+
+    # ① 가입 기본값 — **자기 것 1건만**.
+    rows = await mod.my_sites(db=_db(), user=_User("u", role="admin", tenant_id=tenant))
+    codes = sorted(r["site_code"] for r in rows)
+    assert codes == ["mine"], f"가입 기본값이 남의 테넌트 현장을 본다: {codes}"
+    assert not [r for r in rows if r.get("membership") == "admin"], (
+        "`membership='admin'`(플랫폼 role 게이트 분기) 행이 나왔다 — 라이브 14번째가 그 행이었다"
+    )
+
+    # ② **대조군** — 진짜 플랫폼 라벨은 **2건**을 본다(과잉 차단이 아니다).
+    rows2 = await mod.my_sites(db=_db(), user=_User("s", role="superadmin", tenant_id=tenant))
+    assert sorted(r["site_code"] for r in rows2) == ["mine", "theirs"], (
+        f"플랫폼 총괄이 전체를 못 본다 — 과잉 차단: {[r['site_code'] for r in rows2]}"
+    )
+    assert [r for r in rows2 if r.get("membership") == "admin"], "관리자 분기가 아예 안 돈다"
