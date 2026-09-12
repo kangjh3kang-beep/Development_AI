@@ -236,3 +236,100 @@ def test_syntax_gate_covers_typescript_too(tmp_path):
     p = tmp_path / "m.ts"
     p.write_text("export const x = (\n", encoding="utf-8")
     assert mc._mutant_broke_syntax(p)
+
+
+# ── ⑧ ★종단 — 「판정 불가」가 **판정 루프에 실제로 배선**됐는가 ────────────────
+#    함수를 잠그는 것과 **그 함수가 불리는 것**은 다르다(존재를 잠그면 행위는 안 잠긴다).
+#    `_mutant_broke_syntax` 를 단위로만 잠그면, 루프에서 그 호출을 지워도 전부 초록이다.
+#    ⇒ **합성 저장소에 도구를 통째로 태워** 출력으로 확인한다.
+def _git(*args: str, cwd: pathlib.Path) -> None:
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+def test_end_to_end_reports_syntax_broken_mutant_as_undecided(tmp_path):
+    """★구문을 깨는 변이를 **CAUGHT 로 세지 않는다**.
+
+    합성 셸: `then` 블록의 유일한 문장이 대입이라, 그 줄을 지우면 `if …; then / fi` 가
+    남아 **bash 구문이 깨진다**. 종전 도구라면 테스트가 실패해 `kill`(=CAUGHT)로 세어져
+    **변이 점수가 거짓으로 부풀었다.**
+    """
+    repo = tmp_path / "synthrepo"
+    (repo / "tests").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
+    _git("config", "user.email", "t@t", cwd=repo)
+    _git("config", "user.name", "t", cwd=repo)
+
+    # base 커밋 — 아직 대상 셸이 없다(그래야 이후 줄이 전부 "추가된 줄"이 된다).
+    (repo / "tests" / "test_g.py").write_text(
+        "def test_mentions_g_sh():\n"
+        "    # g.sh 를 언급하지만 **행위를 태우지 않는다** — 그래서 변이는 원래 생존한다.\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+    _git("add", "-A", cwd=repo)
+    _git("commit", "-qm", "base", cwd=repo)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    (repo / "g.sh").write_text(
+        '#!/usr/bin/env bash\nif [ -z "$X" ]; then\n  Y=1\nfi\n', encoding="utf-8"
+    )
+    # ★스테이징한다 — `git diff` 는 **미추적 파일을 안 본다**. 안 하면 변이 대상 0건이
+    #   되어 이 락이 «아무것도 안 본 채» 초록이 된다(9조 §3 · 실제로 여기서 한 번 겪었다).
+    _git("add", "g.sh", cwd=repo)
+
+    r = subprocess.run(
+        [sys.executable, str(_TOOL), "--base", base,
+         "--tests", "tests/test_g.py", "--cwd", ".", "--max", "50"],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    out = r.stdout + r.stderr
+
+    # ★공허 방지 선단언 — 변이가 0건이면 아래 판정이 전부 공짜다.
+    assert "변이 " in out and "변이 0건" not in out, f"변이를 만들지 못했다:\n{out}"
+    assert "판정불가" in out or "판정 불가" in out, (
+        "★구문을 깨는 변이가 **판정 불가로 갈라지지 않았다** — 루프 배선이 없거나 끊겼다.\n"
+        f"{out}"
+    )
+    # ★그리고 그것이 `kill` 로 세어지지 않았음을 같이 본다(같은 줄이 두 통에 들어가면 안 된다).
+    broken_lines = [ln for ln in out.splitlines() if "판정불가" in ln]
+    assert broken_lines, out
+    assert not any("kill" in ln for ln in broken_lines), broken_lines
+
+
+def test_end_to_end_still_reports_ordinary_verdicts(tmp_path):
+    """★대조군 — 구문을 **안 깨는** 변이는 평소대로 `kill`/`생존` 으로 판정된다.
+
+    이게 없으면 «전부 판정 불가로 도망가는» 퇴화가 초록으로 통과한다.
+    """
+    repo = tmp_path / "synthrepo2"
+    (repo / "tests").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
+    _git("config", "user.email", "t@t", cwd=repo)
+    _git("config", "user.name", "t", cwd=repo)
+    (repo / "tests" / "test_g.py").write_text(
+        "import pathlib\n"
+        "def test_guard_exits_nonzero():\n"
+        "    src = pathlib.Path('g.sh').read_text(encoding='utf-8')\n"
+        "    assert 'exit 9' in src\n",
+        encoding="utf-8",
+    )
+    _git("add", "-A", cwd=repo)
+    _git("commit", "-qm", "base", cwd=repo)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    # 구문을 깨지 않는 변이만 나오는 셸(`exit 9` 단독 줄).
+    (repo / "g.sh").write_text('#!/usr/bin/env bash\nexit 9\n', encoding="utf-8")
+    _git("add", "g.sh", cwd=repo)   # ★9조 §3 — 미추적은 변이 대상 0건
+
+    r = subprocess.run(
+        [sys.executable, str(_TOOL), "--base", base,
+         "--tests", "tests/test_g.py", "--cwd", ".", "--max", "50"],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    out = r.stdout + r.stderr
+    assert "kill" in out, f"★정상 변이가 판정되지 않았다 — 전부 판정 불가로 도망갔나:\n{out}"
+    assert "판정불가" not in out, f"정상 변이를 판정 불가로 신고한다(위양성):\n{out}"
