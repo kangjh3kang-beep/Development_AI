@@ -562,3 +562,34 @@ def test_audit_counts_removes_unaudited_from_the_denominator(
 def test_audit_exit_puts_unaudited_work_on_the_return_code(surv, und, skip, want_rc):
     counts = mc._audit_counts(10, surv, und, skip)
     assert mc._audit_exit(counts) == want_rc, counts
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="★부채(대칭 표기): 셸에는 `.py` 의 `_docstring_line_nos` 에 해당하는 장치가 없어 "
+           "**heredoc 내부 줄이 변이 대상으로 들어온다**(실행 파일 기준 87줄 실측). "
+           "구문 게이트가 일부를 잡고 전체 판정불가율은 5%로 낮아 **당장의 소음은 작지만**, "
+           "부채를 산문으로만 두면 드러나지 않으므로 초록 안에 세워 둔다.",
+)
+def test_heredoc_body_is_not_mutated(tmp_path):
+    """heredoc 본문은 **코드가 아니라 데이터**다 — 거기 변이를 넣어도 의미가 없다.
+
+    ★이 락의 초판은 `cfg = 1` 한 줄을 줬다가 **XPASS** 로 뒤집혔다: 그 줄은 셸 대입 형태가
+      아니라 **애초에 변이 대상이 아니었다.** 부채는 실재하는데(실행 파일 87줄) 내 픽스처가
+      그것을 재현하지 못한 것이다 — *«부채가 있다»와 «내 예시가 부채를 가리킨다»는 다르다.*
+      그래서 **파일 문맥**으로 바꾼다(heredoc 은 한 줄만 봐서는 알 수 없다).
+    """
+    f = tmp_path / "h.sh"
+    f.write_text(
+        "#!/usr/bin/env bash\n"
+        "python3 - <<'PY'\n"
+        'print("이 문장은 heredoc 안의 데이터다")\n'
+        "PY\n",
+        encoding="utf-8",
+    )
+    lines = f.read_text(encoding="utf-8").splitlines()
+    inside = [
+        m for i, ln in enumerate(lines, 1) if i == 3
+        for m in mc._mutations_for_line(f, ln, i)
+    ]
+    assert not inside, f"heredoc 본문이 변이 대상으로 들어왔다: {[(m.kind, m.new) for m in inside]}"
