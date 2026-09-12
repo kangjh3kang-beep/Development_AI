@@ -92,6 +92,68 @@ def analysis_fields(arow, watermark):
     return astate, aat, aaxes, ains, alast
 
 
+#: 스냅샷이 **얼마나 낡으면** 「스케줄러가 안 돈다」고 볼 것인가.
+#: ★이 값은 SSOT 의 사본이 **아니다** — 틱(60초)에 대한 **프로브의 관용치**다.
+#:   그래서 손복사 금지 규율에 걸리지 않는다. 10분이면 틱 10회 연속 실패를 뜻한다.
+SCHEDULE_STALE_MIN = 10
+
+
+def schedule_fields(srow):
+    """스케줄 스냅샷 행 → 계기판이 뽑는 **세 값**.
+
+    반환: `(sat, sjobs, soverdue)` — 전부 문자열이고 **공백이 없다**
+      (형제 `analysis_fields` 와 같은 이유: 계기판이 `[^ ]+` 로 공백 경계에서 뽑는다).
+    """
+    if isinstance(srow, dict):
+        sat = str(srow.get("at") or "-")
+        sjobs = str(srow.get("jobs") or "-").replace(" ", "_")
+        soverdue = str(srow.get("overdue") or "-").replace(" ", "_")
+    else:
+        sat, sjobs, soverdue = "-", "-", "-"
+    return sat, sjobs, soverdue
+
+
+def schedule_verdict(sat, sjobs, soverdue, now):
+    """스케줄이 건강한가 — ★**두 고장을 가른다.**
+
+    이 함수가 있기 전에는 둘이 **같은 모양**이었다:
+      ① 틱 루프는 도는데 **어떤 잡의 실행만 죽음** → 그 잡의 워터마크가 영구 지연.
+         스냅샷 자신은 **신선**하다(매 틱 갱신되므로).
+      ② **틱 루프 자체가 죽음** → 스냅샷도 같이 낡는다.
+    ①은 종전에 **어떤 표면에도 나오지 않았다**(프론트는 ISO 문자열을 표시만 하고,
+    이 프로브는 `analyze` 워터마크 하나만 읽었다).
+
+    ★그리고 이 함수가 생긴 계기는 **내가 오독한 사건**이다(2026-09-12 13:11Z):
+      `growth_last_run.learn` 9,471분 전을 보고 「6.6일째 멈췄다」고 의심했는데
+      `learn` 주기가 **10080분(7일)** 이라 정상이었다. **경과만으로는 못 가른다.**
+
+    반환: `("ok"|"obs"|"unknown", 사유)` — 형제 `analysis_verdict` 와 같은 어휘.
+    """
+    if sjobs == "-":
+        return "unknown", (
+            "스케줄 스냅샷이 없다 — 스케줄러가 도는지 **이 자리에서 못 가른다**"
+            "(구버전 API 이거나 틱이 한 번도 안 돌았다)"
+        )
+    try:
+        at = datetime.fromisoformat(str(sat).strip('"').replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return "unknown", "스케줄 스냅샷의 `at` 을 읽지 못했다 — 나이를 못 재면 판정 불가"
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    age_min = int((now - at).total_seconds() // 60)
+    if age_min >= SCHEDULE_STALE_MIN:
+        return "obs", (
+            "스케줄 스냅샷이 %d분 낡았다(관용 %d분) — **틱 루프**를 보라. "
+            "잡 하나가 아니라 스케줄러 자신이 멈춘 모양이다" % (age_min, SCHEDULE_STALE_MIN)
+        )
+    if soverdue != "-":
+        return "obs", (
+            "틱은 돌고 있는데(스냅샷 %d분) **지연된 잡**이 있다: %s — "
+            "그 잡의 실행 경로를 보라(경과/주기: %s)" % (age_min, soverdue, sjobs)
+        )
+    return "ok", "스케줄러가 돌고 모든 잡이 주기 안이다(경과/주기: %s)" % sjobs
+
+
 def parse_axes(aaxes):
     """`"fal 0/0 lat 0/19"`(또는 `_` 로 이어 붙인 형태) → `[(이름, judged, total), …]`.
 
@@ -252,7 +314,13 @@ async def main():
         wm = (await s.execute(text(
             "select value from platform_settings where key = :k"),
             {"k": ANALYZE_WATERMARK_KEY})).scalar()
+        srow = (await s.execute(text(
+            "select value from platform_settings where key = :k "
+            "  and (ttl_expires_at is null or ttl_expires_at > now())"),
+            {"k": SCHEDULE_SETTING_KEY})).scalar()
         astate, aat, aaxes, ains, alast = analysis_fields(arow, wm)
+        sat, sjobs, soverdue = schedule_fields(srow)
+        skind, swhy = schedule_verdict(sat, sjobs, soverdue, now)
         # ★**변이 생존 기록**(2026-09-12 · 2차 감사): 아래 `now.strftime` 의 **표시 형식**과
         #   워터마크 질의의 **문자열**을 바꾸는 변이는 생존한다. 구멍이 아니다 —
         #   전자는 사람이 읽는 표시이고(계약이 아니다), 후자는 «TTL 필터가 **없어야** 한다»
@@ -261,9 +329,13 @@ async def main():
         print("PROBE now=%s ctrl_type_total=%s ctrl_type_alltime=%s "
               "impossible_post=%s impossible_pre=%s "
               "engine_alive=%s builds=%s overlap=%s "
-              "astate=%s aat=%s aaxes=%s ains=%s alast=%s"
+              "astate=%s aat=%s aaxes=%s ains=%s alast=%s "
+              "sat=%s sjobs=%s soverdue=%s skind=%s"
               % (now.strftime("%Y-%m-%d %H:%M"), ctrl, ctrl_all, post, pre, alive, bs, ov,
-                 astate, aat, aaxes, ains, alast))
+                 astate, aat, aaxes, ains, alast,
+                 sat, sjobs, soverdue, skind))
+        # ★사유는 사람이 읽는 줄로 따로 낸다(PROBE 줄은 공백 경계로 파싱되므로 못 싣는다).
+        print("PROBE_SCHEDULE %s | %s" % (skind, swhy))
 
 if __name__ == "__main__":  # ★임포트만으로 DB 에 붙지 않는다(테스트가 순수 함수를 태운다)
     asyncio.run(main())
