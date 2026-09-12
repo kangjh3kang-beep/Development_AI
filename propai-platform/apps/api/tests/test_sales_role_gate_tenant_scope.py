@@ -21,6 +21,8 @@ SUPERADMIN. `require_role` 은 `ctx.role != "SUPERADMIN"` 으로 모든 역할 �
 """
 from __future__ import annotations
 
+import ast
+import pathlib
 import uuid
 
 import pytest
@@ -150,26 +152,32 @@ def test_the_platform_role_set_is_pinned_to_a_literal() -> None:
     assert {"developer", "시행사", "dev"} == deps_sales._DEVELOPER_ROLES
 
 
-def test_the_ssot_does_not_carry_the_registration_default() -> None:
-    """★**생산자 축** — 가입이 넣는 값이 이 집합에 다시 들어오면 실패한다.
+#: 스캔에서 **제외**할 경로 조각 — 제3자 코드와 산출물은 «우리 생산자» 가 아니다.
+#
+#  ★왜(2026-09-12 실측 · #1034 후속): 종전 스캐너가 `apps/api` 전체를 `rglob` 하면서
+#    `.venv` 를 제외하지 않았다. **`apps/api` 안에 자체 venv 가 있다**:
+#        `apps/api` 전체 `.py` **12,146** 중 `.venv`/site-packages **10,176(83%)** · 실제 소스 1,970
+#    CI 는 `.venv` 가 `propai-platform/.gitignore:15` 에 있어 안전했지만(`git ls-files` 0건),
+#    **로컬에서는 83%를 헛 훑었다** — 느리고, 제3자 라이브러리가 `role="admin"` 을 쓰면 **위양성**이다.
+#    ***환경에 따라 판정이 갈리면 그것도 결함이다 — 가드의 위양성도 결함이다.***
+_SCAN_EXCLUDED = ("/.venv/", "/site-packages/", "/node_modules/", "/tests/")
 
-    ★목록을 손으로 적지 않는다: `UserRole.ADMIN.value` 를 **가입 코드와 같은 원천**에서
-      가져와 대조한다(내가 기억하는 문자열이 아니라).
+
+def _scan_role_producers(root: pathlib.Path) -> dict[str, set[str]]:
+    """`role=` 로 넘어가는 **문자열 리터럴**을 파일별로 모은다(상수 한 단계 해석).
+
+    ★`root` 를 **인자로** 받는다 — 합성 입력으로 이 함수 자신을 태울 수 있어야
+      «제외가 살아 있는가» 를 **환경과 무관하게** 잠글 수 있다(`.venv` 가 없는 CI 에서도).
     """
-    import ast
-    import pathlib
-
-    # ★★**파일 목록이 아니라 전수 파생**(2026-09-12 · 독립 리뷰 MAJOR-3).
-    #   종전엔 `routers/auth.py` **한 파일**만 읽었다. 그래서 **소셜 가입**
-    #   (`auth/oauth_common.py:33 _DEFAULT_SOCIAL_ROLE = "admin"` → `:208 role=…`)이
-    #   **축 밖**이었고, 그 값을 `"superadmin"` 으로 바꾸는 변이가 **SURVIVED** 했다
-    #   — 즉 「소셜 가입자 전원이 플랫폼 SUPERADMIN」이 되어도 이 파일의 락이 전부 초록이었다.
-    #   ★내가 그 파일을 못 본 이유도 **조회 범위**였다(`app/`·`routers/` 만 봤고
-    #     `auth/` 는 밖이었다) — 「0건」은 결론이 아니라 조회 결과다.
-    root = pathlib.Path(__file__).resolve().parents[1]
-
-    def _literal_roles(tree: ast.AST) -> set[str]:
-        """모듈 하나에서 **`role=` 로 넘어가는 문자열 리터럴**을 뽑는다(상수 한 단계 해석)."""
+    producers: dict[str, set[str]] = {}
+    for path in sorted(root.rglob("*.py")):
+        rel = str(path.relative_to(root))
+        if any(x in f"/{rel}" for x in _SCAN_EXCLUDED):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            continue
         consts = {
             t.id: n.value.value
             for n in ast.walk(tree) if isinstance(n, ast.Assign)
@@ -191,20 +199,63 @@ def test_the_ssot_does_not_carry_the_registration_default() -> None:
                 elif isinstance(v, ast.Attribute) and ast.unparse(v).endswith(".ADMIN.value"):
                     from packages.schemas.enums import UserRole
                     found.add(UserRole.ADMIN.value)
-        return found
+        if found:
+            producers[rel] = found
+    return producers
 
-    producers: dict[str, set[str]] = {}
-    for path in sorted(root.rglob("*.py")):
-        rel = str(path.relative_to(root))
-        if "/tests/" in rel or rel.startswith("tests/"):
-            continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):
-            continue
-        roles = _literal_roles(tree)
-        if roles:
-            producers[rel] = roles
+
+def test_the_exclusion_is_alive_in_every_environment() -> None:
+    """★★**제외가 죽으면 실패한다** — 합성 입력으로 태운다(환경 의존 없이).
+
+    ★동료 지적(2026-09-12): *"`.venv` 가 없는 환경에서 제외 로직이 통째로 빠져도 초록이면,
+      그 제외는 다음 사람에게 **장식**이다."* 맞다 — CI 에는 `.venv` 가 없으므로
+      «실제로 뭔가 제외했나» 를 단언하면 **CI 에서 공허**해진다.
+    ⇒ **합성 트리**를 만들어 태운다. 어느 환경에서도 같은 판정이 나온다.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        (root / "src").mkdir()
+        (root / "src" / "signup.py").write_text(
+            'def make():\n    return User(role="admin")\n', encoding="utf-8")
+        for bad in (".venv/lib/site-packages", "node_modules/x", "tests"):
+            d = root / bad
+            d.mkdir(parents=True)
+            (d / "evil.py").write_text(
+                'def x():\n    return User(role="superadmin")\n', encoding="utf-8")
+
+        found = _scan_role_producers(root)
+
+        # ★본판정 — 제외 대상이 **하나도** 안 들어온다.
+        assert set(found) == {"src/signup.py"}, (
+            f"제외가 죽었다 — 제3자/산출물/테스트가 생산자로 세어진다: {sorted(found)}"
+        )
+        # ★대조군 — 스캐너가 살아 있다(전부 비면 「제외됨」과 「조회기 사망」이 같은 모양이다).
+        assert found["src/signup.py"] == {"admin"}, f"스캐너가 진짜 생산자를 못 읽는다: {found}"
+
+
+def test_the_real_scan_stays_within_our_sources() -> None:
+    """★실제 저장소에서 **모집단이 제3자 코드로 부풀지 않는다**.
+
+    ★`.venv` 가 있는 환경에서 제외가 죽으면 여기서 걸린다(합성 락과 **다른 축**이다 —
+      합성은 「제외 로직」을, 이것은 「실제 모집단」을 본다).
+    """
+    root = pathlib.Path(__file__).resolve().parents[1]
+    producers = _scan_role_producers(root)
+    assert producers, "생산자를 하나도 못 찾았다 — 조회기가 죽었다"
+    stray = [rel for rel in producers if any(x in f"/{rel}" for x in _SCAN_EXCLUDED)]
+    assert not stray, f"제외 대상이 모집단에 들어왔다: {stray[:5]}"
+
+
+def test_the_ssot_does_not_carry_the_registration_default() -> None:
+    """★**생산자 축** — 가입이 넣는 값이 이 집합에 다시 들어오면 실패한다.
+
+    ★목록을 손으로 적지 않는다: `UserRole.ADMIN.value` 를 **가입 코드와 같은 원천**에서
+      가져와 대조한다. 모집단은 `_scan_role_producers()` **한 곳**에서 나온다(사본 금지).
+    """
+    root = pathlib.Path(__file__).resolve().parents[1]
+    producers = _scan_role_producers(root)
 
     # ★공허 방지 + 조회기 생존 — 알려진 두 생산자가 **둘 다** 잡혀야 한다.
     assert "routers/auth.py" in producers, f"이메일 가입 생산자를 못 찾았다: {sorted(producers)}"
