@@ -120,6 +120,64 @@ def watermark_key(job: str) -> str:
     return f"growth_last_run.{job}"
 
 
+#: 스케줄 스냅샷이 사는 자리. ★**새 표면을 만들지 않는다** — `growth_analysis`(#997) 와 같은
+#:   통로(`platform_settings` → `/growth/heal-log` 의 `active_flags`)를 쓴다. 라우터는 키를
+#:   필터하지 않으므로(`routers/growth.py:574` 의 WHERE 는 TTL 만 본다) **라우터 변경이 필요 없다.**
+SCHEDULE_SNAPSHOT_KEY = "growth_schedule"
+
+
+def schedule_snapshot_payload(observed, now: datetime) -> dict[str, object]:
+    """잡별 **경과/주기**를 한 줄 요약으로 만든다(발행용).
+
+    ★**왜 이것이 필요한가 — 「경과」만으로는 정상과 정지를 가를 수 없다.**
+      실측(2026-09-12 13:11Z): `growth_last_run.learn` 이 **9,471분 전**이었다. 이것을 보고
+      *"학습 사이클이 6.6일째 멈췄다"* 고 의심했는데, `JOB_SPECS["learn"].period_minutes` 는
+      **10080(7일)** 이라 **아직 발화할 때가 아니었다.** 같은 「7일 전」이 `learn` 에겐 정상이고
+      `analyze`(60분)에겐 **대형 장애**다 — ***한 신호가 두 사건을 덮는다.***
+      그런데 주기를 아는 표면이 없었다: `JOB_SPECS` 의 **런타임·표면 소비처 0**
+      (조회 기준: `propai-platform` 이하 · `.py/.ts/.tsx/.sh` · **`.venv` 2개 제외** →
+       `schedule.py` 와 `tests/unit/test_growth_schedule.py` 둘뿐).
+
+    ★**판정하지 않는다 — 관측만 싣는다.** `overdue` 는 «경과 ≥ 주기» 라는 **사실**이지
+      «고장» 이 아니다(정상적으로도 발화 직전에는 참이 된다). 무엇이 고장인지는
+      **이 값이 계속 참으로 남는가**로 소비처가 판단한다.
+
+    ★**요약에 잡 이름을 줄이지 않는다.** `growth_analysis.axes` 는 축 이름이 길어 3글자로
+      줄였지만, 여기서 같은 짓을 하면 접두가 겹치는 잡이 생기는 순간 **두 잡이 한 칸으로
+      뭉친다**. 이 파일이 고치려는 결함과 **같은 형태**라 하지 않는다.
+
+    Parameters
+    ----------
+    observed
+        `(job, last_run|None)` 쌍들. `None` 은 **워터마크를 본 적 없음**이고
+        「경과 0」과 **다른 사실**이라 `-` 로 구분해 적는다.
+    now
+        기준 시각(주입받는다).
+    """
+    parts: list[str] = []
+    overdue: list[str] = []
+    for job, last in observed:
+        spec = JOB_SPECS.get(job)
+        if spec is None:          # 모르는 잡은 조용히 버리지 않는다
+            parts.append(f"{job} ?/?")
+            continue
+        period = spec.period_minutes
+        if last is None:
+            parts.append(f"{job} -/{period}")
+            continue
+        elapsed = int((now - last).total_seconds() // 60)
+        parts.append(f"{job} {elapsed}/{period}")
+        # ★음수(시계 되돌림)도 `is_due` 가 참으로 보므로 여기서도 같은 값을 낸다.
+        #   두 곳이 갈리면 계기판이 「돌 때가 됐다」와 반대를 말한다.
+        if elapsed < 0 or elapsed >= period:
+            overdue.append(job)
+    return {
+        "at": now.isoformat(),
+        "jobs": " ".join(parts) or "-",
+        "overdue": " ".join(overdue) or "-",
+    }
+
+
 async def compute_due(session, settings_api, now: datetime) -> dict[str, bool]:
     """워터마크를 **읽어** 잡별 실행 여부를 만든다. 씨드(기준점 찍기)도 여기서 한다.
 
@@ -141,6 +199,7 @@ async def compute_due(session, settings_api, now: datetime) -> dict[str, bool]:
         판정 기준 시각(주입받는다 — 시계를 타면 테스트가 흔들린다).
     """
     due: dict[str, bool] = {}
+    observed: list[tuple[str, datetime | None]] = []
     for job in JOB_SPECS:
         key = watermark_key(job)
         last = parse_watermark(await settings_api.get_setting(session, key))
@@ -149,7 +208,18 @@ async def compute_due(session, settings_api, now: datetime) -> dict[str, bool]:
             await settings_api.set_setting(
                 session, key, now.isoformat(), updated_by="growth-scheduler(seed)",
             )
+            observed.append((job, now))   # 방금 찍은 기준점이 이 잡의 last 다
             due[job] = False
             continue
+        observed.append((job, last))
         due[job] = is_due(job, last, now)
+    # ★스냅샷 발행 — **판정에 개입하지 않는다**(위 `due` 는 이미 확정됐다). 이 블록을 지우면 원상이다.
+    #   TTL 을 걸지 않는다: `/growth/heal-log` 는 `ttl_expires_at IS NULL` 도 활성으로 보므로
+    #   행은 늘 노출되고, **「스케줄러가 도는가」는 `at` 의 나이로** 판정한다(부재가 아니라 나이).
+    await settings_api.set_setting(
+        session,
+        SCHEDULE_SNAPSHOT_KEY,
+        schedule_snapshot_payload(observed, now),
+        updated_by="growth-scheduler",
+    )
     return due
