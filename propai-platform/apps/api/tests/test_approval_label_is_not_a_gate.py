@@ -110,13 +110,55 @@ def test_nothing_activates_a_prompt_candidate() -> None:
     assert not hits, f"누군가 후보를 활성화한다 — 부채 표식을 갱신하라: {hits}"
 
 
+def test_adoption_cannot_bootstrap_because_only_one_version_is_served() -> None:
+    """★자동 채택의 **콜드 스타트가 구조적으로 불가능**하다 — 그 사실을 잠근다.
+
+    측정(2026-09-12):
+      · `_pick_better_version` 은 `len(scored) < 2` 면 `insufficient_versions` 로 거부한다
+        (`samples >= PROMPT_AB_MIN_SAMPLES == 20` 을 넘는 버전이 **둘** 필요)
+      · `base_interpreter._resolve_prompt_version_async` 는 서비스당 **한 버전**을 해석한다 —
+        **트래픽 분할이 없다**(random·해시 버킷·rollout 0건 · 대조군: 그 파일에 버전 코드 32줄)
+      · `prompt.<service>` 를 **쓰는 곳은 `feature_flags.apply_prompt_ab` 하나뿐**
+    ⇒ 채택하려면 두 버전이 필요하고, 두 번째 버전이 생기려면 채택이 필요하다 — **순환**이다.
+
+    ★그러므로 「표본 부족이라 안 돈다」는 **부정확**하다. 트래픽이 아무리 늘어도 콜드 스타트는
+      안 돈다. **사람이 `POST /growth/settings` 로 한 번 심으면** 그 순환이 끊긴다.
+    ★이 락은 **그 구조가 바뀌면 빨개진다** — 누가 트래픽 분할을 넣거나 두 번째 writer 를
+      만들면, 위 xfail 의 위험 서술도 같이 고쳐야 한다.
+    """
+    from app.services.growth import feature_flags as _FF
+
+    assert _FF.PROMPT_AB_MIN_SAMPLES == 20, f"하한이 바뀌었다: {_FF.PROMPT_AB_MIN_SAMPLES}"
+
+    pick = inspect.getsource(_FF._pick_better_version)
+    assert "len(scored) < 2" in pick, "두 버전 요구가 사라졌다 — 위험 서술을 갱신하라"
+
+    bi = (_API / "app" / "services" / "ai" / "base_interpreter.py").read_text(encoding="utf-8")
+    # ★공허 방지 — 이 파일이 정말 버전 해석기인가.
+    assert bi.count("prompt_version") >= 5, "대조군 실패: 버전 코드를 못 찾았다"
+    import re as _re
+    split = _re.findall(r"\b(random|rollout|bucket)\b", bi)
+    assert not split, f"트래픽 분할이 생겼다 — 순환이 끊긴다: {set(split)}"
+
+    writers = [
+        str(p) for p in (_API / "app").rglob("*.py")
+        if "/tests/" not in str(p) and _re.search(r'setting_key\s*=\s*f"prompt\.', p.read_text(encoding="utf-8", errors="replace"))
+    ]
+    assert len(writers) == 1, f"prompt.<service> writer 가 늘었다(순환이 끊긴다): {writers}"
+
+
 @pytest.mark.xfail(
     strict=True,
     reason="★부채: 자동 프롬프트 A/B 채택 경로에 **사람 게이트가 없다**. 산출물에 "
            "`requires_approval: True` · `auto_adopt: False` · `active: False` 라는 라벨이 셋이나 "
            "붙는데 **강제하는 소비처가 0**이고, 실제 조건은 «후보 멤버십 + 표본 하한» 뿐이다. "
            "그 경로는 과금 LLM 호출을 거쳐 `apply_prompt_ab({'auto': True})` 로 끝난다. "
-           "★지금 발화하지 않는 이유는 게이트가 아니라 **표본 부족**이다 — 트래픽이 늘면 발화한다. "
+           "★★지금 발화하지 않는 **정확한** 이유는 「표본 부족」이 아니라 **순환**이다: "
+           "채택은 `len(scored) >= 2`(하한 20 을 넘는 버전이 **둘**)를 요구하는데, 해석기는 "
+           "서비스당 **한 버전**만 제공하고(트래픽 분할 0건) `prompt.<service>` 를 쓰는 곳은 "
+           "`apply_prompt_ab` **하나뿐**이다 — 채택하려면 이미 채택돼 있어야 한다. "
+           "★그러나 **사람이 `POST /growth/settings` 로 한 번 심으면 그 순환이 끊기고** "
+           "그 뒤부터는 자동으로 돈다. 「도달 불가」는 **콜드 스타트에 한정**된다. "
            "★게이트를 어디에 둘지는 설계 판단이라 이 PR 은 **행위를 바꾸지 않는다**.",
 )
 def test_prompt_adoption_has_a_human_gate() -> None:
