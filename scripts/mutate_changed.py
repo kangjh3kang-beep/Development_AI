@@ -546,6 +546,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--tests", nargs="*", default=None)
+    # ★이 기본값을 바꾸는 변이는 **생존한다 — 그리고 그것은 구멍이 아니다**(점수 부풀리기 방지).
+    #   잠긴 것은 **값**이 아니라 계약이다: *«절단한 실행은 결코 조용히 통과하지 않는다»*.
+    #   실측(2026-09-12): `--max 1` 로 낮추어도 `rc=3` · `::AUDIT=generated=4 truncated=3`
+    #   — **분모는 자르기 전 수**고 거짓 초록이 안 난다. 기본값은 속도/농도 조절 노브일 뿐이다.
+    #   ★그래서 이 자리에 `toBe(60)` 같은 **상수 자기비교 락을 두지 않는다** — 장식이고,
+    #     다음 사람이 값을 튀닝할 때마다 깨진다.
     ap.add_argument("--max", type=int, default=60)
     # ★★`--only` — 지정한 테스트가 **실제로 덮는 파일**로 좁힌다.
     #   확장자만 맞추면(프론트 테스트 ↔ 모든 .tsx) 무관한 파일이 전부 "생존"으로 나와
