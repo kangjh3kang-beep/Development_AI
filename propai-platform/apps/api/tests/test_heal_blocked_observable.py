@@ -173,7 +173,7 @@ async def test_filter_and_paging_bind_values_reach_the_query():
     """★**bind 값**을 단언한다 — 종전 스텁은 `params` 를 버려서 이 축이 무잠금이었다."""
     db = _FakeDB(blocked=[BLOCKED_ROW])
     await _call(db, action_type="threshold_relax", since=NOW - timedelta(hours=1), limit=7, offset=3)
-    row_binds = [b for b, q in zip(db.binds, db.seen)
+    row_binds = [b for b, q in zip(db.binds, db.seen, strict=True)
                  if "heal_blocked" in q and "COUNT(*)" not in q and "GROUP BY" not in q]
     assert row_binds, "blocked 행 질의의 bind 를 못 봤다"
     b = row_binds[0]
@@ -188,7 +188,7 @@ async def test_limit_and_offset_are_not_the_same_population():
     """★limit·offset 이 **서로 다른 값**으로 도달하는지(한 변수로 뭉개면 둘 다 무잠금)."""
     db = _FakeDB(blocked=[BLOCKED_ROW])
     await _call(db, limit=11, offset=5)
-    b = [x for x, q in zip(db.binds, db.seen)
+    b = [x for x, q in zip(db.binds, db.seen, strict=True)
          if "heal_blocked" in q and "COUNT(*)" not in q and "GROUP BY" not in q][0]
     assert (b.get("limit"), b.get("offset")) == (11, 5)
 
