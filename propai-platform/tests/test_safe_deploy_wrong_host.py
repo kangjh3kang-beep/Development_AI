@@ -422,9 +422,70 @@ def test_three_kinds_have_distinct_names() -> None:
 @pytest.mark.xfail(
     reason="★도달 불가 — `repo-missing` 은 «$REPO 가 없다»와 «self_repo == $REPO»를 동시에 "
     "요구하는데, 이 스크립트는 $REPO 안에 있으므로 둘이 동시에 참일 수 없다(삭제와 실행이 "
-    "겹치는 경합 외). **안 태웠다는 사실을 초록 안에 남긴다** — 커밋 메시지에만 적으면 "
+    "겹치는 경합 외). ★형제 `unknown-checkout` 은 R4 에서 **도달 가능해져 실제로 태운다** — "
+    "남은 xfail 은 이 하나뿐이다. **안 태웠다는 사실을 초록 안에 남긴다** — 커밋 메시지에만 적으면 "
     "다음 사람이 「검증됐다」고 읽는다. 재현기를 만들면 이 xfail 이 깨지고 그때 갚는다.",
     strict=True,
 )
 def test_repo_missing_branch_is_burned() -> None:
     raise AssertionError("repo-missing 분기를 실제로 태우는 재현기가 없다")
+
+
+
+def _kind_of(script_env_home: str, self_repo_hack: str | None = None) -> str:
+    """가드를 **직접 source 해서** 판정 이름만 꺼낸다(스크립트 전체를 안 돌린다)."""
+    lib = REPO_ROOT / "propai-platform/scripts/lib/assert-a1-host.sh"
+    if self_repo_hack == "unresolvable":
+        # ★`/dev/stdin` 으로 source 하면 BASH_SOURCE 해석이 실패해 `self_repo="/"` 가 된다.
+        cmd = f'source /dev/stdin < {lib}; assert_a1_host "$HOME/Development_AI" ""'
+    else:
+        cmd = f'. {lib}; assert_a1_host "$HOME/Development_AI" ""'
+    env = dict(os.environ, HOME=script_env_home)
+    r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, env=env, timeout=60)
+    m = re.search(r"★판정: ([a-z-]+)", r.stderr)
+    assert m, f"판정을 못 읽었다: {r.stderr[:300]}"
+    return m.group(1)
+
+
+def test_unresolvable_self_repo_is_unknown_not_a_confident_claim(tmp_path: Path) -> None:
+    """★★**「모름」이 「확신」으로 나오지 않는다**(독립 리뷰 MEDIUM-3 · 이 결함의 **다섯 번째 얼굴**).
+
+    R3 는 ``[ -z "$self_repo" ]`` 만 봤다. 그런데 ``/dev/stdin`` 으로 source 하면
+    ``self_repo="/"`` 가 되는데 — **「/」 는 값이 아니라 해석 실패다** — 비어 있지 않으므로
+    ``wrong-checkout``(=「다른 체크아웃에서 돌고 있다」)로 **단정**했다.
+
+    ⇒ ***이 파일의 결함이 매체를 갈아타며 돌아온 것이다***::
+
+        ①실패 문구 → ②종료코드 → ③부재→A1 유도 → ④상태명 → ⑤**해석 실패→「다르다」 유도**
+
+    ★처방은 «값이 있는가» 가 아니라 «**저장소 루트처럼 생겼는가**» 다.
+    """
+    assert _kind_of(str(tmp_path), "unresolvable") == "unknown-checkout", (
+        "해석 실패를 「다른 체크아웃」이라고 단정한다 — 못 잰 것을 확신으로 말하고 있다"
+    )
+
+
+def test_unknown_checkout_is_actually_reachable(tmp_path: Path) -> None:
+    """★`unknown-checkout` 이 **도달 가능**하다 — 도달 불가 분기는 이름만 있는 장식이다.
+
+    R3 까지는 ``cd …/../../.. && pwd -P`` 가 **거의 언제나 성공**해 이 칸이 사실상 죽어 있었다
+    (독립 리뷰 MEDIUM-2: «셋 중 둘이 죽었는데 하나만 표시돼 있다»).
+    """
+    assert _kind_of(str(tmp_path), "unresolvable") == "unknown-checkout"
+    # [판별력] 정상 위치에서는 이 이름이 **나오면 안 된다**(항상 unknown 인 구현을 죽인다).
+    assert _kind_of(str(tmp_path)) == "wrong-checkout"
+
+
+def test_repo_missing_message_states_observation_not_diagnosis() -> None:
+    """★진단을 **못 하는 자리에서 진단하지 않는다**(독립 리뷰 ⑤).
+
+    R3 문구는 «진짜 체크아웃 손상» 이라고 **원인을 단정**했다. 후보가 최소 넷이다
+    (권한 · 심링크 · 경합 · 원격FS). ***진단을 못 하는 자리에서 진단을 적으면
+    그게 다음 사람을 틀린 곳으로 보낸다*** — 이 파일의 원래 명제다.
+    """
+    lib = (REPO_ROOT / "propai-platform/scripts/lib/assert-a1-host.sh").read_text(encoding="utf-8")
+    assert "진짜 체크아웃 손상" not in lib, "원인을 단정하는 문구가 남아 있다"
+    assert "원인을 단정하지 않습니다" in lib, "관측만 적는다는 선언이 없다"
+    # 후보를 **복수로** 제시해야 한다 — 하나만 적으면 그것이 곧 단정이다.
+    for cand in ["권한", "심링크", "경합"]:
+        assert cand in lib, f"원인 후보 {cand!r} 가 안 적혀 있다"
