@@ -234,6 +234,13 @@ def test_the_exclusion_is_alive_in_every_environment() -> None:
 
         found = _scan_role_producers(root)
 
+        # ★★**대조군을 본판정보다 먼저** 찍는다(리뷰 MINOR-1).
+        #   순서가 바뀌면 스캐너가 죽었을 때 «제외가 죽었다» 라는 **틀린 사유**가 먼저 나오고,
+        #   다음 사람이 **틀린 곳을 판다.** ***사유가 틀리면 진단이 없는 것보다 나쁘다.***
+        assert found.get("src/signup.py") == {"admin"}, (
+            f"스캐너가 **진짜 생산자를 못 읽는다**(제외 문제가 아니다): {sorted(found)}"
+        )
+
         # ★본판정 — 제외 대상이 **하나도** 안 들어온다.
         assert set(found) == {"src/signup.py"}, (
             f"제외가 죽었다 — 제3자/산출물/테스트가 생산자로 세어진다: {sorted(found)}"
@@ -248,21 +255,39 @@ def test_the_exclusion_is_alive_in_every_environment() -> None:
             assert frag in _SCAN_EXCLUDED, f"제외 항목 {frag} 이 사라졌다"
             assert path not in found, f"{frag} 제외가 죽었다 — {path} 가 모집단에 있다"
 
-        # ★대조군 — 스캐너가 살아 있다(전부 비면 「제외됨」과 「조회기 사망」이 같은 모양이다).
-        assert found["src/signup.py"] == {"admin"}, f"스캐너가 진짜 생산자를 못 읽는다: {found}"
 
 
 def test_the_real_scan_stays_within_our_sources() -> None:
     """★실제 저장소에서 **모집단이 제3자 코드로 부풀지 않는다**.
 
-    ★`.venv` 가 있는 환경에서 제외가 죽으면 여기서 걸린다(합성 락과 **다른 축**이다 —
-      합성은 「제외 로직」을, 이것은 「실제 모집단」을 본다).
+    ★★**판정자가 피판정자와 상수를 공유하면 아무것도 안 잠근다**(2026-09-12 실측 · 리뷰 MAJOR-1).
+      종전 판은 `any(x in f"/{rel}" for x in _SCAN_EXCLUDED)` 로 걸렀는데, `producers` 는
+      **그 술어로 이미 걸러진** 집합이라 `_SCAN_EXCLUDED` 가 무엇이든 결과가 **항상 공집합**이었다.
+      변이 `_SCAN_EXCLUDED = ()` 로 이 락만 돌려 확인: 모집단이 `.venv` 로 오염된 **그 상태에서
+      초록**(`::VERDICT=SURVIVED`). ***잠긴 것처럼 보이는 무잠금***이었고, 독스트링은
+      *"합성 락과 다른 축"* 이라고 **거짓을 주장**했다 — 다음 사람이 «두 축이 있다» 고 믿는다.
+
+    ⇒ 판정을 **독립 리터럴**로 내린다. `_SCAN_EXCLUDED` 를 **참조하지 않는 것**이 이 락의 전부다.
+    ★글자까지 같게 쓰지 않는다(`/` 없는 형태) — 같아지면 리팩토링 한 번에 **다시 한 축으로 접힌다**.
+    ★역할 분담: 이 락은 **「venv 가 있는 환경」** 담당이고(CI 엔 없어 공허),
+      반대편은 `test_the_exclusion_is_alive_in_every_environment` 의 **합성 트리**가 맡는다.
+      **그때 비로소 축이 둘이 된다.**
     """
     root = pathlib.Path(__file__).resolve().parents[1]
     producers = _scan_role_producers(root)
+
+    # ★대조군 먼저 — 비면 아래 「0건」이 공짜다.
     assert producers, "생산자를 하나도 못 찾았다 — 조회기가 죽었다"
-    stray = [rel for rel in producers if any(x in f"/{rel}" for x in _SCAN_EXCLUDED)]
-    assert not stray, f"제외 대상이 모집단에 들어왔다: {stray[:5]}"
+
+    # ★본판정 — **독립 리터럴**(위 상수를 안 쓴다).
+    polluted = [
+        rel for rel in producers
+        if ".venv" in rel or "site-packages" in rel or "node_modules" in rel
+    ]
+    assert not polluted, (
+        f"모집단이 **제3자 코드로 부풀었다**({len(polluted)}건) — 스캔 범위가 소스를 벗어났다: "
+        f"{polluted[:5]}"
+    )
 
 
 def test_the_ssot_does_not_carry_the_registration_default() -> None:
