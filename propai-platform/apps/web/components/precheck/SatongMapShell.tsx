@@ -102,6 +102,7 @@ import {
   PROJECT_NAME_MAX,
 } from "@/lib/satong-project-create";
 import { marketRadiusRequest } from "@/lib/market/market-radius";
+import { resolveLayerSourceNote } from "@/lib/satong-layer-source-note";
 import {
   SATONG_PARCEL_SLOPE_KEY,
   SATONG_SITE_LAYOUT_KEY,
@@ -1725,12 +1726,14 @@ export function SatongMapShell({
           },
         );
         if (!cancelled) {
-          setPresaleItems(
-            (res.items ?? []).filter(
-              (item) => typeof item.lat === "number" && typeof item.lon === "number",
-            ),
+          const located = (res.items ?? []).filter(
+            (item) => typeof item.lat === "number" && typeof item.lon === "number",
           );
-          setPresaleNote("");
+          setPresaleItems(located);
+          // ★형제 대칭(경매와 같은 규약) — `available:false` 를 **타입에 선언해 놓고 읽지
+          //   않았다.** 결과가 비었는데 노트까지 지우면 「없다」와 「못 봤다」가 같은 침묵이 된다.
+          //   ★결과가 있으면 사유를 붙이지 않는다(정상 조회에서 문구는 **바이트 동일**).
+          setPresaleNote(located.length ? "" : resolveLayerSourceNote("분양", res));
         }
       } catch {
         if (!cancelled) {
@@ -1791,7 +1794,7 @@ export function SatongMapShell({
         //   서로 다른 필지 기준이 되던 조합 불일치 해소(리뷰 LOW). 앵커 주소 부재 시 첫 필지 폴백.
         const region = (anchorAddress || marketAnchorAddress).split(" ")[0] || "";
         const fetchPage = (r?: string) =>
-          apiClient.get<{ items?: AuctionSearchItem[] }>(
+          apiClient.get<{ items?: AuctionSearchItem[]; data_source?: string | null }>(
             `/auction/search?page_size=60${r ? `&region=${encodeURIComponent(r)}` : ""}`,
             // skipSessionExpiry: 선택형 지도 레이어가 만료 세션에서 전역 로그인 리다이렉트를
             // 발동하지 않게 옵트아웃 — 401/403은 아래 catch가 정직 노트로 처리한다.
@@ -1801,7 +1804,16 @@ export function SatongMapShell({
         if (region && !(res.items ?? []).length) res = await fetchPage(); // 지역 0건 → 전국 폴백
         const items = (res.items ?? []).filter((item) => (item.address ?? "").trim());
         if (!items.length) {
-          if (!cancelled) setAuctionItems([]);
+          // ★★2026-09-12 — 종전엔 **사유 없이** 빈 배열만 넣고 반환했다. 그러면 화면이
+          //   `auctionNote || (auctionCount ? … : "경매 무자료")` 로 **「무자료」**, 즉
+          //   *"주변에 없다"* 라고 말한다. **그런데 서버는 `data_source:"unavailable"`**
+          //   (데이터원 조회 불가)을 보내고 있었다 — **없는 것이 아니라 못 본 것**이다.
+          //   실측(라이브 2026-09-12): `{"items":[],"total":0,"data_source":"unavailable"}`.
+          //   ★이 경로만 빠져 있었다 — 레이어 꺼짐·앵커 대기·미로그인 세 조건은 이미 정직하다.
+          if (!cancelled) {
+            setAuctionItems([]);
+            setAuctionNote(resolveLayerSourceNote("경매", res));
+          }
           return;
         }
         const geo = await apiClient.post<{ located?: { key: string; lat: number; lon: number }[] }>(
