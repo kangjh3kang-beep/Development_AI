@@ -77,6 +77,17 @@ _REPO_DECL = re.compile(r'^REPO(?:_DIR)?="(?:\$\{[A-Z_]+:-)?(\$HOME/[^"}]+)\}?"'
 #: 어느 쪽(A1 / 개발 머신)으로 고쳐도 반대쪽이 영구히 막힌다.
 A1_REPO_ROOT = "$HOME/Development_AI"
 
+#: 가드 전용 종료코드. ★**소스에서 파생**한다 — 여기에 숫자를 손으로 적으면 그 사본이
+#: 프로덕션과 갈리고, 그때 이 락은 «자기 상수를 자기 자신과 비교»하는 장식이 된다.
+def _guard_exit_code() -> int:
+    lib = (REPO_ROOT / "propai-platform/scripts/lib/assert-a1-host.sh").read_text(encoding="utf-8")
+    m = re.findall(r"^\s*exit (\d+)", lib, re.M)
+    assert len(m) == 1, f"가드의 exit 코드가 {len(m)}개다 — 유일해야 한다: {m}"
+    return int(m[0])
+
+
+GUARD_EXIT = _guard_exit_code()
+
 
 def test_repo_constant_is_the_a1_path() -> None:
     """★★**경로 상수를 고치지 못하게 한다** — 이 락의 존재 이유다.
@@ -146,7 +157,7 @@ def test_detects_wrong_host_with_dedicated_code(tmp_path: Path) -> None:
     home = tmp_path / "home"
     (home / "My_Projects" / "Development_AI").mkdir(parents=True)
     r = _run(str(home), str(REPO_ROOT))
-    assert r.returncode == 8, f"기대 8, 실제 {r.returncode}\nstderr={r.stderr[:400]}"
+    assert r.returncode == GUARD_EXIT, f"기대 {GUARD_EXIT}, 실제 {r.returncode}\nstderr={r.stderr[:400]}"
     assert "wrong-checkout" in Path("/tmp/deploy_status.txt").read_text(encoding="utf-8")
 
 
@@ -172,7 +183,7 @@ def test_specificity_does_not_fire_on_an_a1_like_host(tmp_path: Path) -> None:
     home = tmp_path / "home"
     (home / "Development_AI" / "propai-platform").mkdir(parents=True)
     r = _run(str(home), str(home))
-    assert r.returncode != 8, "A1 처럼 보이는데 막았다 — 위양성"
+    assert r.returncode != GUARD_EXIT, "A1 처럼 보이는데 막았다 — 위양성"
     status = Path("/tmp/deploy_status.txt").read_text(encoding="utf-8")
     assert "wrong-checkout" not in status, f"상태가 여전히 wrong-checkout 다: {status!r}"
 
@@ -187,7 +198,7 @@ def test_marker_less_host_is_not_called_a1(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()  # 표식 없음: A1 경로도, 개발 중첩 경로도 없다
     r = _run(str(home), str(home))
-    assert r.returncode == 8, f"기대 8, 실제 {r.returncode}"
+    assert r.returncode == GUARD_EXIT, f"기대 {GUARD_EXIT}, 실제 {r.returncode}"
     assert "A1 로 보이는데" not in r.stderr, (
         "표식이 없을 뿐인데 「A1 로 보인다」고 단정한다 — 부재로부터 유도하고 있다"
     )
@@ -219,11 +230,17 @@ def test_status_names_the_measured_event(tmp_path: Path) -> None:
 #: 면제 — **사유를 적는다**(부채를 초록 안에 보이게). 죽은 면제는 아래 테스트가 실패시킨다.
 A1_GUARD_EXEMPT = {
     "propai-platform/scripts/a1-arq-worker.sh":
-        "파일명이 `a1-` 접두로 기계를 스스로 말하고 헤더도 A1 을 명시한다. 또 REPO_DIR 이 "
-        "환경변수로 덮이도록 돼 있어 경로 상수를 고칠 동기 자체가 약하다(실측: 헤더 A1 언급 2건).",
+        "★2026-09-12 R2 정정 — 종전 사유의 «헤더가 A1 을 명시한다(실측 2건)» 는 **거짓**이었다. "
+        "다시 재니 대문자 `A1` 은 **0건**이고, 내 스윕이 `grep -ciE` 로 대소문자·대안을 섞어 "
+        "`a1-`(파일명)을 A1 언급으로 센 것이었다. **실제 근거는 다르다**: 헤더의 「환경변수」 "
+        "절이 `REPO_DIR` 을 **재정의 가능**하다고 명문화했고 소스도 `${REPO_DIR:-…}` 형태라, "
+        "경로가 안 맞으면 **상수를 고치는 대신 환경변수를 주는 길**이 이미 열려 있다.",
     "propai-platform/scripts/a1-backend-workers.sh":
-        "같은 이유 — `a1-` 접두 + 헤더 A1 언급. ★단 `cd \"$REPO_DIR\"` 에 `||` 가드가 아예 "
-        "없어 실패가 조용하다. 별건으로 상환한다(이 PR 은 실증된 두 자리만 고친다).",
+        "★2026-09-12 R2 정정 — 종전 사유(`cd` 에 `||` 가드가 없어 **조용히 실패**한다)는 "
+        "**틀렸다**. 실측: 3행이 `set -euo pipefail` 이라 `-e` 가 있고, `cd` 실패는 조용하지 "
+        "않고 **즉시 rc=1 로 죽으며 진짜 원인을 이름 짓는다**(대조군: `-e` 를 빼면 흘러가서 "
+        "`ERROR: .env not found` 라는 **틀린 원인**을 말한다 — 내가 우려한 모양은 그쪽이다). "
+        "면제는 유지하되 사유를 **측정된 것**으로 바꾼다. ★`a1-` 접두 + 헤더 A1 언급 1건.",
 }
 
 
@@ -286,3 +303,80 @@ def test_shared_helper_is_used_not_copied() -> None:
     for rel in users:
         src = (REPO_ROOT / rel).read_text(encoding="utf-8")
         assert "lib/assert-a1-host.sh" in src, f"{rel} 가 공용 함수를 source 하지 않는다(복제했나)"
+
+
+
+def test_guard_exit_code_is_unique_in_every_caller() -> None:
+    """★★**종료코드가 사건마다 유일해야 한다** — 기계는 rc 만 본다(독립 리뷰 MAJOR-A).
+
+    초판 가드는 `exit 8` 이었는데 `safe-deploy.sh:93` 이 **이미** 그 코드를 쓰고 있었다::
+
+        status "ABORT prune-진행중 — 잠시 후 재시도"; exit 8
+
+    **두 사건의 다음 행동이 정반대다** — 「기다렸다 재시도」 vs 「재시도해도 영원히 실패」.
+    권장 실행법이 ``setsid … >/dev/null 2>&1 &`` 라 **문구를 아무도 안 본다**.
+    ⇒ ***이 PR 의 명제를 rc 축에서 그대로 반복한 것이다*** — 매체만 문구에서 종료코드로 바뀌었다.
+    """
+    lib = (REPO_ROOT / "propai-platform/scripts/lib/assert-a1-host.sh").read_text(encoding="utf-8")
+    codes = re.findall(r"^\s*exit (\d+)", lib, re.M)
+    assert codes, "가드의 exit 코드를 못 찾았다 — 조회기가 죽었다"
+    guard_codes = set(codes)
+    assert str(GUARD_EXIT) in guard_codes, "파생 상수와 소스가 갈렸다"
+
+    users = [r for r in _a1_repo_scripts() if "assert_a1_host" in (REPO_ROOT / r).read_text(encoding="utf-8")]
+    assert len(users) >= 2, f"사용처가 {len(users)}건 — 공허하다"
+    for rel in users:
+        src = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        # 그 스크립트 **자신이** 쓰는 종료코드(가드 source 줄은 제외한다)
+        own = set(re.findall(r"(?<!guard-lib-missing\n)^\s*(?:[^#\n]*;\s*)?exit (\d+)", src, re.M))
+        own.discard("12")  # 가드 라이브러리 부재 — 이 PR 이 도입한 전용 코드
+        clash = guard_codes & own
+        assert not clash, (
+            f"{rel}: 가드 종료코드 {sorted(clash)} 가 그 스크립트의 **다른 사건**과 겹친다. "
+            "기계는 rc 만 보므로 두 사건이 구별되지 않는다."
+        )
+
+
+def test_guard_library_absence_is_not_fail_open() -> None:
+    """★★가드가 **자기 의존에 fail-open** 이면 안 된다(독립 리뷰 MAJOR-B).
+
+    두 스크립트에 ``set -e`` 가 없어, ``.`` source 실패가 그냥 흘러가
+    ``cd "$REPO"`` 로 도달해 **``FAIL cd-repo``** 를 냈다 — ***이 PR 이 없애려는 그 문구다.***
+    """
+    for rel in ["propai-platform/scripts/safe-deploy.sh", "propai-platform/scripts/rollback-web.sh"]:
+        src = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        assert "if ! . " in src, f"{rel}: source 실패를 검사하지 않는다(fail-open)"
+        assert "guard-lib" in src or "exit 12" in src, f"{rel}: source 실패에 전용 처리가 없다"
+
+
+
+def test_exemption_premises_are_true_not_just_written() -> None:
+    """★★면제 사유가 **기대는 사실**을 잠근다 — 문구가 아니라 전제를.
+
+    2026-09-12 R2: `a1-backend-workers.sh` 면제 사유가 *"`cd` 실패가 **조용하다**"* 였는데
+    **거짓**이었다(3행이 ``set -euo pipefail``). 독립 리뷰가 잡았다.
+
+    ★산문을 단언하면 다듬을 때마다 깨지는 **취약한 락**이 된다(저장소 §C-30). 그래서
+    **문구가 아니라 전제**를 잰다 — 그 전제가 뒤집히면 사유도 뒤집혀야 하므로 여기서 빨개진다.
+    ★변이 M11(사유 문구를 되돌림)이 SURVIVED 한 것은 **구멍이 아니다**: 그 축은 의도적으로
+    안 잠갔고, 대신 아래가 **그 사유를 참으로 만드는 조건**을 잠근다.
+    """
+    #: 각 면제가 기대는 **측정 가능한 전제**. 사유를 바꿀 거면 이 전제부터 다시 재라.
+    premises = {
+        # `-e` 가 있으므로 cd 실패가 즉시·구체적으로 죽는다 → 별도 가드 불필요
+        "propai-platform/scripts/a1-backend-workers.sh": ("set -euo pipefail", True),
+        # 상수를 고치지 않고 **환경변수로 덮는 길**이 문서화돼 있다 → 오인해도 상수를 안 건드린다
+        "propai-platform/scripts/a1-arq-worker.sh": ("${REPO_DIR:-", True),
+    }
+    for rel, (needle, expected) in premises.items():
+        assert rel in A1_GUARD_EXEMPT, f"{rel} 는 면제 목록에 없다 — 전제표가 낡았다"
+        src = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        assert (needle in src) is expected, (
+            f"{rel}: 면제 사유가 기대는 전제({needle!r})가 더는 참이 아니다 — "
+            "사유를 다시 재고 고쳐라(면제가 거짓 위에 서 있다)"
+        )
+    # [판별력] 전제 검사가 실제로 갈라야 한다 — 아무 파일이나 통과하면 장식이다.
+    other = (REPO_ROOT / "propai-platform/scripts/safe-deploy.sh").read_text(encoding="utf-8")
+    assert "set -euo pipefail" not in other, (
+        "대조군이 죽었다 — safe-deploy.sh 도 `-e` 를 갖게 됐다면 이 판별식은 무의미하다"
+    )
