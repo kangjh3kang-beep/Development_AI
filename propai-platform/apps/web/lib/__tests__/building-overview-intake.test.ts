@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { deriveLandAreaIntake } from "@/lib/building-overview-intake";
+import { deriveLandAreaIntake, describeSelectionArea } from "@/lib/building-overview-intake";
 
 const S = (verdict: "single_site" | "multi_region" | "malformed", spreadKm: number | null = null) =>
   ({ verdict, spreadKm }) as const;
@@ -44,5 +44,31 @@ describe("대지면적 자동 산입 게이트", () => {
       expect(got.autoLandAreaSqm).toBeNull();
       expect(got.withheldReason, v).toBeTruthy();
     }
+  });
+});
+
+describe("★같은 화면이 두 서사를 말하지 않는다 — describeSelectionArea", () => {
+  it("산입되면 「합산 면적」이라 부른다", () => {
+    const got = describeSelectionArea("5,781㎡", { autoLandAreaSqm: 5781, withheldReason: null });
+    expect(got.withheld).toBe(false);
+    expect(got.label).toBe("합산 면적 5,781㎡");
+  });
+
+  it("★★보류되면 「합산 면적」이라 **부르지 않고** 사유를 싣는다(2026-08-23 사고의 형태)", () => {
+    const reason = "최대 15.9km 떨어진 지역의 필지가 섞여 있어 합계를 하나의 대지면적으로 보지 않습니다.";
+    const got = describeSelectionArea("5,781㎡", { autoLandAreaSqm: null, withheldReason: reason });
+    expect(got.withheld).toBe(true);
+    // ★숫자는 남는다 — 지우면 「왜 안 보이지」가 된다
+    expect(got.label).toContain("5,781㎡");
+    // ★그러나 「하나의 대지」라는 주장은 빠진다
+    expect(got.label).not.toContain("합산 면적");
+    // ★사유가 **그대로** 도달한다(무언 보류 금지)
+    expect(got.label).toContain(reason);
+  });
+
+  it("[판별력] 두 경로가 실제로 **다른 문자열**을 낸다 — 같으면 게이트가 장식이다", () => {
+    const ok = describeSelectionArea("100㎡", { autoLandAreaSqm: 100, withheldReason: null }).label;
+    const held = describeSelectionArea("100㎡", { autoLandAreaSqm: null, withheldReason: "사유가 여기 온다" }).label;
+    expect(ok).not.toBe(held);
   });
 });

@@ -53,3 +53,26 @@ export function deriveLandAreaIntake(
     withheldReason: null,
   };
 }
+
+/**
+ * 선택 필지 합계를 **화면에 뭐라고 부를 것인가**.
+ *
+ * ★★2026-09-12 — `deriveLandAreaIntake` 는 **새 모달에만** 걸려 있었고, 같은 화면의
+ *   접힌 셸 헤더는 여전히 게이트 없이 *"합산 면적 5,781㎡"* 라고 **단정**했다.
+ *   그래서 15.86km 떨어진 6필지를 고른 사용자는 **헤더에서 「합산 면적」을 읽으면서**
+ *   모달에선 「보류」를 본다 — 한 화면이 **두 가지 서사**를 말한다.
+ *   이 PR 이 재현하지 않겠다고 인용한 바로 그 사고(2026-08-23)가 **다른 절반에 살아 있었다.**
+ *
+ * ★숨기지 않는다 — 사용자가 기대하는 숫자는 그대로 보여 주되 **주장을 고친다.**
+ *   숫자를 지우면 «왜 안 보이지»가 되고, 그대로 두면 «하나의 대지»라는 거짓이 남는다.
+ *
+ * @param totalText 이미 서식된 합계 문자열(서식 규칙은 호출부가 안다)
+ */
+export function describeSelectionArea(
+  totalText: string,
+  intake: LandAreaIntake,
+): { label: string; withheld: boolean } {
+  if (intake.withheldReason === null) return { label: `합산 면적 ${totalText}`, withheld: false };
+  // ★보류 사유를 **그대로 싣는다**(무언 보류 금지 — 사유가 없으면 사용자는 진단할 수 없다).
+  return { label: `면적 합 ${totalText} · ★${intake.withheldReason}`, withheld: true };
+}
