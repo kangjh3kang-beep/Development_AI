@@ -24,6 +24,8 @@ import ast
 import pathlib
 import re
 
+import pytest
+
 APP = pathlib.Path(__file__).resolve().parents[1] / "app"
 
 # ★★면제 원장 — **좌표 단위**(`파일::함수:줄`)다.
@@ -205,6 +207,52 @@ def test_no_dead_exemptions() -> None:
     )
 
 
+def resolve_coordinate(root: pathlib.Path, rel: str) -> pathlib.Path:
+    """사유가 인용한 `파일.py` 경로를 **모호하지 않게** 해석한다.
+
+    ★함수로 뺀 이유: 모호 분기가 **한 번도 태워지지 않았다**(변이 실측 — 짧은 경로
+      `org/service.py` 는 접미가 유일해 모호 분기에 도달하지 않는다). 합성 입력으로
+      네 갈래(정확 · 접미 유일 · **모호** · 부재)를 각각 태운다.
+
+    ★★이 함수 자신이 위양성의 서식지였다 — `rglob(basename)` 폴백이 이 저장소의
+      `service.py` **8개** 중 엉뚱한 것을 집어 정상 사유를 거짓으로 찍었다(CI 실측).
+    """
+    exact = root / rel
+    if exact.is_file():
+        return exact
+    cands = [c for c in root.rglob("*.py") if str(c.relative_to(root)).endswith(rel)]
+    if not cands:
+        raise FileNotFoundError(rel)
+    if len(cands) > 1:
+        raise ValueError(
+            f"경로가 모호하다({len(cands)}개) — 전체 경로를 적어라: "
+            f"{sorted(str(c.relative_to(root)) for c in cands)[:4]}"
+        )
+    return cands[0]
+
+
+def test_the_coordinate_resolver_discriminates_all_four_cases() -> None:
+    """★해석기 자신을 태운다 — **네 갈래 전부**(정확 · 접미 유일 · 모호 · 부재)."""
+    root = APP.parent
+
+    # ① 정확 경로
+    assert resolve_coordinate(root, "app/services/sales/org/service.py").is_file()
+
+    # ② 접미 유일 — 짧게 적어도 옳게 해석된다(위양성이었던 자리)
+    got = resolve_coordinate(root, "org/service.py")
+    assert str(got).endswith("app/services/sales/org/service.py"), got
+
+    # ③ **모호** — 이 저장소에 `service.py` 는 여러 개다. 조용히 아무거나 집으면 안 된다.
+    n = len([c for c in root.rglob("*.py") if str(c.relative_to(root)).endswith("service.py")])
+    assert n > 1, f"대조군 실패 — `service.py` 가 {n}개라 모호 분기를 태울 수 없다"
+    with pytest.raises(ValueError, match="모호"):
+        resolve_coordinate(root, "service.py")
+
+    # ④ 부재
+    with pytest.raises(FileNotFoundError):
+        resolve_coordinate(root, "zzz_no_such_file.py")
+
+
 def test_exemptions_carry_a_reason_whose_coordinates_exist() -> None:
     """★사유 없는 면제는 면제가 아니라 **잊어버린 것**이다.
 
@@ -228,18 +276,13 @@ def test_exemptions_carry_a_reason_whose_coordinates_exist() -> None:
             #     사유를 고치려 들거나 이 락을 끈다.
             #   ⇒ ①정확 경로 우선 ②없으면 **전체 상대경로의 접미 일치**로 찾고
             #     ③후보가 둘 이상이면 **모호하다고 실패**시킨다(짧게 쓴 사람에게 전체 경로를 요구).
-            exact = root / rel
-            if exact.is_file():
-                found = exact
-            else:
-                cands = [c for c in root.rglob("*.py")
-                         if str(c.relative_to(root)).endswith(rel)]
-                assert cands, f"{key}: 사유가 없는 파일을 가리킨다 — {rel}"
-                assert len(cands) == 1, (
-                    f"{key}: 사유의 경로가 **모호하다**({len(cands)}개 일치) — 전체 경로를 적어라: "
-                    f"{rel} → {sorted(str(c.relative_to(root)) for c in cands)[:4]}"
-                )
-                found = cands[0]
+            # ★사본을 만들지 않는다 — 위 `resolve_coordinate` 를 쓴다(판정식은 한 곳).
+            try:
+                found = resolve_coordinate(root, rel)
+            except FileNotFoundError:
+                raise AssertionError(f"{key}: 사유가 없는 파일을 가리킨다 — {rel}") from None
+            except ValueError as e:
+                raise AssertionError(f"{key}: {e}") from None
             lines = found.read_text(encoding="utf-8").splitlines()
             n = int(lineno)
             assert 1 <= n <= len(lines), (
