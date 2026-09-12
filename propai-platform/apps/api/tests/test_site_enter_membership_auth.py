@@ -117,24 +117,38 @@ def test_no_password_no_longer_blocks_entry() -> None:
         "비번이 없는 현장에서 토큰을 발급하지 않는다 — 멤버여도 진입이 막힌다"
     )
     assert "raise" not in body, f"비번 부재를 여전히 예외로 막는다: {body[:160]}"
-    # ★표기가 아니라 **값**을 본다 — `ast.unparse` 는 따옴표를 정규화한다.
-    consts = {c.value for c in ast.walk(branch)
-              if isinstance(c, ast.Constant) and isinstance(c.value, str)}
-    assert "membership" in consts, "어떤 인증으로 들어왔는지 말하지 않는다(진단 불가)"
+    # ★★축이 옮겨갔다(2026-09-12 · 리뷰 M6): `auth` 가 **리터럴에서 값**이 됐다
+    #   (`membership_kind(org_path)` — 승인 ↔ 플랫폼 폴백을 가른다). 그래서
+    #   «리터럴 "membership" 이 있나» 는 더 이상 옳은 축이 아니다 — **값의 출처**를 본다.
+    #   행위(두 값이 실제로 갈리는가)는 `test_platform_fallback_is_distinguishable_...` 이 태운다.
+    calls = {c.func.id for c in ast.walk(branch)
+             if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+    assert "membership_kind" in calls, (
+        "어떤 인증으로 들어왔는지 **판정하지** 않는다 — 승인과 폴백이 뭉개진다"
+    )
 
 
 def test_both_auth_paths_are_distinguishable() -> None:
-    """★두 진입 경로가 **응답에서 구별**된다 — 같은 모양이면 감사도 진단도 불가능하다."""
+    """★두 진입 경로가 **응답에서 구별**된다 — 같은 모양이면 감사도 진단도 불가능하다.
+
+    ★축 이동(2026-09-12): 비번 경로는 리터럴 `"password"` 를 싣지만, 멤버십 경로는
+      `membership_kind(org_path)` **값**을 싣는다(승인 ↔ 폴백). 그래서 «리터럴 두 개» 로는
+      못 잠근다 — **한쪽은 리터럴, 한쪽은 판정 호출**임을 각각 단언한다.
+      실제 세 값이 갈리는 것은 라우터 왕복 테스트(I 절)가 태운다.
+    """
     import ast
     fn = _enter_fn()
-    auth_values = {
-        v.value
+    auth_nodes = [
+        v
         for d in ast.walk(fn) if isinstance(d, ast.Dict)
         for k, v in zip(d.keys, d.values, strict=False)
         if isinstance(k, ast.Constant) and k.value == "auth"
-        and isinstance(v, ast.Constant)
-    }
-    assert auth_values == {"membership", "password"}, f"실측: {auth_values}"
+    ]
+    assert len(auth_nodes) == 2, f"응답에 `auth` 를 싣는 자리가 {len(auth_nodes)}곳이다"
+    literals = {v.value for v in auth_nodes if isinstance(v, ast.Constant)}
+    names = {v.id for v in auth_nodes if isinstance(v, ast.Name)}
+    assert literals == {"password"}, f"리터럴 auth 실측: {literals}"
+    assert names, "멤버십 경로가 **판정 값**을 싣지 않는다(리터럴로 되돌아갔다)"
 
 
 def test_password_is_optional_in_the_request_schema() -> None:
@@ -442,13 +456,28 @@ def test_router_maps_each_outcome_to_its_own_status() -> None:
         "빈 비번 거부가 **카운터 증가 뒤**에 있다 — 자동 시도가 계정을 잠근다"
     )
 
-    # ★다섯 결과가 **서로 다른 상태코드**로 갈리는가(이름값을 하는 락).
+    # ★다섯 결과가 **서로 다른 상태코드**로 갈리는가.
+    #
+    # ★★**정정(2026-09-12 · 리뷰 MINOR 1 · C1)**: 종전 판은 `i = src.find(outcome)` 를
+    #   계산해 놓고 **쓰지 않는 죽은 변수**였고, 남은 두 단언이 «낱말이 있다» + «상태코드가
+    #   함수 안 어딘가 있다» 라 **서로 연결되지 않은 공존 검사**였다. 그래서
+    #   `== "forbidden"` → `== "zzz_forbidden"` 변이가 통과했다(`zzz_forbidden` 이
+    #   `forbidden` 을 부분문자열로 포함하고 `HTTPException(403` 은 그대로 남는다).
+    #   ⇒ **비교되는 리터럴을 AST 로 정확값으로** 보고, 행위는 아래 라우터 테스트가 태운다.
+    compared = {
+        c.value
+        for cmp_ in ast.walk(fn) if isinstance(cmp_, ast.Compare)
+        for c in ([cmp_.left] + list(cmp_.comparators))
+        if isinstance(c, ast.Constant) and isinstance(c.value, str)
+    }
+    for outcome in ("forbidden", "no_secret_supplied", "password"):
+        assert outcome in compared, (
+            f"`{outcome}` 를 **정확값으로** 비교하지 않는다(부분문자열 우회 가능): "
+            f"실제 비교값={sorted(compared)}"
+        )
     src = ast.unparse(fn)
-    for outcome, status in (("forbidden", "403"), ("no_secret_supplied", "400")):
-        i = src.find(outcome)
-        assert i != -1, f"`{outcome}` 분기가 없다"
-        assert f"HTTPException({status}" in src, f"`{outcome}` 에 {status} 이 없다"
-    assert "HTTPException(401" in src, "틀린 비번의 401 이 사라졌다"
+    for status in ("403", "400", "401"):
+        assert f"HTTPException({status}" in src, f"{status} 분기가 사라졌다"
 
 
 def test_site_lookup_excludes_deleted_sites() -> None:
@@ -474,9 +503,14 @@ def test_both_entry_paths_are_logged_by_one_helper() -> None:
              if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
              and c.func.id == "_log_entry"]
     assert len(calls) == 2, f"진입 로그가 {len(calls)}곳이다 — 두 경로 모두여야 한다"
-    auths = {a.value for c in calls for a in c.args
-             if isinstance(a, ast.Constant) and isinstance(a.value, str)}
-    assert auths == {"membership", "password"}, f"실측: {auths}"
+    # ★축 이동(2026-09-12): 멤버십 경로의 감사 값도 **판정 호출의 결과**다(승인 ↔ 폴백).
+    #   한쪽은 리터럴 `"password"`, 다른 쪽은 이름 — 둘이 **서로 다른 것**을 싣는지 본다.
+    last_args = [c.args[-1] for c in calls if c.args]
+    assert len(last_args) == 2, "감사 호출이 인증 종류를 인자로 넘기지 않는다"
+    literals = {a.value for a in last_args if isinstance(a, ast.Constant)}
+    names = {a.id for a in last_args if isinstance(a, ast.Name)}
+    assert literals == {"password"}, f"리터럴 감사값 실측: {literals}"
+    assert names, "멤버십 경로가 감사에 **판정 값**을 넘기지 않는다 — 폴백이 승인으로 기록된다"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -713,7 +747,8 @@ def test_role_endpoint_exposes_lockout_state() -> None:
 #   남은 것 중 **셋이 진짜 구멍**이었다. 셋 다 «내 단언이 그 자리를 안 본다» 였다.
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _enter(*, has_password: bool, password=None, tenant=None, role="MEMBER", site=None):
+async def _enter(*, has_password: bool, password=None, tenant=None, role="MEMBER",
+                 org_path="a1.t1", site=None):
     """두 경로를 **같은 방식으로** 태우는 헬퍼 — 계약 비교를 하려면 축이 같아야 한다.
 
     ★`site` 를 인자로 받는다. 호출마다 새 현장을 만들면 `site_id` 가 달라져
@@ -730,7 +765,8 @@ async def _enter(*, has_password: bool, password=None, tenant=None, role="MEMBER
         return site
 
     async def _role(_db, _site, _user):
-        return ("a1.t1", role)
+        # ★`org_path` 도 모집단이다 — 노드 기반(`"a1.t1"`) ↔ 플랫폼 폴백(`""`) ↔ 비멤버(`""`+role="").
+        return (org_path, role)
 
     async def _ensure(_db):
         pass
@@ -935,3 +971,56 @@ def test_entry_audit_line_actually_carries_the_four_values(caplog) -> None:
         assert value in rendered, (
             f"감사 줄에 `{value}` 가 없다 — 누가 무엇으로 들어왔는지 셀 수 없다: {rendered!r}"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# I. R4 — **라우터를 태우는** 멤버십 관문 + 폴백 구별 (2026-09-12)
+#
+# ★R4 가 등가 약화 변이 하나로 관문을 뚫었다:
+#     `resolve_entry(role, None, None) == "forbidden"` → `== "zzz_forbidden"`  → SURVIVED
+#   그러면 **인증된 아무나 비번 미설정 현장에** 토큰을 받고, 감사는 그것을
+#   `auth=membership` 으로 기록한다. 원인은 관문을 **순수 함수로만** 태우고
+#   «라우터가 그 값을 어떻게 쓰는가» 를 산문으로 남긴 것이다.
+#   ⇒ 비멤버 모집단으로 **라우터를 태운다.**
+# ─────────────────────────────────────────────────────────────────────────────
+
+@_NEEDS_311
+@pytest.mark.asyncio
+async def test_router_rejects_a_non_member_with_403() -> None:
+    """★★비멤버는 **라우터에서** 403 이다 — 토큰이 나오면 안 된다."""
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as ei:
+        # `_resolve_role` 이 «멤버 아님» 으로 돌려주는 형태: `("", "")`.
+        await _enter(has_password=False, role="", org_path="")
+    assert ei.value.status_code == 403, (
+        f"비멤버가 403 이 아니다({ei.value.status_code}) — 아무나 진입한다"
+    )
+
+
+@_NEEDS_311
+@pytest.mark.asyncio
+async def test_router_lets_a_member_in_control_for_the_403_test() -> None:
+    """★대조군 — 같은 경로에서 **멤버는 들어온다**(403 이 항상-거부가 아님을 증명)."""
+    out = await _enter(has_password=False, role="MEMBER", org_path="a1.t1")
+    assert out["site_token"], "멤버가 못 들어온다 — 가드가 정상 경로를 막았다"
+    assert out["auth"] == "membership"
+
+
+@_NEEDS_311
+@pytest.mark.asyncio
+async def test_platform_fallback_is_distinguishable_from_approved_membership() -> None:
+    """★★**승인 없이** 들어온 사람을 감사에서 가른다(리뷰 M6).
+
+    `resolve_site_membership` 은 노드가 0건일 때 플랫폼 역할만 보고 `("", "SUPERADMIN")` 을
+    준다 — **승인이 없다**. 종전엔 노드 기반과 **똑같이** `auth="membership"` 이었다.
+    ★두 모집단을 같은 실행에서 본다 — 한쪽만 보면 «전부 같은 값» 구현도 통과한다.
+    """
+    approved = await _enter(has_password=False, role="MEMBER", org_path="a1.t1")
+    fallback = await _enter(has_password=False, role="SUPERADMIN", org_path="")
+
+    assert approved["auth"] == "membership"
+    assert fallback["auth"] == "platform_fallback", (
+        "승인 없는 플랫폼 폴백이 승인된 멤버십과 같은 값으로 기록된다 — 감사에서 구별 불가"
+    )
+    assert approved["auth"] != fallback["auth"]

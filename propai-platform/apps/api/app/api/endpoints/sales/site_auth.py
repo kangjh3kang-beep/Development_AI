@@ -37,7 +37,7 @@ from app.api.deps_sales import _SUPERADMIN_ROLES, _node_priority
 from app.core.config import settings
 
 # ★진입 판정은 의존 없는 서비스 모듈에 산다 — 어디서든 태울 수 있게(2026-09-09).
-from app.services.sales.site_entry import resolve_entry
+from app.services.sales.site_entry import membership_kind, resolve_entry
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
 
 logger = logging.getLogger(__name__)
@@ -363,6 +363,12 @@ async def enter_site(site_id: str, body: EnterRequest,
     #
     #   ⇒ **설정돼 있으면 요구하고, 없으면 멤버십으로 충분하다.** 비번을 지우지는 않는다 —
     #     이미 설정한 현장(실측 3곳)의 2차 요소를 **조용히 걷어내지 않기** 위해서다.
+    #
+    # ★★**정정(2026-09-12 · 리뷰 M6)**: 위 «관리자·상위 레벨이 승인해야 생긴다» 는
+    #   **노드 기반 경로에서만 참**이다. `resolve_site_membership` 은 노드가 0건일 때
+    #   플랫폼 역할만 보고 `("", "SUPERADMIN")`/`("", "DEVELOPER")` 를 준다 — **승인 없이**.
+    #   그 둘을 같은 `auth="membership"` 으로 기록하면 감사에서 구별되지 않으므로
+    #   `membership_kind(org_path)` 로 가른다. 폐지가 아니라 **가시화**다.
     # rate-limit: 잠금 여부 확인
     att = (await db.execute(text(
         "SELECT fail_count, locked_until FROM sales_site_login_attempts WHERE site_id=:s AND user_id=:u"
@@ -385,7 +391,8 @@ async def enter_site(site_id: str, body: EnterRequest,
             "DELETE FROM sales_site_login_attempts WHERE site_id=:s AND user_id=:u"),
             {"s": sid, "u": str(user.id)})
         await db.commit()
-        _log_entry(sid, user, role, "membership")
+        auth_kind = membership_kind(org_path)
+        _log_entry(sid, user, role, auth_kind)
         token = issue_site_token(user.id, getattr(user, "tenant_id", None), site.id, role, org_path)
         return {
             "site_token": token,
@@ -396,7 +403,8 @@ async def enter_site(site_id: str, body: EnterRequest,
             "role_label": _ROLE_LABEL.get(role, role),
             "features": _features(role),
             # ★어떤 인증으로 들어왔는지 **말한다** — 두 경로가 같은 응답이면 진단이 불가능하다.
-            "auth": "membership",
+            #   ★`membership`(노드 승인) ↔ `platform_fallback`(승인 없는 플랫폼 역할)을 가른다.
+            "auth": auth_kind,
         }
 
     # ★판정은 **서비스 층**이 한다(`site_entry.verify_site_secret`) — 라우터는 3.10 에서

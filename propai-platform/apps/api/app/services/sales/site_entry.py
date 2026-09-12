@@ -83,3 +83,30 @@ def resolve_entry(role: str | None, stored_hash: str | None, supplied: str | Non
     if supplied is None or supplied == "":
         return "no_secret_supplied"
     return "password" if verify_site_secret(stored_hash, supplied) == "password" else "reject"
+
+
+#: 멤버십이 **어떻게** 생겼는지 — 응답·감사에 싣는 값.
+MEMBERSHIP_KINDS = ("membership", "platform_fallback")
+
+
+def membership_kind(org_path: str | None) -> str:
+    """노드 기반 승인과 **플랫폼 역할 폴백**을 가른다(2026-09-12 · 리뷰 M6).
+
+    ★**이 PR 의 주석이 거짓이었다.** *"멤버십은 관리자·상위 레벨이 승인해야 생긴다
+      (`sales_org_nodes`)"* 라고 단정했는데, `resolve_site_membership` 은 노드가 **0건**일 때
+      플랫폼 역할만 보고 `("", "SUPERADMIN")` / `("", "DEVELOPER")` 를 돌려준다.
+      그 경로에는 **승인이 없다.** 그런데 라우터가 둘을 똑같이 `auth="membership"` 으로
+      기록해, 감사 로그에서 «승인받은 사람» 과 «폴백으로 들어온 사람» 이 **구별되지 않았다.**
+
+    ★가르는 근거는 `org_path` 다 — 노드 기반은 ltree 경로를 갖고, 폴백은 **빈 문자열**이다
+      (`deps_sales.resolve_site_membership` 의 두 반환 형태). 역할 이름으로 가르지 않는다:
+      역할은 노드 타입과 플랫폼 역할이 같은 문자열 공간을 쓴다.
+
+    ★**선재 결함을 여기서 고치지 않는다**(별건). 저장소는 *"가입 시 모든 사용자가 자기
+      테넌트의 role='admin' 이 되므로 role 게이트는 누출"* 을 **자기 언어로 6곳에** 적어 두고
+      `tier` 로 판별한다(`routers/growth.py:166` · `routers/billing.py` ·
+      `routers/admin_secrets.py:51` · `routers/admin_sales_rls.py:29` 등).
+      그런데 `deps_sales._SUPERADMIN_ROLES` 는 `"admin"` 을 담은 **role 게이트**다.
+      ⇒ 이 함수는 그 경로를 **보이게** 만든다. 없애는 것은 사용자 결정이 필요한 별건이다.
+    """
+    return "membership" if (org_path or "") else "platform_fallback"
