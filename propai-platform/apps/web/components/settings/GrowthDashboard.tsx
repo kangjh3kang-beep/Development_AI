@@ -522,7 +522,13 @@ export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
       if (service) rows.push({ label: "서비스", value: service });
       if (label) rows.push({ label: "후보", value: label });
       if (conf !== null) rows.push({ label: "신뢰도", value: pct(conf) });
-      rows.push({ label: "반영", value: "사람 승인 필요(자동 채택 없음)" });
+      // ★★2026-09-12 독립 적대 리뷰 MAJOR-1 — 종전 문구 «사람 승인 필요(자동 채택 없음)» 는
+      //   **하드코딩된 거짓**이었다: `requires_approval` 을 읽지도 않고, 프롬프트 후보 채택
+      //   경로에는 **승인 단계가 없다**(백엔드 `feature_flags.apply_prompt_ab` 가 자동으로 쓴다).
+      //   ★«자동 채택 없음» 쪽은 오늘 참이지만 그 이유가 「승인」이 아니라 **구조**다
+      //     (`effector_reach.prompt_ab_adopt` = `Reach.NONE` · 후보군 ∩ 실사용 = 0).
+      //   ⇒ 거짓인 절반만 걷어낸다. 없는 사실을 새로 주장하지 않는다.
+      rows.push({ label: "반영", value: "후보 등록만 — 승인 절차 없음" });
       break;
     }
     default:

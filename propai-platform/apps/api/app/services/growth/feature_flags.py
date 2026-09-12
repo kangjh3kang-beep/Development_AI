@@ -85,7 +85,8 @@ FEATURE_MIN_SAMPLES = 10
 
 # 프롬프트 A/B 사전등록 후보군(service → 허용 버전 목록). 이 안에서만 채택.
 PROMPT_AB_CANDIDATES: dict[str, list[str]] = {
-    # 기본은 base_interpreter._PROMPT_VERSION 과 동일한 'v2'. 후보 등록은 Phase 5 가 확장.
+    # 기본 버전은 base_interpreter._PROMPT_VERSION 이 정한다(값을 여기 복사하지 않는다 — 낡는다).
+    # 후보 등록은 Phase 5 가 확장.
     # 예: "market": ["v2", "v3"]. 후보가 없으면 자동채택 비대상(기본 버전 유지).
 }
 # A/B 채택 최소 표본(verify+feedback 합). 너무 적으면 채택 보류.
