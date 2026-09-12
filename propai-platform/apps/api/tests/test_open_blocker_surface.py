@@ -97,6 +97,20 @@ def test_vocabulary_is_closed_both_ways() -> None:
     assert all(v.strip() for v in H.OPEN_BLOCKER_REASONS.values()), "빈 사유가 있다"
 
 
+def test_codes_are_pinned_to_their_literals() -> None:
+    """★**자기 자신과 비교하는 락 금지** — 코드 값은 **API 어휘**라 계약이다.
+
+    기계 변이(2026-09-12 · `base: origin/main → 30f0dfbc0bec`)가 이 자리를 정확히 짚었다:
+    `OPEN_BLOCKER_* = "..."` 의 **문자열을 바꿔도 생존**했다. 위 테스트들이 전부 **심볼**을
+    참조하니 양쪽이 함께 움직여 **원리적으로 판별 불가**였기 때문이다.
+    ⇒ 소비처(프론트·대시보드)는 **문자열**로 분기한다. 값이 조용히 바뀌면 그쪽이 깨진다.
+    ★형제 선례를 그대로 쓴다 — `test_handled_types_are_literals` 가 같은 이유로 리터럴을 못 박는다.
+    """
+    assert H.OPEN_BLOCKER_TYPE_NOT_HANDLED == "type_not_handled"
+    assert H.OPEN_BLOCKER_ACTION_NOT_HEALABLE == "action_not_healable"
+    assert H.OPEN_BLOCKER_WINDOW_EXPIRED == "window_expired"
+
+
 def test_every_emitted_code_has_a_reason() -> None:
     """★생산자가 내는 코드를 사유표가 **전부 덮는다**(목록은 곧 상한이 된다)."""
     emitted: set[str] = set()

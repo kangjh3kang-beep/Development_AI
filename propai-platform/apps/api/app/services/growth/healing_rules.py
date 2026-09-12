@@ -196,6 +196,16 @@ OPEN_BLOCKER_ACTION_NOT_HEALABLE = "action_not_healable"
 OPEN_BLOCKER_WINDOW_EXPIRED = "window_expired"
 
 #: 코드 → 사람이 읽는 사유. **닫힌 어휘**다 — 여기 없는 코드를 내보내면 계약 위반이다.
+#
+#  ★변이 감사 기록(2026-09-12 · `base: origin/main → 30f0dfbc0bec` · 43변이 · CAUGHT 33 / 생존 10):
+#    생존 10건 중 **7건은 아래 사유 문자열의 「문구」 변이**다. **구멍이 아니다** —
+#    락은 사유의 **실질**(비어 있지 않은가 · 모든 생산 코드를 덮는가)과 **키 집합**을 잠그고,
+#    **문구 자체는 일부러 단언하지 않는다.** 문구는 계약이 아니라 표현이라, 단언하면 다듬을
+#    때마다 깨지는 취약한 락이 된다(전역 §G-30). 형제 `HEAL_UNHANDLED_REASONS` 가 같은 판단을
+#    같은 이유로 기록해 두었다.
+#    ★★나머지 **3건(코드 값 리터럴)은 진짜 구멍이었고** `test_codes_are_pinned_to_their_literals`
+#      로 잠갔다 — 그 값은 **소비처가 문자열로 분기하는 API 어휘**라 계약이다.
+#      ***그 셋은 내가 손으로 고른 변이로는 안 나왔다 — 기계가 분모를 정했기에 나왔다.***
 OPEN_BLOCKER_REASONS: dict[str, str] = {
     OPEN_BLOCKER_TYPE_NOT_HANDLED: (
         "치유기가 이 타입에 분기를 두지 않습니다(선언된 면제). "
