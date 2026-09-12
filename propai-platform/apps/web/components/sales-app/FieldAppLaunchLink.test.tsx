@@ -1,0 +1,109 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+
+import FieldAppLaunchLink from "@/components/sales-app/FieldAppLaunchLink";
+import { FIELD_APP_WINDOW_NAME } from "@/lib/field-app-shell";
+
+/**
+ * ★진입 링크의 계약 — **창을 열었을 때만 기본 이동을 막는다.**
+ *
+ * 두 실패가 정반대다:
+ *   창이 떴는데 안 막으면 → 원래 창까지 현장앱으로 이동 = **사용자가 플랫폼을 잃는다**(신고 본체)
+ *   못 떴는데 막으면      → **아무 데도 못 간다**(버튼 사망)
+ * 그래서 두 모집단을 **같은 실행에서** 갈라 단언한다. 한쪽만 보면 «항상 막는다» 도 통과한다.
+ */
+
+const origOpen = window.open;
+
+beforeEach(() => {
+  window.name = "";
+});
+
+afterEach(() => {
+  window.open = origOpen;
+  vi.restoreAllMocks();
+});
+
+function renderLink() {
+  const seen: string[] = [];
+  render(
+    <FieldAppLaunchLink href="/ko/sales/sites" onLaunched={(h) => seen.push(h)}>
+      내 현장(앱)
+    </FieldAppLaunchLink>,
+  );
+  return { seen, el: screen.getByRole("link", { name: /내 현장/ }) };
+}
+
+describe("FieldAppLaunchLink — 두 모집단이 반대 결과를 낸다", () => {
+  it("① 창이 열리면 기본 이동을 **막는다**(플랫폼 창 보존)", () => {
+    window.open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window) as typeof window.open;
+    const { el, seen } = renderLink();
+
+    // fireEvent.click 의 반환값 = "기본 동작이 살아 있는가". false 면 preventDefault 된 것.
+    const notPrevented = fireEvent.click(el);
+
+    expect(seen).toEqual(["window"]);
+    expect(notPrevented).toBe(false); // ★막았다
+  });
+
+  it("② 팝업·새탭 둘 다 차단되면 기본 이동을 **막지 않는다**(오늘의 동작으로 폴백)", () => {
+    window.open = vi.fn(() => null) as unknown as typeof window.open;
+    const { el, seen } = renderLink();
+
+    const notPrevented = fireEvent.click(el);
+
+    expect(seen).toEqual(["same"]);
+    expect(notPrevented).toBe(true); // ★막지 않았다 — 최악의 경우가 회귀가 아니다
+  });
+
+  it("★★tab 폴백 — 팝업이 막혀 **새 탭**으로 열려도 기본 이동을 막는다", () => {
+    // 적대 리뷰 M-2: 이 갈래가 무잠금이라 `!== "same"` → `=== "window"` 변이가 **생존**했다.
+    // 그 변이의 실제 동작은 «새 탭이 열리고 + 원래 창도 현장앱으로 이동» = **신고 증상 재현**이다.
+    // 모집단이 둘이 아니라 **셋**(window/tab/same)인데 tab 만 안 태우고 있었다.
+    window.open = vi
+      .fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>()
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce({} as Window) as unknown as typeof window.open;
+    const { el, seen } = renderLink();
+
+    const notPrevented = fireEvent.click(el);
+
+    expect(seen).toEqual(["tab"]);
+    expect(notPrevented).toBe(false); // ★탭이어도 막는다 — 원래 창을 잃으면 안 된다
+  });
+
+  it("★href 를 유지한다 — 가운데클릭·「새 탭에서 열기」·링크 복사가 살아 있어야 한다", () => {
+    window.open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window) as typeof window.open;
+    const { el } = renderLink();
+    expect(el.getAttribute("href")).toBe("/ko/sales/sites");
+  });
+
+  // ★수식키는 **4종을 각각** 태운다(적대 리뷰 M-3 봉합).
+  //   종전엔 metaKey 하나만 봐서, 공용 판정을 손으로 «metaKey || ctrlKey» 로 되돌리는 변이가
+  //   **생존**했다 — shift·alt 모집단이 한 번도 안 태워졌기 때문이다.
+  //   ★«파일이 그 함수 이름을 담는가» 를 보는 소스 락으로는 이것을 못 잡는다(임포트가 남는다).
+  //     **존재를 잠그면 행위는 안 잠긴다** — 그래서 네 모집단을 실제로 누른다.
+  for (const key of ["metaKey", "ctrlKey", "shiftKey", "altKey"] as const) {
+    it(`★${key} 클릭은 가로채지 않는다 — 사용자가 스스로 새 컨텍스트를 요구한 것이다`, () => {
+      const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);
+      window.open = open as unknown as typeof window.open;
+      const { el, seen } = renderLink();
+
+      const notPrevented = fireEvent.click(el, { [key]: true });
+
+      expect(open).not.toHaveBeenCalled();
+      expect(seen).toEqual([]);
+      expect(notPrevented).toBe(true); // 브라우저에 맡긴다
+    });
+  }
+
+  it("★열 때 쓰는 창 이름이 현장앱 정본 상수다(정체성 판별자와 결속)", () => {
+    const open = vi.fn<(_u?: string | URL, _t?: string, _f?: string) => Window | null>(() => ({ focus: vi.fn() }) as unknown as Window);
+    window.open = open as unknown as typeof window.open;
+    const { el } = renderLink();
+
+    fireEvent.click(el);
+
+    expect(open.mock.calls[0]![1]).toBe(FIELD_APP_WINDOW_NAME);
+  });
+});

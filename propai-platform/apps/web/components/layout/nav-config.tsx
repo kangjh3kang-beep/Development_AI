@@ -32,6 +32,8 @@ export type NavNode = {
   children?: NavNode[];
   // 자주 쓰지 않는 무거운 라우트는 registry에서 false로 지정해 뷰포트 프리페치를 막는다.
   prefetch?: false;
+  /** ★독자 창으로 여는 라우트(현장앱 등). 레지스트리가 SSOT 다. */
+  launch?: "app-window";
 };
 
 export type NavSection = {
@@ -64,6 +66,7 @@ function toNavNode(node: RegistryNavNode): NavNode {
     href: node.href,
     icon: node.iconKey ? NAV_ICONS[node.iconKey] : undefined,
     prefetch: node.prefetch,
+    launch: node.launch,
     children: node.children?.map(toNavNode),
   };
 }

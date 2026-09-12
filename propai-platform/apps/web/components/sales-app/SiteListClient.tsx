@@ -12,6 +12,7 @@ import { apiClient } from "@/lib/api-client";
 import { getStoredSiteToken } from "@/lib/salesApi";
 import SiteEnterModal from "@/components/sales-app/SiteEnterModal";
 import InstallGuide from "@/components/sales-app/InstallGuide";
+import PlatformReturnLink from "@/components/sales-app/PlatformReturnLink";
 import { ROLE_LABEL, STATUS_LABEL } from "@/components/sales-app/roleConfig";
 import type { Locale } from "@/i18n/config";
 
@@ -119,6 +120,11 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
           ))}
         </ol>
       </header>
+
+      {/* ★플랫폼 복귀로 — **같은 탭으로 들어온 사람에게만** 보인다(설치본·별도 창에서는 null).
+          깊이 0(이 목록)이 종단이었다: 깊이 1 워크스페이스에는 목록 복귀 링크가 있는데
+          여기서는 갈 곳이 없어, 목록까지 올라온 사용자가 그대로 갇혔다(2026-09-08 전수 조사). */}
+      <PlatformReturnLink locale={locale} />
 
       {/* 앱 실행/설치 affordance — 홈 화면에 추가하면 주소 입력 없이 한 번에 접속. */}
       <InstallGuide />

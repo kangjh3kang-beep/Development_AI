@@ -119,7 +119,10 @@ describe("★여는 이름과 판별 이름이 같은 상수다(어긋나면 앱
 
     expect(open).toHaveBeenCalledTimes(2); // 팝업 시도 → 차단 → 새 탭
     const [, target, features] = open.mock.calls[1];
-    expect(target).toBe("_blank");
+    // ★2026-09-08 계약 변경 — 동일 오리진 폴백은 `_blank` 가 아니라 **같은 이름의 탭**이다.
+    //   `_blank`+`noopener` 가 sessionStorage 를 새로 시작해 **현장 비밀번호를 다시 묻게** 했다
+    //   (Chromium 실측). 이름을 유지하면 세션 상속과 앱 정체성 판별이 둘 다 산다.
+    expect(target).toBe(FIELD_APP_WINDOW_NAME);
     // 두 모집단 — 폴백은 팝업 옵션을 들고 가지 않는다(새 탭이지 창이 아니다).
     expect(String(features)).not.toContain("popup=yes");
   });
@@ -154,9 +157,28 @@ describe("★F1 — 새 탭 폴백의 역탭내빙 가드(적대 리뷰가 SURVI
     render(<FieldAppAffordance />);
     screen.getByRole("button", { name: /별도 창으로 열기/ }).click();
 
-    const [, , features] = open.mock.calls[1];
-    expect(String(features)).toContain("noopener");
-    expect(String(features)).toContain("noreferrer");
+    // ★★2026-09-08 정정 — 이 가드는 **살아 있되 조건이 붙었다.**
+    //   실측(Chromium): `_blank`+`noopener` 는 sessionStorage 를 **새로 시작한다**(null).
+    //   현장 진입 토큰이 sessionStorage 에 살기 때문에, 동일 오리진 폴백에 noopener 를 두면
+    //   **팝업 차단 사용자에게 현장 비밀번호를 다시 묻는다** — 같은 탭 이동보다도 나쁘다.
+    //   ⇒ **동일 오리진에서는 이름 있는 탭**(세션 상속 + 앱 정체성 유지),
+    //     **교차 오리진에서는 noopener 유지**(역탭내빙이 실재하는 위험이고 세션도 어차피 무관).
+    //   ★적대 리뷰가 넣은 이 가드를 **없애지 않았다** — 적용 범위를 실측으로 좁혔다.
+    const [tabUrl, tabName, features] = open.mock.calls[1];
+    const isSame = (() => {
+      try {
+        return new URL(String(tabUrl), window.location.href).origin === window.location.origin;
+      } catch {
+        return false;
+      }
+    })();
+    if (isSame) {
+      expect(tabName).toBe(FIELD_APP_WINDOW_NAME); // 이름 유지 = 세션 상속 + 판별 가능
+      expect(features).toBeUndefined();
+    } else {
+      expect(String(features)).toContain("noopener");
+      expect(String(features)).toContain("noreferrer");
+    }
     // 대조군 — 주 경로(팝업)에는 noopener 를 **넣지 않는다**(넣으면 window.open 이 null 을
     // 돌려줘 폴백이 오작동한다). 형제 간 차이가 **의도된 것**임을 여기서 못 박는다.
     const [, , popupFeatures] = open.mock.calls[0];
