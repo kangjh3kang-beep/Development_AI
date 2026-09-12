@@ -31,6 +31,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -39,12 +40,21 @@ _DASH = _ROOT / "scripts" / "monitor" / "integrator_dashboard.sh"
 _PROBE = _ROOT / "scripts" / "monitor" / "growth_stale_producer_probe.py"
 
 
-def _classify(alltime: int, h24: int) -> str:
+def _classify(alltime: int, h24: int, probe_line: str = "") -> str:
     """계기판 ③ 분기를 **셸에서 그대로 실행해** 판정한다.
 
     ★사본을 태우지 않는다 — 파싱 논리를 여기 다시 쓰면 프로덕션 분기를 통째로
       되돌려도 이 락이 초록이다(2026-08-28 `#905` 에서 실측한 형태).
       그래서 **실제 파일에서 분기 블록을 꺼내** `bash` 에 먹인다.
+
+    ★★2026-09-12 — **이 하네스가 의존성을 안 주고 있었다.** 블록만 떼어 돌리니
+      ③ 이 부르는 판정 함수가 **정의되지 않았고**, 그 자리에서 사유가 **빈 문자열**인
+      경보가 나왔다(«★ — **0 으로 읽지 마라**»). 락이 그 결함을 잡아 준 것은 옳지만,
+      **프로덕션에 없는 구성**을 재는 하네스이기도 했다.
+      → 이제 실제 스크립트를 `--verdict-lib` 로 **소스해** 함수를 갖춘 뒤 블록을 태운다.
+        그리고 «함수가 없는 구성» 은 별도 케이스로 **따로** 잠근다(아래).
+
+    `probe_line`: 프로브 출력 한 줄(`$G`). 비우면 «분석상태 필드 없음» 모집단이 된다.
     """
     src = _DASH.read_text(encoding="utf-8")
     m = re.search(
@@ -53,10 +63,12 @@ def _classify(alltime: int, h24: int) -> str:
     block = m.group(1)
     # `else` 이후 본문은 판정에 무관하므로 닫아 준다.
     script = (
-        f'ctrl={h24}\nctrl_all={alltime}\nDEAD=0\n'
+        f". '{_DASH}' --verdict-lib\n"
+        f'G={shlex.quote(probe_line)}\nctrl={h24}\nctrl_all={alltime}\n'
+        'DEAD=0\nOBS=0\nVIOL=0\n'
         + block
         + '    echo "   판정진행"\n  fi\n'
-        + 'echo "DEAD=$DEAD"\n'
+        + 'echo "DEAD=$DEAD"\necho "OBS=$OBS"\n'
     )
     out = subprocess.run(["bash", "-c", script], capture_output=True,
                          text=True, check=False)
@@ -64,10 +76,24 @@ def _classify(alltime: int, h24: int) -> str:
     return out.stdout
 
 
+#: 분석기가 «돌았고 표본이 없다» 고 말하는 프로브 줄(라이브 실측 형태 2026-09-12).
+_G_STARVED = ("PROBE now=2026-09-12 10:05 ctrl_type_total=0 ctrl_type_alltime=2408 "
+              "astate=starved aat=2026-09-12T10:05:00Z aaxes=lat_0/19_pay_0/1 ains=0 "
+              "alast=2026-09-12T10:02:57Z")
+#: 설정 행 자체가 없다 = TTL 산수상 **3회 연속 미실행**.
+_G_ABSENT = _G_STARVED.replace("astate=starved", "astate=(행없음)")
+
+
 def test_the_three_populations_give_three_different_answers():
-    """★파티션형 — 개별 케이스만 걸면 **둘을 합치는 변이**가 샌다."""
+    """★파티션형 — 개별 케이스만 걸면 **둘을 합치는 변이**가 샌다.
+
+    ★2026-09-12 문구 갱신: 유휴 칸이 «판정 불가» 라고만 말하던 것을 **실제로 판정**하게
+      바꿨다(분석기가 발행하는 `growth_analysis` 를 읽는다). 그래서 문구 핀을 옮겼다.
+      ***바뀐 것은 「무엇을 말하는가」이고, 이 락이 지키는 「셋이 서로 다르다」는 그대로다.***
+      단언을 **약화시키지 않았다** — 아래에 두 모집단(행 부재·판정기 부재)을 **추가**했다.
+    """
     dead = _classify(alltime=0, h24=0)
-    idle = _classify(alltime=2348, h24=0)
+    idle = _classify(alltime=2348, h24=0, probe_line=_G_STARVED)
     judging = _classify(alltime=2348, h24=52)
 
     assert "DEAD=1" in dead, "전 역사 0 인데 검사기 사망으로 안 본다"
@@ -76,9 +102,42 @@ def test_the_three_populations_give_three_different_answers():
 
     # ★세 답이 **서로 다른 문구**여야 한다 — 같으면 읽는 사람이 못 가른다.
     assert "전 역사에서 아무것도 못 집었다" in dead
-    assert "판정 불가" in idle and "시스템 유휴" in idle
+    assert "하한 미달" in idle
     assert "판정진행" in judging
     assert dead != idle != judging, "두 모집단이 같은 출력을 낸다"
+
+
+def test_absent_status_row_is_not_read_as_idle_normality():
+    """★«설정 행 없음» 은 TTL 산수상 **3회 연속 미실행**이다 — 유휴와 **다른 답**이어야 한다."""
+    idle = _classify(alltime=2348, h24=0, probe_line=_G_STARVED)
+    absent = _classify(alltime=2348, h24=0, probe_line=_G_ABSENT)
+    assert "OBS=0" in idle, "★설명된 유휴가 관측이상으로 올라갔다(상시 4 는 곧 무시된다)"
+    assert "OBS=1" in absent, "★3회 연속 미실행이 아무 플래그도 안 세운다"
+    assert idle != absent, "두 모집단이 같은 출력을 낸다"
+
+
+def test_missing_judge_is_loud_and_never_silent():
+    """★★판정기가 **없을 때**가 가장 위험하다 — 그때 사유가 비면 «사유 없는 경보» 가 된다.
+
+    실측(2026-09-12): 이 파일의 하네스가 블록만 떼어 돌려 판정 함수가 미정의였고,
+    계기판이 «★ — **0 으로 읽지 마라**» 라는 **빈 사유**를 찍었다. **이 락이 잡았다.**
+    ***경보의 사유가 비면 읽는 사람은 무엇을 볼지 모른다 — 침묵과 같다.***
+    """
+    out = subprocess.run(
+        ["bash", "-c",
+         f'G=""\nctrl=0\nctrl_all=2348\nDEAD=0\nOBS=0\nVIOL=0\n'
+         + re.search(r'\n(  if \[ "\$\{ctrl:-0\}" -eq 0 \].*?\n  else\n)',
+                     _DASH.read_text(encoding="utf-8"), re.DOTALL).group(1)
+         + '    echo "   판정진행"\n  fi\necho "DEAD=$DEAD"\n'],
+        capture_output=True, text=True, check=False)
+    body = out.stdout
+    assert "DEAD=1" in body, "★판정기가 없는데 사망으로 안 본다(0 으로 읽힌다)"
+    star = [ln for ln in body.splitlines() if ln.strip().startswith("★")]
+    assert star, "★경보 줄 자체가 없다"
+    for ln in star:
+        # 「★」 와 장식(— **0 으로 읽지 마라**)을 걷어낸 **알맹이**가 있어야 한다
+        core = ln.strip().lstrip("★").split("—")[0].strip()
+        assert len(core) >= 8, f"★사유가 비었다(사유 없는 경보): {ln!r}"
 
 
 def test_idle_is_not_reported_as_all_clear_either():
@@ -93,9 +152,14 @@ def test_idle_is_not_reported_as_all_clear_either():
       → 단언을 **문자열 부재**가 아니라 **구조**로 옮긴다: 유휴 칸은 ①비어 있지 않고
       ②판정 불가를 **명시**하며 ③플래그를 **하나도 세우지 않는다**.
     """
-    idle = _classify(alltime=2348, h24=0)
+    idle = _classify(alltime=2348, h24=0, probe_line=_G_STARVED)
     assert idle.strip(), "유휴 칸이 침묵한다 — 침묵은 '이상 없음'으로 읽힌다"
-    assert "판정 불가" in idle, "판정을 못 했다는 사실을 말하지 않는다"
+    # ★2026-09-12: «판정 불가» 라고 **말만 하던 것**을 실제 판정으로 바꿨다.
+    #   그러므로 요구는 «못 했다고 말하라» 가 아니라 **«근거를 대고 말하라»** 다.
+    #   유휴 칸은 ①분석기 상태와 ②그 판정 사유를 **둘 다** 실어야 한다.
+    assert "분석기 상태:" in idle, "무엇을 근거로 유휴라 하는지 안 적는다"
+    assert "state=" in idle and "워터마크" in idle, "근거 값이 빠졌다"
+    assert "하한 미달" in idle, "판정 사유를 말하지 않는다"
     # ★구조: 유휴는 어떤 플래그도 세우지 않는다(사망도 위반도 아니다)
     assert "DEAD=0" in idle and "VIOL=1" not in idle
 
@@ -138,8 +202,9 @@ def test_idle_does_not_fall_through_to_exit_zero():
 
 def test_idle_branch_does_not_invent_a_violation():
     """★`exit 2` 를 만들지 않는다 — `#868`(상시 빨강) 기각을 존중한다."""
-    idle = _classify(alltime=2348, h24=0)
-    assert "VIOL=1" not in idle, "유휴를 위반으로 승격했다"
+    for g in (_G_STARVED, _G_ABSENT, ""):
+        idle = _classify(alltime=2348, h24=0, probe_line=g)
+        assert "VIOL=1" not in idle, f"유휴를 위반으로 승격했다: {g[:40]!r}"
 
 
 def test_probe_actually_emits_the_key_the_dashboard_reads():
