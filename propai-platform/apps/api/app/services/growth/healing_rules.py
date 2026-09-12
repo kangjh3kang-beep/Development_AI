@@ -163,6 +163,104 @@ HEAL_UNHANDLED_REASONS: dict[str, str] = {
 }
 
 
+#: 후보 쿼리의 **시간 창**과 **조치 집합** — `_candidate_actions` 의 SQL 과 아래 `open_blockers`
+#  가 **같은 값을 본다**. 종전엔 SQL 안에 `timedelta(hours=2)` 리터럴로만 있어서, 판정을
+#  설명하려는 쪽이 그 값을 **손으로 복사**할 수밖에 없었다(그 순간 둘이 갈린다).
+CANDIDATE_WINDOW_HOURS = 2
+CANDIDATE_ACTIONS = ("heal", "none", "correct")
+
+
+#: ★`status='open'` 한 낱말이 **여러 사실을 뭉친다** — 그것을 가르는 닫힌 어휘.
+#
+#  ## 왜 (2026-09-12 라이브 전수 실측 · open 671건)
+#
+#      타입이 애초에 후보 밖(선언된 면제)   609   ← latency_regression 309 · latency_baseline 271 …
+#      권고 조치가 사람 산출물               55   ← improvement_proposal 53 · prompt_candidate 2
+#      창(2h) 만료                            5   ← fallback_rate (전부 30~48일 경과)
+#      진짜 후보                              2   ← quality_drop
+#
+#  넷이 **API 응답에서 같은 모양**이었다(`status:"open"`). 가를 수 있는 필드는
+#  `recommended_action` 뿐이고 그것으로는 둘째만 갈렸다. 그리고 **기계는 답을 알고 있었다** —
+#  `HEAL_UNHANDLED_REASONS` 에 사유가 적혀 있는데 **프로덕션 소비처가 0**이었다(라우터·스키마·
+#  프론트 참조 0건 · 대조군으로 같은 방법이 프론트에서 `blocked_by_reason` 1파일 ·
+#  `GrowthDashboard` 10파일을 찾아 조회기 생존 확인).
+#
+#  ★선례를 그대로 쓴다 — `#1030` 이 `blocked_total` **한 숫자**가 「막혔다」와 「막을 것이
+#    없었다」를 뭉갠다고 `blocked_by_reason` 으로 쪼갰다. 같은 형태가 `status='open'` 에서
+#    **네 배 규모로** 반복되고 있었다. 새 설계가 아니라 **그 처방을 형제 축에 적용**하는 것이다.
+#
+#  ★이 표는 **처방이 아니다.** 여기 적힌다고 치유가 생기지 않는다 — 「왜 안 도는지」를
+#    **판정 가능하게**만 한다. 실제 처방(자동 임계완화 등)은 이 저장소가 **기각한 길**이다.
+OPEN_BLOCKER_TYPE_NOT_HANDLED = "type_not_handled"
+OPEN_BLOCKER_ACTION_NOT_HEALABLE = "action_not_healable"
+OPEN_BLOCKER_WINDOW_EXPIRED = "window_expired"
+
+#: 코드 → 사람이 읽는 사유. **닫힌 어휘**다 — 여기 없는 코드를 내보내면 계약 위반이다.
+OPEN_BLOCKER_REASONS: dict[str, str] = {
+    OPEN_BLOCKER_TYPE_NOT_HANDLED: (
+        "치유기가 이 타입에 분기를 두지 않습니다(선언된 면제). "
+        "후보 쿼리가 `insight_type = ANY(HANDLED_INSIGHT_TYPES)` 로 거릅니다."
+    ),
+    OPEN_BLOCKER_ACTION_NOT_HEALABLE: (
+        "권고 조치가 자동 치유 대상이 아닙니다 — 사람이 처리하는 산출물입니다"
+        "(예: PR 제안·프롬프트 후보)."
+    ),
+    OPEN_BLOCKER_WINDOW_EXPIRED: (
+        f"생성 후 {CANDIDATE_WINDOW_HOURS}시간 창을 벗어났습니다. "
+        "후보 쿼리는 그보다 오래된 행을 다시 읽지 않으며, `created_at` 을 갱신하는 경로가 "
+        "없어 **재진입할 수 없습니다** — 사람이 확인(ack)하는 것 외에 탈출구가 없습니다."
+    ),
+}
+
+
+def open_blockers(
+    *,
+    insight_type: str | None,
+    recommended_action: str | None,
+    created_at: datetime | None,
+    now: datetime,
+) -> list[str]:
+    """이 **열린** 인사이트가 치유 후보가 되지 못하는 이유 전부(빈 리스트 = 후보).
+
+    ★**하나만 고르지 않는다.** 후보 쿼리는 조건들을 `AND` 로 묶으므로 여러 개가 동시에
+      참일 수 있다. 하나로 줄이면 「우선순위」라는 없는 사실을 지어내게 된다.
+    ★★`_candidate_actions` 의 SQL 과 **같은 상수**를 본다(`HANDLED_INSIGHT_TYPES` ·
+      `CANDIDATE_ACTIONS` · `CANDIDATE_WINDOW_HOURS`). 복사하지 않는다 —
+      복사하는 순간 설명과 동작이 조용히 갈린다.
+    """
+    out: list[str] = []
+    if insight_type not in HANDLED_INSIGHT_TYPES:
+        out.append(OPEN_BLOCKER_TYPE_NOT_HANDLED)
+    if (recommended_action or "") not in CANDIDATE_ACTIONS:
+        out.append(OPEN_BLOCKER_ACTION_NOT_HEALABLE)
+    # ★`created_at` 이 없으면 창 판정을 할 수 없다 — **모름을 「통과」로 쓰지 않는다.**
+    if created_at is None:
+        out.append(OPEN_BLOCKER_WINDOW_EXPIRED)
+    else:
+        ts = created_at if created_at.tzinfo else created_at.replace(tzinfo=UTC)
+        if ts < now - timedelta(hours=CANDIDATE_WINDOW_HOURS):
+            out.append(OPEN_BLOCKER_WINDOW_EXPIRED)
+    return out
+
+
+def open_blocker_reason(codes: list[str], insight_type: str | None) -> str | None:
+    """차단 사유를 사람이 읽는 한 문단으로. 없으면 None(= 후보).
+
+    ★타입 면제에는 **그 타입의 고유 사유**(`HEAL_UNHANDLED_REASONS`)를 우선 쓴다 —
+      그 표가 이미 「왜 분기를 안 두었나」를 적고 있는데 **소비처가 0**이었다.
+      고유 사유가 없으면 일반 문구로 떨어진다(**목록에 없는 타입도 말할 것이 있게**).
+    """
+    if not codes:
+        return None
+    parts: list[str] = []
+    for c in codes:
+        if c == OPEN_BLOCKER_TYPE_NOT_HANDLED:
+            parts.append(HEAL_UNHANDLED_REASONS.get(insight_type or "") or OPEN_BLOCKER_REASONS[c])
+        else:
+            parts.append(OPEN_BLOCKER_REASONS[c])
+    return " / ".join(parts)
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # 순수 가드 함수군 (DB 무의존 — inline 단위검증 대상)
 # ════════════════════════════════════════════════════════════════════════════
@@ -366,12 +464,13 @@ async def _candidate_actions(db, now: datetime) -> list[dict[str, Any]]:
     #   이미 `created_at DESC, id DESC` 로 하고 있었다 — **옳은 패턴이 옆에 있었다.**
     rows = (await db.execute(text(
         "SELECT id, insight_type, severity, metrics_json FROM platform_insights "
-        "WHERE status='open' AND recommended_action IN ('heal','none','correct') "
+        "WHERE status='open' AND recommended_action = ANY(:actions) "
         "  AND insight_type = ANY(:handled) "
         "  AND created_at >= :since "
         "ORDER BY created_at DESC, id DESC LIMIT 200"
-    ), {"since": now - timedelta(hours=2),
-        "handled": list(HANDLED_INSIGHT_TYPES)})).fetchall()
+    ), {"since": now - timedelta(hours=CANDIDATE_WINDOW_HOURS),
+        "handled": list(HANDLED_INSIGHT_TYPES),
+        "actions": list(CANDIDATE_ACTIONS)})).fetchall()
 
     for r in rows:
         _ins_id, itype, severity, metrics = r[0], r[1], r[2], r[3]

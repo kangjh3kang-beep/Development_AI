@@ -188,6 +188,14 @@ class GrowthInsightOut(BaseModel):
     narrative: str | None = None
     recommended_action: str | None = None
     created_at: datetime | None = None
+    #: ★`status="open"` 한 낱말이 뭉치던 **여러 사실**을 가른다(2026-09-12 라이브 전수 671건:
+    #  타입 면제 609 · 사람 산출물 55 · 창 만료 5 · 진짜 후보 2 — **넷이 같은 모양**이었다).
+    #  빈 리스트 = **치유 후보**(진짜 미처리) · `None` = 열려 있지 않음(판정 대상 아님).
+    #  ★어휘·판정은 `healing_rules` 가 소유한다 — 여기서 **복사하지 않는다**.
+    open_blockers: list[str] | None = None
+    #: 사람이 읽는 사유. 타입 면제에는 `HEAL_UNHANDLED_REASONS` 의 **그 타입 고유 사유**가 실린다
+    #  (그 표는 사유를 적어 두고도 **프로덕션 소비처가 0**이었다 — 여기서 잇는다).
+    open_blocker_reason: str | None = None
 
 
 class GrowthInsightList(BaseModel):
@@ -319,15 +327,32 @@ async def list_insights(
         f"ORDER BY {order_sql} LIMIT :limit OFFSET :offset"
     ), params)).fetchall()
 
-    items = [
-        GrowthInsightOut(
+    # ★「왜 아직 open 인가」를 응답에 싣는다 — 판정은 `healing_rules` 의 순수 함수가 한다.
+    #   ★지연 임포트: 이 라우터의 형제 관행(`capture_service`·`heal_actions`·`schema_guard`).
+    #   ★`now` 를 **한 번만** 찍는다 — 행마다 다시 찍으면 같은 응답 안에서 창 경계가 갈린다.
+    from app.services.growth.healing_rules import open_blocker_reason, open_blockers
+
+    _now = datetime.now(UTC)
+
+    def _blockers(status_: str, itype: str, action: str | None, created: datetime | None):
+        # ★열려 있지 않은 것에 차단 사유를 붙이지 않는다 — 없는 사실을 지어내게 된다.
+        if status_ != "open":
+            return None, None
+        codes = open_blockers(
+            insight_type=itype, recommended_action=action, created_at=created, now=_now,
+        )
+        return codes, open_blocker_reason(codes, itype)
+
+    items = []
+    for r in rows:
+        _codes, _why = _blockers(r[3], r[1], r[8], r[9])
+        items.append(GrowthInsightOut(
             id=str(r[0]), insight_type=r[1], severity=r[2], status=r[3],
             window_start=r[4], window_end=r[5],
             metrics_json=r[6] if isinstance(r[6], dict) else None,
             narrative=r[7], recommended_action=r[8], created_at=r[9],
-        )
-        for r in rows
-    ]
+            open_blockers=_codes, open_blocker_reason=_why,
+        ))
     return GrowthInsightList(items=items, total=int(total),
                              actionable_counts=actionable_counts)
 
