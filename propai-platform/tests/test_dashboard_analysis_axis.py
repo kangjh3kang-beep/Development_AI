@@ -451,50 +451,83 @@ def test_no_arg_run_is_not_the_library_gate():
     assert "통합자 계기판" in r.stdout, repr(r.stdout[:200])
 
 
-# ── ⑧ ★셸 리터럴 ↔ 파이썬 상수 **계약**(독립 리뷰가 가르쳐 준 축 · 2026-09-12) ────────
-#    동료 세션(sid=68ed1a1d)이 자기 PR 에서 찾은 형태를 제 코드에 대 보니 **같은 구멍**이었다:
+# ── ⑧ ★셸 리터럴 ↔ 파이썬 상수 **계약**(독립 리뷰 2회가 각각 REQUEST CHANGES 를 냈다) ────
+#    동료 세션(sid=e739d2a9)이 자기 PR 에서 찾은 형태를 제 코드에 대 보니 **같은 구멍**이었다:
 #      *「락이 전부 **심볼**을 참조하면 값을 바꿔도 **양쪽이 함께 움직여 원리적으로 판별 불가**」*
 #    ★**변이로 확인했다**: `ASTATE_MISSING = "(필드없음)"` → `"(no-field)"` 로 바꿔도 **SURVIVED**.
 #      리터럴 입력(`("(필드없음)", …)`)조차 못 잡는다 — 값이 바뀌면 그 입력은 **폴백으로 떨어지는데
 #      폴백도 `unknown`** 이라 kind 가 같기 때문이다. ***같은 답을 내는 두 경로는 서로를 가리지 못한다.***
-#    ⇒ 가르는 유일한 축은 **셸이 박아 둔 리터럴과의 일치**다. 그건 **계약**이다 —
-#      셸이 `ASTATE="(필드없음)"` 로 쓰고 파이썬이 그 값으로 분기하므로, 값이 갈리면
-#      「필드 없음」이 **전용 사유를 잃고 폴백으로 조용히 강등**된다.
-#    ★모든 상수를 리터럴로 핀하지는 않는다 — **소비처가 문자열로 분기하는 것만**이 계약이다.
+#
+#    ★★R2 — **초판 락이 두 리뷰에서 각각 뚫렸다.** 둘 다 이 PR 이 고치겠다고 선언한 클래스였다:
+#      ① 주석은 배제했는데 **문자열은 안 배제**했다. 셸 리터럴을 바꾸고 `echo '…(필드없음)…'` 한 줄만
+#         남기면 **SURVIVED**(계약은 깨져 있는데 초록). ★이 스크립트는 상태 문구를 찍는 것이 본업이라
+#         안내문 추가는 **정상 변경**이다 — 억지 예가 아니다.
+#      ② 「0건」 단언에 **대조군이 없었다.** 판정기를 `code = []` 로 **파괴해도 SURVIVED**.
+#         같은 변이에 형제 락은 **CAUGHT** — 갈라 준 것은 오직 **대조군의 유무**였다.
+#      ③ 형태 결속이 과했다: `ASTATE="{값}"` 정확 형태라 `ASTATE=\'…\'`·`${X:-"…"}` 로 리팩토링하면
+#         **계약은 그대로인데 빨개진다**(위양성).
+#    ⇒ 처방: **정본 `_scan_guard` 를 쓴다**(사본 금지). `assert_absent` 는 `positive_control`·`reason` 이
+#      **필수 키워드 인자**라 ②가 **구조적으로 재발 불가**하고, 대조군 파괴는 `ScannerDeadError`,
+#      진짜 위반은 `AssertionError` 로 **갈라서** 던진다.
+#    ★그리고 **면역을 넓게 주장하지 않는다**: `code_lines()` 는 **줄 주석만** 걷어낸다(정본 독스트링 명문).
+#      후행 주석·히어독·문자열은 **여전히 남는다** — 그래서 값 결속을 **대입 모양**으로 좁힌다.
 def test_shell_literal_and_python_constant_are_one_contract():
-    """★셸의 리터럴과 프로브의 상수가 **같은 값**이어야 한다(둘 다 소스에서 파생)."""
-    import re as _re
-    probe = PROBE.read_text(encoding="utf-8")
-    dash = SCRIPT.read_text(encoding="utf-8")
+    """★셸의 **대입**과 프로브의 상수가 같은 값이어야 한다(둘 다 소스에서 파생).
 
+    ★`echo '…'` 같은 **표시 문구**는 계약이 아니다 — 대입만 본다.
+      그래서 패턴을 «줄 시작/구분자 뒤의 `ASTATE=`» 로 좁히고, 따옴표는 **둘 다** 받는다
+      (리팩토링 위양성 방지 · 리뷰 ③).
+    """
+    import re as _re
+
+    # ★형제 관례를 따른다 — `tests._scan_guard` **패키지 임포트**
+    #   (`test_coord_summary_contract.py:32` · `test_deploy_workflow_cannot_deadlock.py:61`)
+    from tests import _scan_guard as sg   # ★정본을 쓴다(사본 금지 — 한계가 갈린다)
+
+    probe = PROBE.read_text(encoding="utf-8")
     m = _re.search(r'^ASTATE_MISSING\s*=\s*"([^"]+)"', probe, _re.M)
     assert m, "★ASTATE_MISSING 선언을 못 찾았다 — 조회기가 죽었다(이름이 바뀌었나)"
     py_value = m.group(1)
 
-    # 셸이 **실행 라인에서** 그 값을 쓰는지(주석 배제 — 이 저장소는 주석에 뚫린 전례가 있다)
-    code = [ln for ln in dash.splitlines() if not ln.lstrip().startswith("#")]
-    hits = [ln for ln in code if f'ASTATE="{py_value}"' in ln]
-    assert hits, (
-        f"★셸이 ASTATE 를 {py_value!r} 로 채우지 않는다 — 값이 갈리면 «필드 없음」이 "
-        "전용 사유를 잃고 폴백으로 조용히 강등된다:\n"
-        + "\n".join(ln for ln in code if "ASTATE=" in ln)
+    dash_code = sg.code_lines(SCRIPT.read_text(encoding="utf-8"))
+    # 대입만 본다: 줄 시작 또는 `;`/`&&`/`||`/`&` 뒤 · 따옴표는 ' 와 " 둘 다
+    assign = _re.compile(r'(?:^|[;&|]\s*)ASTATE=([\'"])(.*?)\1', _re.M)
+    values = [v for _q, v in assign.findall(dash_code)]
+    assert values, (
+        "★셸에서 `ASTATE=` **대입**을 하나도 못 찾았다 — 조회기 사망(패턴/파일 확인).\n"
+        + "\n".join(ln for ln in dash_code.splitlines() if "ASTATE" in ln)[:400]
     )
-    # ★대조군 — 이 검사기가 살아 있는가(셸에 ASTATE 대입 자체가 있는가)
-    assert any("ASTATE=" in ln for ln in code), "조회기 사망"
+    assert py_value in values, (
+        f"★셸의 ASTATE 대입값 {values!r} 에 프로브 상수 {py_value!r} 가 없다 — "
+        "값이 갈리면 «필드 없음」이 전용 사유를 잃고 폴백으로 **조용히 강등**된다"
+    )
 
 
 def test_absent_constant_is_not_silently_shadowed():
-    """★형제 상수도 같은 축으로 본다 — `(행없음)` 은 **프로브가 만들고 프로브가 읽는다**.
+    """★형제 `ASTATE_ABSENT` 는 **프로브 안에서만** 쓰인다 — 셸에 새면 그것도 계약이 된다.
 
-    ★그래서 셸 리터럴 축이 **없는 것이 정상**이다(셸은 이 값을 쓰지 않는다).
-      대신 **생산자↔소비자가 같은 파일 안**이라는 것을 단언해, 나중에 셸로 새면 여기가 빨개진다.
+    ★부재 단언은 **대조군 없이 하지 않는다**(리뷰 ②). 정본 `assert_absent` 는
+      `positive_control`·`reason` 이 **필수 키워드**라 대조군 없는 호출이 **문법적으로 불가능**하고,
+      **대조군 파괴는 `ScannerDeadError`**, 진짜 위반은 `AssertionError` 로 갈라 던진다.
+    ★한계(정직): `code_lines()` 는 **줄 주석만** 걷어낸다 — 후행 주석·히어독·문자열은 남는다.
+      그래서 여기서도 **대입 모양**으로 좁혀 그 잔여를 줄인다.
     """
+    import re as _re
+
+    from tests import _scan_guard as sg
+
     probe = PROBE.read_text(encoding="utf-8")
-    dash = SCRIPT.read_text(encoding="utf-8")
-    m = __import__("re").search(r'^ASTATE_ABSENT\s*=\s*"([^"]+)"', probe, __import__("re").M)
-    assert m, "★ASTATE_ABSENT 선언을 못 찾았다"
-    code = [ln for ln in dash.splitlines() if not ln.lstrip().startswith("#")]
-    assert not [ln for ln in code if m.group(1) in ln], (
-        f"★셸이 {m.group(1)!r} 를 직접 쓰기 시작했다 — 그러면 이것도 계약이 되므로 "
-        "위 `test_shell_literal_and_python_constant_are_one_contract` 와 같은 락이 필요하다"
+    m = _re.search(r'^ASTATE_ABSENT\s*=\s*"([^"]+)"', probe, _re.M)
+    assert m, "★ASTATE_ABSENT 선언을 못 찾았다 — 조회기가 죽었다"
+    absent_value = m.group(1)
+
+    dash_code = sg.code_lines(SCRIPT.read_text(encoding="utf-8"))
+    sg.assert_absent(
+        dash_code,
+        pattern=_re.compile(r'(?:^|[;&|]\s*)ASTATE=([\'"])' + _re.escape(absent_value) + r'\1', _re.M),
+        # ★대조군 — 셸이 **실제로 하는** 대입. 이게 0건이면 조회기가 죽은 것이다.
+        positive_control=_re.compile(r'(?:^|[;&|]\s*)ASTATE=[\'"]', _re.M),
+        reason=(f"★셸이 {absent_value!r} 를 직접 대입하기 시작했다 — 그러면 이것도 계약이므로 "
+                "`test_shell_literal_and_python_constant_are_one_contract` 와 같은 락이 필요하다"),
+        where="integrator_dashboard.sh",
     )
