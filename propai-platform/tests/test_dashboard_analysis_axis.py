@@ -413,3 +413,39 @@ def test_dashboard_passes_axes_into_the_judge():
 def test_partial_zero_input_is_judged():
     m = _probe_mod()
     assert m.analysis_verdict("starved", "0", "fal 0/0 lat 0/19")[0] == "obs"
+
+
+# ── ⑦ 「안 쟀는데 이상 없음」 모양을 닫는다 (독립 리뷰 MINOR-1 · sid=e739d2a9) ─────
+#    `--verdict-lib` 게이트를 **실행**으로 밟으면 종전엔 **출력 0바이트 · rc=0** 이었다.
+#    이 파일의 계약에서 `0` 은 「모든 프로브 생존」인데 **그 실행은 아무것도 재지 않았다.**
+def test_library_mode_executed_is_dead_not_clean():
+    """★★실행 경로는 `3`(검사기 사망)이어야 한다 — `0`(이상 없음)이면 거짓말이다."""
+    r = subprocess.run(["bash", str(SCRIPT), "--verdict-lib"],
+                       cwd=REPO, capture_output=True, text=True)
+    assert r.returncode == 3, f"rc={r.returncode} (0 이면 「안 쟀는데 깨끗함」)"
+    # ★사유가 비면 「사유 없는 경보」다 — 이 PR 이 이미 한 번 데인 자리.
+    assert len(r.stderr.strip()) >= 20, repr(r.stderr)
+    assert "재지 않" in r.stderr, r.stderr
+    # ★그리고 stdout 으로는 아무 판정도 흘리지 않는다(파이프로 읽는 소비자 보호).
+    assert r.stdout.strip() == "", repr(r.stdout)
+
+
+def test_library_mode_sourced_still_works():
+    """★반대편 모집단 — source 경로는 **바뀌지 않아야** 한다(한쪽만 잠그면 반대쪽이 무제한)."""
+    r = subprocess.run(
+        ["bash", "-c",
+         f". '{SCRIPT}' --verdict-lib; echo \"rc=$?\"; type -t analysis_verdict_of; type -t delta_verdict"],
+        cwd=REPO, capture_output=True, text=True)
+    assert "rc=0" in r.stdout, r.stdout
+    assert r.stdout.count("function") == 2, r.stdout
+
+
+def test_no_arg_run_is_not_the_library_gate():
+    """★[공허 진리 가드] 인자 없는 실행은 **실제로 잰다** — 아니면 위 둘이 무의미하다.
+
+    ★프로브·SSH 를 타므로 완주는 시키지 않는다. **계기판 머리글이 나오는지**만 본다
+      (라이브러리 게이트로 빠지면 그 줄이 **없다**).
+    """
+    r = subprocess.run(["bash", "-c", f"timeout 25 bash '{SCRIPT}' 2>&1 | head -1"],
+                       cwd=REPO, capture_output=True, text=True)
+    assert "통합자 계기판" in r.stdout, repr(r.stdout[:200])

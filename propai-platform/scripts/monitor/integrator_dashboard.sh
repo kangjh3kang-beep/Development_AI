@@ -144,7 +144,23 @@ print(kind + "|" + why)
 ' "$d" "$1" "$2" "${3:-}" 2>/dev/null || echo "unknown|판정 함수를 태우지 못했다(python3 또는 프로브 경로 확인)"
 }
 
-if [ "${1:-}" = "--verdict-lib" ]; then return 0 2>/dev/null || exit 0; fi
+# ★★이 게이트를 **실행**으로 밟으면(= source 가 아니라 `bash … --verdict-lib`)
+#   종전엔 **출력 0바이트 · rc=0** 이었다. 이 파일의 계약에서 `0` 은 *"모든 프로브 생존"* 이고,
+#   그 실행은 **아무것도 재지 않았다.** ***안 재 놓고 「이상 없음」을 말하는 모양***이고,
+#   이 파일이 ⑤에서 스스로 금지한 것이다("사망과 청결을 뭉치면 죽은 검사기가 초록으로 읽힌다").
+#   ★실측(2026-09-12): 프로덕션 호출부 전수 **무인자**(HANDOFF 3건) · `--verdict-lib` 사용처는
+#     **전부 `. … --verdict-lib`(source)** 다. 즉 이 분기는 **사람의 실수로만 닿는다** —
+#     그래서 더 위험하다(실수한 사람이 `0` 을 「깨끗함」으로 읽는다).
+#   ⇒ **source 경로는 그대로**(`return 0`), **실행 경로는 `3`(검사기 사망)**.
+#     독립 리뷰(sid=e739d2a9)가 MINOR 로 짚었고, 선례가 있다고 차단하지 않았다. 선례 쪽이 틀렸다.
+if [ "${1:-}" = "--verdict-lib" ]; then
+  return 0 2>/dev/null || {
+    echo "★이 스크립트를 '--verdict-lib' 로 **실행**했습니다 — 이건 라이브러리 모드라 아무것도 재지 않습니다." >&2
+    echo "  측정하려면 인자 없이:  bash ${BASH_SOURCE[0]}" >&2
+    echo "  함수만 쓰려면 source:  . ${BASH_SOURCE[0]} --verdict-lib" >&2
+    exit 3
+  }
+fi
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # ★cd 이전에 확정한다
 REPO="$(cd "$SELF_DIR/../../.." && pwd)"
