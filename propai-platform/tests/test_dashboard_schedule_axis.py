@@ -141,3 +141,78 @@ def test_schedule_fields_never_raises_on_junk(bad):
     """스냅샷이 깨져도 **터지지 않고** 부재로 떨어진다(계기판 전체가 죽으면 안 된다)."""
     sat, sjobs, soverdue = probe.schedule_fields(bad)
     assert (sat, sjobs, soverdue) == ("-", "-", "-") or sjobs == "-"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★2차 기계 감사(55변이·생존 9)가 짚은 **진짜 구멍 셋**을 닫는다.
+#   나머지 여섯은 사유 **문구**라 잠그지 않는다 — 계약은 `kind` 와 «모집단마다 다른 사유» 이지
+#   문장의 철자가 아니다(문구를 단언하면 다듬을 때마다 깨지는 취약한 락이 된다).
+#   ★그 사실을 여기 적는 이유: **설명 없는 생존만 진짜 구멍**이기 때문이다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_schedule_fields_parses_a_real_producer_payload():
+    """★생존 `:107 if isinstance(srow, dict)` — **정상 dict 경로가 한 번도 안 태워졌다.**
+
+    쓰레기 입력만 넣고 「안 터진다」를 봤더니, 조건을 무력화해 **모든 입력을 부재로
+    만들어도** 초록이었다. 두 모집단을 갈라야 한다: **쓰레기는 부재로, 정상은 값으로.**
+    ★그리고 픽스처를 손으로 짓지 않고 **생산자가 만든 payload** 를 쓴다 —
+      생산자·소비처가 갈리면 그 순간 빨개진다.
+    """
+    import sys
+    sys.path.insert(0, str(_ROOT))
+    from apps.api.app.services.growth.schedule import schedule_snapshot_payload
+
+    produced = schedule_snapshot_payload(
+        [("analyze", NOW - timedelta(minutes=7)), ("learn", NOW - timedelta(minutes=9471))],
+        NOW,
+    )
+    sat, sjobs, soverdue = probe.schedule_fields(produced)
+    assert sat == NOW.isoformat(), sat
+    assert " " not in sjobs, "공백이 남으면 계기판 grep 이 뒤를 통째로 자른다"
+    assert "analyze_7/60" in sjobs, sjobs
+    assert "learn_9471/10080" in sjobs, sjobs
+    assert soverdue == "-", f"둘 다 주기 안인데 지연으로 찍혔다: {soverdue}"
+    # ★대조군 — 쓰레기는 여전히 부재로 떨어진다(두 모집단이 다른 값을 낸다)
+    assert probe.schedule_fields("zzz") == ("-", "-", "-")
+
+
+def test_naive_at_does_not_crash_the_probe():
+    """★생존 `:141 if at.tzinfo is None` — **naive 시각 경로가 안 태워졌다.**
+
+    내 픽스처가 전부 tz-aware 라 이 분기가 한 번도 안 돌았다. 무력화하면 naive 입력에서
+    `TypeError` 로 **프로브 전체가 죽는다**(계기판이 통째로 사라진다).
+    """
+    naive = NOW.replace(tzinfo=None).isoformat()
+    kind, why = probe.schedule_verdict(naive, LIVE_JOBS, "-", NOW)
+    assert kind == "ok", f"naive 시각을 못 다룬다: {kind} · {why}"
+    # 대조군: 같은 시각을 aware 로 줘도 같은 판정이어야 한다(둘이 갈리면 해석이 달라진다)
+    assert probe.schedule_verdict(NOW.isoformat(), LIVE_JOBS, "-", NOW)[0] == "ok"
+
+
+def test_probe_print_fields_match_what_the_shell_greps():
+    """★생존 `:333` 출력 형식 — **셸이 `grep -oE 'skind=[^ ]+'` 로 뽑는 이름과 한 계약**이다.
+
+    이름이 갈리면 셸 변수가 **빈 값**이 되고 `${SKIND:-unknown}` 이 조용히 `unknown` 을 내
+    관측이 **영원히 발화하지 않는다**(위 락 `only_obs_raises…` 가 무의미해진다).
+    ⇒ 두 파일에서 **각각 파생**해 대조한다(손 목록 금지).
+    """
+    import re
+
+    dash = _DASH.read_text(encoding="utf-8")
+    code = "\n".join(ln for ln in dash.splitlines() if not ln.lstrip().startswith("#"))
+    grepped = set(re.findall(r"grep -oE '([a-z_]+)=\[\^ \]\+'", code))
+    # 공허 방지 — 셸이 실제로 무언가를 뽑고 있는가
+    assert len(grepped) >= 4, f"셸에서 뽑는 필드가 너무 적다(조회기 사망?): {grepped}"
+    assert {"skind", "sjobs"} <= grepped, f"스케줄 축 필드를 안 뽑는다: {sorted(grepped)}"
+
+    tree = ast.parse(_PROBE.read_text(encoding="utf-8"))
+    printed = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            printed |= set(re.findall(r"\b([a-z_]+)=%s", n.value))
+    missing = grepped - printed
+    assert missing == set(), (
+        f"셸이 뽑는데 프로브가 안 찍는 필드: {sorted(missing)} — "
+        "빈 값이 되어 관측이 영원히 발화하지 않는다"
+    )
