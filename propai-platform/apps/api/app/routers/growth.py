@@ -463,12 +463,44 @@ class ActiveFlagOut(BaseModel):
     updated_by: str | None = None
 
 
+class HealBlockedOut(BaseModel):
+    """게이트가 **막은** 치유 1건(`heal_blocked` 이벤트).
+
+    ★왜 이 모델이 생겼나(2026-09-09): `healing_rules` 는 게이트가 후보를 막을 때
+      `platform_events` 에 `heal_blocked` 를 **넣고 있었는데**(`healing_rules.py:71,291`),
+      그것을 **읽는 경로가 하나도 없었다**(라우터 언급 0건 · 대조군 `heal-log` 6건).
+      그래서 «게이트가 막고 있다» 와 «막을 후보가 없다» 가 **같은 관측(침묵)** 이었다.
+      이 저장소가 반복해 데인 형태다 — ***침묵은 성공이 아니다.***
+    """
+
+    action_type: str | None = None
+    reason: str | None = None
+    trigger_key: str | None = None
+    created_at: datetime | None = None
+
+
 class HealLogOut(BaseModel):
     """GET /growth/heal-log 응답(프론트 계약)."""
 
     actions: list[HealActionOut]
     active_flags: list[ActiveFlagOut]
     total: int
+    #: ★막힌 치유는 **`actions` 에 섞지 않는다.** 섞으면 기존 소비처의 «실행된 액션 수»가
+    #:   조용히 부풀고, 이 저장소에는 «두 필드가 함께 부풀면 정합성 검사가 눈이 먼다» 는
+    #:   실측 전례가 있다. 별도 배열 + 별도 계수로 둔다(기존 필드 의미 불변).
+    blocked: list[HealBlockedOut] = []
+    blocked_total: int = 0
+    #: ★사유별 계수 — **합산이 두 상태를 뭉개는 것**을 막는다(2026-09-12 독립 리뷰 MAJOR-2).
+    #:
+    #:   `healing_rules` 는 `CAP_BLOCK_REASONS`(기록용 · global_cap+trigger_cap)와
+    #:   `ESCALATION_COUNT_REASONS`(판정용 · **trigger_cap 하나뿐**)를 **의도적으로** 가른다.
+    #:   그 이유가 같은 파일 주석에 실측과 함께 있다 — *"`global_cap` 은 「이 트리거의 치유가
+    #:   무효」가 아니라 「지금 아픈 서비스가 여럿」이다. 그걸 critical 로 올리면 서사가 거짓말"*
+    #:   (시뮬 실측: `cache_warm` 계수차단 41건이 **전부 global_cap**).
+    #:
+    #: ⇒ `blocked_total` 만 보면 그 구별이 **다시 사라진다.** 침묵을 가르려고 만든 필드가
+    #:   **새 침묵**을 만드는 자리였다. 사유별로 함께 싣는다.
+    blocked_by_reason: dict[str, int] = {}
 
 
 class RollbackResult(BaseModel):
@@ -553,7 +585,63 @@ async def heal_log(
         for fr in flag_rows
     ]
 
-    return HealLogOut(actions=actions, active_flags=active_flags, total=int(total))
+    # ── 게이트가 막은 것(`heal_blocked`) — **같은 필터**를 걸어 대칭으로 노출한다.
+    #    ★`actions` 와 `total` 은 건드리지 않는다(위 필드 주석 참조).
+    bwhere = ["event_type = 'heal_blocked'"]
+    bparams: dict = {}
+    if action_type:
+        bwhere.append("payload->>'action_type' = :at")
+        bparams["at"] = action_type
+    if since is not None:
+        bwhere.append("created_at >= :since")
+        bparams["since"] = since
+    bwhere_sql = " AND ".join(bwhere)
+
+    blocked_total = (await db.execute(
+        text(f"SELECT COUNT(*) FROM platform_events WHERE {bwhere_sql}"), bparams
+    )).scalar() or 0
+
+    bparams["limit"] = limit
+    bparams["offset"] = offset
+    brows = (await db.execute(text(
+        "SELECT payload, created_at FROM platform_events "
+        f"WHERE {bwhere_sql} ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
+    ), bparams)).fetchall()
+
+    blocked: list[HealBlockedOut] = []
+    for br in brows:
+        bpl = br[0]
+        if isinstance(bpl, str):
+            try:
+                bpl = _json.loads(bpl)
+            except Exception:  # noqa: BLE001
+                bpl = {}
+        bpl = bpl or {}
+        bp = bpl.get("params") if isinstance(bpl.get("params"), dict) else {}
+        blocked.append(HealBlockedOut(
+            action_type=bpl.get("action_type"),
+            reason=bpl.get("reason"),
+            trigger_key=(bp or {}).get("trigger_key"),
+            created_at=br[1],
+        ))
+
+    # 사유별 계수 — **같은 필터**로, 합산과 별개로 낸다(MAJOR-2).
+    # ★`bparams` 에는 위에서 `limit`/`offset` 이 들어갔다 — 이 질의는 그것을 참조하지 않으므로
+    #   **필터 키만** 넘긴다(참조 없는 바인드를 보내지 않는다).
+    rparams = {k: v for k, v in bparams.items() if k in ("at", "since")}
+    reason_rows = (await db.execute(text(
+        "SELECT payload->>'reason' AS reason, COUNT(*) AS n FROM platform_events "
+        f"WHERE {bwhere_sql} GROUP BY 1"
+    ), rparams)).fetchall()
+    blocked_by_reason = {
+        (rr[0] or "unknown"): int(rr[1] or 0) for rr in reason_rows
+    }
+
+    return HealLogOut(
+        actions=actions, active_flags=active_flags, total=int(total),
+        blocked=blocked, blocked_total=int(blocked_total),
+        blocked_by_reason=blocked_by_reason,
+    )
 
 
 @router.post("/heal/{action_id}/rollback", response_model=RollbackResult)

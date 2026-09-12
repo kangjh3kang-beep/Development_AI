@@ -5,6 +5,7 @@ import { Button, Card, CardContent, Input } from "@propai/ui";
 import { useFeasibilityV2Store, type FeasibilityInput } from "@/store/use-feasibility-v2-store";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { siteDerivedFeasibilityFields } from "@/lib/feasibility-seed";
+import { wireBackedUseOptions } from "@/lib/building-use";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { motion } from "framer-motion";
 import { NumberInput as CommaInput } from "@/components/common/NumberInput";
@@ -16,13 +17,31 @@ const LAND_CATEGORIES = [
   { value: "forest", label: "임야" },
 ];
 
-const BUILDING_TYPES = [
-  { value: "apartment", label: "아파트" },
-  { value: "officetel", label: "오피스텔" },
-  { value: "office", label: "오피스" },
-  { value: "commercial", label: "상가" },
-  { value: "mixed", label: "복합" },
-];
+// ★건축물 용도는 **정본에서 파생**한다(2026-09-09 · lib/building-use.ts).
+//   종전엔 여기 5종을 손으로 적었고, 저장소 전체에 같은 목록이 **4벌** 있었다
+//   (design-references·DesignStudio·CostEstimationClient·여기).
+//   ★`wireBackedUseOptions()` 를 쓰는 이유: 백엔드 공사비 엔진이
+//     DEFAULT_DIRECT_COST_PER_SQM 에 없는 값을 받으면 **apartment 로 조용히 폴백**한다.
+//     그래서 단가를 아는 용도만 선택지에 올린다 — 전선 값(`value`)은 **종전과 동일**하다.
+//   ★종전 "복합"(mixed)은 엔진에 단가가 없어 아파트 단가로 계산되고 있었다.
+//     그 조용한 오류를 이어받지 않기 위해 선택지에서 뺀다.
+//   ★★2026-09-12 정정 — 종전 이 자리에 *"값이 저장된 기존 프로젝트는 normalizeBuildingUse 가
+//     여전히 읽는다"* 고 적었는데 **거짓이었다**: 이 파일은 그 함수를 **임포트하지 않는다**.
+//     실제로는 `value={input.building_type}` 에 매칭 옵션이 없어 **select 가 다른 값을 가리킨다**
+//     — 사용자는 자기가 저장한 용도가 **조용히 바뀐 것**을 못 본다.
+//     → 아래 `optionsFor()` 가 저장값을 **비활성 옵션으로 보여 준다**(「모름」이 유효값을 입지 않게).
+//     ★주석에 쓴 근거도 검증 대상이다(§C-10) — 재보지 않고 단정한 문장이 다음 사람을 속인다.
+//   ★영향 범위는 **미측정**: DB 에 `building_type="mixed"` 가 실제로 얼마나 쌓였는지 안 쟀다.
+const BUILDING_TYPES = wireBackedUseOptions().map((o) => ({ value: o.wire, label: o.label }));
+
+/**
+ * 저장된 값이 선택지에 없으면 **그 사실을 보여 준다**(조용히 다른 값으로 바꾸지 않는다).
+ * 비활성으로 두는 이유 — 다시 고를 수는 없어야 한다(단가를 모르는 용도이므로).
+ */
+function optionsFor(current: string | null | undefined): { value: string; label: string; disabled?: boolean }[] {
+  if (!current || BUILDING_TYPES.some((t) => t.value === current)) return BUILDING_TYPES;
+  return [...BUILDING_TYPES, { value: current, label: `${current} (저장된 값 · 더는 선택 불가)`, disabled: true }];
+}
 
 /**
  * 구조유형 — ★**정본은 백엔드** `app/services/cost/overview_estimator.py` 의 구조계수 표다.
@@ -260,8 +279,8 @@ export function ModuleInputForm() {
               onChange={(e) => setInput({ building_type: e.target.value })}
               className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-secondary)] px-3 py-2.5 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--accent-strong)]"
             >
-              {BUILDING_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
+              {optionsFor(input.building_type).map((t) => (
+                <option key={t.value} value={t.value} disabled={t.disabled}>{t.label}</option>
               ))}
             </select>
           </label>

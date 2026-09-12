@@ -270,7 +270,12 @@ export type SatongMarketGroup = {
    *  신고내역(#930)의 정본과 갈릴 수 있었고 반올림 규약이 없어 허위 정밀도를 찍었다.
    *  면적 결측·가격 결측이면 **`null`**(0 이 아니다 — 0 은 "평당 0원"으로 읽힌다). */
   price_per_pyeong_10k?: number | null;
-  /** ★P2 — 토지 매매(getRTMSDataSvcLandTrade) 전용 지목·용도지역. 종전엔 파싱만 되고
+  /** ★P2 — 지목·용도지역. ★★2026-09-08 정정(신고③): 종전엔 *"토지 매매
+   *  (getRTMSDataSvcLandTrade) **전용**"* 이라 적혀 있었는데 **거짓**이다 —
+   *  `molit_client._parse_trade_items` 는 `prop_type` **게이팅 없이** 전 유형에서 파싱한다.
+   *  ★그리고 그게 옳다: 건물 유형 API 도 `용도지역`을 준다(신고 스크린샷의 건물 거래에
+   *  `용도지역 근린상업`이 찍혔다 — 어느 유형 API 인지는 **미측정**).
+   *  ⇒ 이 필드가 붙었다고 **토지 거래로 읽지 마라.** 종전엔 파싱만 되고
    *  그룹핑 단계에서 폐기됐다(nearby_map_service._group_trade). 없으면 undefined(무날조). */
   build_year?: number;
   jimok?: string;
@@ -727,6 +732,27 @@ export function buildMaskedSampleReason(payload: SatongMarketPayload): string {
 }
 
 /** 채움 색상으로 같은 필지를 칠하는 레이어들 — **그리는 순서**대로 나열한다(뒤가 앞을 덮는다). */
+/**
+ * 카테고리 키(`"land_trade"` · `"officetel_rent"`)에서 **유형 라벨**을 얻는다.
+ *
+ * ★★2026-09-08(적대 리뷰 MAJOR-4) — 팝업과 **완전히 같은** «값은 손에 있는데 안 찍는다» 가
+ *   형제 표면에도 있었다. 「위치 미확인」 목록은 `동 지번 · N건 · 가격` 만 그려서
+ *   **토지 주소로만 읽힌다** — 신고③ 문장이 그대로 성립하는 자리다. 그런데
+ *   `UnlocatedMarketRow` 는 `type` 을 **이미 담고 있었다**(`collectUnlocatedMarketGroups`).
+ *   ★그리고 이 목록이 특히 중요하다: 같은 파일 실측 주석이 *"56그룹 476건 — 그중
+ *     토지매매만 362건"* 이라 적어 뒀다. 지도에 못 찍는 거래가 나타나는 **유일한 표면**이다.
+ *
+ * ★키 형태는 백엔드가 정한다 — `nearby_map_service.py:581·585` 가
+ *   `categories[f"{tkey}_trade"]` · `categories[f"{tkey}_rent"]` 로 만든다.
+ * ★모르면 `undefined`(무날조) — 팝업 배지와 **같은 정책**이다.
+ */
+export function marketTypeLabelFromCategoryKey(categoryKey: string): string | undefined {
+  const bare = categoryKey.replace(/_(trade|rent)$/, "");
+  return Object.prototype.hasOwnProperty.call(MARKET_TYPE_LABELS, bare)
+    ? MARKET_TYPE_LABELS[bare]
+    : undefined;
+}
+
 export type UnlocatedMarketRow = {
   key: string; label: string; count: number; avg: number | null; type: string;
 };
@@ -1115,7 +1141,54 @@ const PRESALE_STATUS_COLORS: Record<string, string> = {
   미정: "#64748b",
 };
 
-function marketPopupHtml(group: SatongMarketGroup, kind: "trade" | "rent"): string {
+/**
+ * 실거래 마커 팝업 HTML.
+ *
+ * ★★2026-09-08 사용자 신고③: *"여기는 오피스 건축물인데 토지로 필지로 표시되고 인식되는건가?
+ *   건축물에 대한 실거래가 아닌가?"* — **화면이 무엇의 거래인지 말하지 않고 있었다.**
+ *
+ *   실측: 이 함수의 인자는 `(group, kind)` 둘뿐이었고 `kind` 는 **매매/전월세** 축이다.
+ *   **유형**(아파트·연립다세대·단독다가구·오피스텔·토지·상업업무용)은 상위 카테고리에만 있고
+ *   (`nearby_map_service.py:1644` 가 `"type": type_key` 로 보낸다), 렌더 루프가 `const { type … }`
+ *   으로 **이미 꺼내 놓고도** 팝업에 넘기지 않았다. 마커 **라벨**에도 없었다.
+ *   ⇒ 유형을 아는 유일한 통로가 **마커 색**이었다 — 범례를 대조해야 아는 **대리 변수**.
+ *
+ * ★왜 「토지」로 읽혔나: 한 팝업에 **토지 형태와 건물 형태가 섞여** 있다.
+ *   `지번`·`용도지역`·`지목`(토지 속성) ↔ `준공년도`·`층`(건물 속성). 그리고 `평균 N평` 은
+ *   건물이면 전용면적, 토지면 거래면적이라 **같은 라벨이 다른 것을 뜻한다.**
+ *   ★그 혼재는 **오염이 아니다** — 상업업무용(`getRTMSDataSvcNrgTrade`)은 실제로 `용도지역`을
+ *   준다. 결함은 필드가 아니라 **「무엇의 거래인지 안 적은 것」**이다. 그래서 필드를 걷어내지
+ *   않고 **유형을 표면까지 싣는다**(신규 API 호출 0 — 값은 이미 호출부에 있다).
+ *
+ * ★★**export 하는 이유**: 이 저장소엔 `SatongMultiMap` 용 Leaflet 목이 없어 effect 본체가
+ *   테스트에서 **한 번도 돌지 않는다**(2026-09-07 실측: 그 안의 `false` 변이가 64파일 468건을
+ *   전부 통과했다). 그래서 기존 팝업 락은 **소스 문자열 검사**이고 주석·문자열에 뚫린다.
+ *   순수 함수를 밖으로 내면 **HTML 산출물을 직접 태울 수 있다**(형제 선례: `buildOverlayNotes`).
+ *
+ * @param marketType `MARKET_TRADE_TYPES` 의 key. **모르면 아무것도 찍지 않는다**(무날조 —
+ *   «유형 undefined» 같은 문자열을 만들지 않는다).
+ *
+ * ★★**왜 `marketType?` 이 아니라 「필수 + undefined 허용」인가**(변이가 시켰다):
+ *   `?` 로 두자 **호출부가 인자를 다시 빼는 변이가 SURVIVED** 였다 — 함수는 잠갔는데
+ *   **배선 층이 무잠금**이라는 이 저장소의 반복 결함 그대로다. 그런데 그 배선은 Leaflet
+ *   effect 안이라 목이 없는 이 파일에서는 **행위로 태울 수 없다.**
+ *   → **타입 계약으로 기계가 잡게** 만든다: 필수 인자면 누락이 **tsc 에러**(TS2554)이고
+ *     ★★**단 그 게이트는 한 토큰으로 무력화된다** — 이 인자에 `= undefined` 기본값을 붙이면
+ *     `TS2554` 가 **사라진다**(실측: 붙이고 호출부 인자를 빼니 TS2554 **0건**). 그래서 아래
+ *     소스 락이 «`?` 로 되돌리기» 와 함께 «기본값 붙이기» 도 함께 본다.
+ *     ★★그리고 **내가 여기 「arity 락(`marketPopupHtml.length === 3`)이 잡는다」고 적었었다.
+ *     거짓이었다** — 그 락은 판별력 0이라 같은 PR 에서 **폐기했는데 이 주석만 남았다.**
+ *     (TypeScript 의 `?` 는 JS 로 기본값 없는 평범한 인자가 되어 `length` 가 그대로 3이다.)
+ *     ⇒ 지금 되돌림을 잡는 것은 **소스 선언 락**이다(`SatongMultiMap.marketPopupType.test.ts`)
+ *       — 소스 락이라 **약하다**. 적대 리뷰가 이 거짓 주석을 잡았고, 그것은 이 PR 이
+ *       백엔드에서 고친 것과 **같은 결함**이다(§C-11 «면역을 거짓 주장하지 마라»).
+ *   ★유형을 정말 모르는 호출부는 **`undefined` 를 명시**한다 — 모름을 **말하게** 한다.
+ */
+export function marketPopupHtml(
+  group: SatongMarketGroup,
+  kind: "trade" | "rent",
+  marketType: string | undefined,
+): string {
   const avgArea = group.avg_area_m2 ?? 0;
   const pyeong = pyeongFromM2(avgArea);
   const priceLine =
@@ -1161,9 +1234,28 @@ function marketPopupHtml(group: SatongMarketGroup, kind: "trade" | "rent"): stri
       return `<div style="font-size:11px;color:#475569;">· ${escapeHtml(deal.deal_date || "")} ${escapeHtml(amount)} · ${escapeHtml(pyeongFromM2(deal.area_m2))}${deal.floor ? ` · ${escapeHtml(deal.floor)}층` : ""}</div>`;
     })
     .join("");
+  // ★라벨은 `MARKET_TYPE_LABELS`(= `MARKET_TRADE_TYPES` 에서 **파생**)에서만 얻는다.
+  //   새 어휘를 여기서 만들지 않는다 — 만들면 그 순간 두 벌이 되고, 이 저장소는 그 형태로
+  //   이미 데인 적이 있다(`boundary` ↔ `parcel-boundary` · `hybrid` ↔ `aerial`).
+  // ★★2026-09-08(적대 리뷰 MAJOR-3) — **자기 키만** 본다. 종전 `MARKET_TYPE_LABELS[marketType]`
+  //   는 `Object.fromEntries` 산물이라 **프로토타입 체인이 살아 있다**: `marketType="constructor"`
+  //   면 `Function` 이 truthy 로 돌아와 배지에 `function Object() { [native code] }` 가 찍힌다
+  //   (`node -e` 로 실증). 오늘 호출부는 상수 파생이라 **도달 불가**지만, 이 함수가 선언한
+  //   «모르면 아무것도 안 찍는다» 는 그 입력에서 **문자 그대로 거짓**이었다.
+  const typeLabel = marketType && Object.prototype.hasOwnProperty.call(MARKET_TYPE_LABELS, marketType)
+    ? MARKET_TYPE_LABELS[marketType]
+    : undefined;
   return [
     `<div style="min-width:210px;max-width:280px;padding:8px 10px;font-size:12px;line-height:1.5;">`,
     `<b>${escapeHtml(group.name)}</b>`,
+    // ★유형 배지 — 「무엇의 거래인가」를 **이름 바로 밑에서** 말한다(신고③).
+    //   (★정정: 초판 주석은 «첫 줄»이라 했는데 첫 줄은 `<b>{name}</b>` 이고 배지는 **둘째**다.)
+    //   지번보다 먼저 오는 이유:
+    //   종전엔 `지번 · N건` 으로 시작해 **토지 주소처럼 읽혔다.**
+    //   ★모르는 키면 빈 문자열 — 「유형 미상」 같은 말을 지어내지 않는다.
+    typeLabel
+      ? `<div style="margin-top:2px;font-size:11px;font-weight:700;color:#0f172a;">${escapeHtml(typeLabel)}</div>`
+      : "",
     `<div style="color:#64748b;font-size:11px;">${escapeHtml([group.dong, group.jibun].filter(Boolean).join(" "))} · ${escapeHtml(group.count)}건</div>`,
     attrLine ? `<div style="color:#64748b;font-size:11px;">${attrLine}</div>` : "",
     `<div style="margin:6px 0;color:#0f172a;">${escapeHtml(priceLine)}</div>`,
@@ -1173,6 +1265,85 @@ function marketPopupHtml(group: SatongMarketGroup, kind: "trade" | "rent"): stri
     dealRows,
     `</div>`,
   ].join("");
+}
+
+/** `buildMarketMarker` 가 쓰는 Leaflet 최소 계약(구조적 타이핑 — 전체를 끌어오지 않는다). */
+type MarketMarkerLeaflet = {
+  circleMarker: (latlng: [number, number], options: Record<string, unknown>) => {
+    bindPopup: (html: string, opts?: Record<string, unknown>) => unknown;
+  };
+};
+
+/**
+ * 실거래 마커 하나를 만든다 — 팝업·색·라벨을 **한 `entry` 에서** 얻는다.
+ *
+ * ★★2026-09-09 — 이 함수가 생긴 이유(#1018 적대 리뷰 MAJOR-6 의 미해결분):
+ *   마커의 **유형 동일성**이 무잠금이었다. 호출부에서 `const { type, … } = entry` 를
+ *   `const type = "apt"` 로 바꿔치기하면 **모든 마커가 「아파트」라고 말하는데 2412건이 초록**
+ *   이었다(SURVIVED 실측). 그 배선이 Leaflet effect 안의 **지역변수**라 태울 수 없었다.
+ *
+ * ★처방은 «락을 더 만드는 것»이 아니라 **바꿔치기할 지역변수를 없애는 것**이다:
+ *   유형 문자열이 아니라 **`entry` 를 통째로** 받는다. 그러면 팝업이 말하는 유형과 마커 색이
+ *   **같은 인자에서** 나오므로 그 짝이 이 함수 안에서 잠긴다.
+ *
+ * ★그리고 이제 **진짜 Leaflet 으로 행위 검증**된다 — #1024 가 목이 필요 없음을 실증했다
+ *   (`leaflet` 이 의존성에 선언돼 있고 jsdom 에서 그대로 돈다).
+ *
+ * ★★2026-09-09 2차(적대 리뷰 MAJOR-1·3) — **`addTo(group)` 과 라벨 버짓 판정도 여기로 들인다.**
+ *   초판은 *"레이어·경계는 effect 관심사"* 라며 그 둘을 밖에 뒀는데, 그건 **선언으로 정당화한
+ *   무잠금**이었다. 실측: `marker.addTo(group)` 한 줄을 지우면 **실거래 마커가 하나도 안 뜨는데
+ *   테스트는 초록**이었다. 그리고 `permanent: ordinal < typeLabelLimit`(*"한 유형이 전역 라벨
+ *   버짓을 독식하지 않게"* 라는 **선언된 계약**)도 단언이 0건이었다.
+ *   ⇒ ***태울 수 없는 자리에 배선을 남기고 「관심사 분리」로 부르지 않는다.***
+ *   `bounds.extend` 만 effect 에 남는다 — 그건 **누적 상태**라 마커 하나의 관심사가 아니다.
+ */
+export function buildMarketMarker(
+  L: MarketMarkerLeaflet,
+  item: SatongMarketGroup,
+  entry: { type: string; color: string },
+  opts: {
+    kind: "trade" | "rent";
+    pyeongFirst: boolean;
+    /** 이 유형에서 몇 번째 마커인가(0부터). 라벨 버짓 판정의 입력. */
+    ordinal: number;
+    /** 이 유형에 배정된 상시 라벨 수. `ordinal < typeLabelLimit` 이면 상시. */
+    typeLabelLimit: number;
+    /** 붙일 레이어 그룹. 넘기면 여기서 `addTo` 한다(★그래야 그 배선이 태워진다). */
+    group?: unknown;
+  },
+): unknown {
+  const radius = Math.min(18, 7 + Math.round(Math.sqrt(Math.max(1, item.count)) * 1.5));
+  const marker = L.circleMarker([item.lat, item.lon], {
+    radius,
+    color: "#ffffff",
+    weight: 2,
+    fillColor: entry.color,
+    fillOpacity: 0.9,
+    // ★U6 근본수정: L.Path(circleMarker) 기본 bubblingMouseEvents=true 라 점 클릭이
+    //   지도 click으로 번져 필지선택(현 팝오버)이 함께 발동했다. 점 클릭 = 정보 팝업만.
+    bubblingMouseEvents: false,
+  }).bindPopup(marketPopupHtml(item, opts.kind, entry.type), { maxWidth: 300 });
+
+  // 정보 상시화(2026-07-17): 라벨에 평균가를 병기 — hover 없이도 핵심값이 보이게.
+  // ★평당가는 **서버가 준 값**을 쓴다(여기서 나눗셈하지 않는다 — 산식이 세 곳에 흩어져 있었고
+  //   그중 이 자리만 반올림 규약이 없어 허위 정밀도를 찍었다). 면적 결측이면 서버가 `null` 을
+  //   주고 평당을 **생략**한다(0 을 찍지 않는다).
+  const priceTag = composeMarketPriceTag({
+    kind: opts.kind,
+    totalText: item.avg_price_10k ? won(item.avg_price_10k) : null,
+    perPyeong10k: item.price_per_pyeong_10k,
+    pyeongFirst: opts.pyeongFirst,
+  });
+  // ★라벨 버짓 — *"한 유형이 전역 라벨 버짓을 독식하지 않게"* 라는 계약이 여기서 판정된다.
+  //   ★★`bindPopup` 이 `bindSatongLabel` 보다 **먼저** 와야 한다 — `bindSatongLabel` 이
+  //     `getPopup()` 유무로 라벨을 클릭 가능하게 할지 정하기 때문이다(#1024). 순서 의존이라
+  //     아래 락이 `tooltip.options.interactive` 로 그것까지 본다.
+  bindSatongLabel(marker as never, `${item.name || "실거래"}${priceTag}`, {
+    permanent: opts.ordinal < opts.typeLabelLimit,
+    offsetY: radius,
+  });
+  if (opts.group) (marker as unknown as { addTo: (g: unknown) => unknown }).addTo(opts.group);
+  return marker;
 }
 
 function presalePopupHtml(item: SatongPresaleItem): string {
@@ -2842,50 +3013,30 @@ export function SatongMultiMap({
     //   유형별 서브슬롯(labelPlan[`market:${type}`])으로 공평 배분(P3 — 한 유형이 전역 라벨
     //   버짓을 독식하지 않게).
     for (const entry of marketRenderPlan) {
-      const { type, color: typeColor, groups } = entry;
-      const typeLabelLimit = labelPlan[`market:${type}`] ?? 0;
+      const typeLabelLimit = labelPlan[`market:${entry.type}`] ?? 0;
       cappedTotal += entry.cappedCount;
       let typeShown = 0;
 
-      groups.forEach((item) => {
+      entry.groups.forEach((item) => {
         const ordinal = typeShown;
         typeShown += 1;
         marketCount += 1;
-        const radius = Math.min(18, 7 + Math.round(Math.sqrt(Math.max(1, item.count)) * 1.5));
-        const marker = L.circleMarker([item.lat, item.lon], {
-          radius,
-          color: "#ffffff",
-          weight: 2,
-          fillColor: typeColor,
-          fillOpacity: 0.9,
-          // ★U6 근본수정: L.Path(circleMarker) 기본 bubblingMouseEvents=true 라 점 클릭이
-          //   지도 click으로 번져 필지선택(현 팝오버)이 함께 발동했다. 점 클릭 = 정보 팝업만.
-          bubblingMouseEvents: false,
-        })
-          .bindPopup(marketPopupHtml(item, kind), { maxWidth: 300 })
-          .addTo(group);
-        // 정보 상시화(2026-07-17): 라벨에 평균가를 병기 — hover 없이도 핵심값이 보이게(jootek 가격 pill).
-        // ★R1 #2: 팝업과 동일 공용 포맷터 won() 재사용 — 억미만 "0.4억" 어색 표기·라벨/팝업 불일치 제거.
-        // 총액/평당 토글(실거래 unit-price 컨트롤 — jootek '총액/평당' 패리티): 평당가는
-        // avg_price_10k(만원)/평(avg_area_m2/3.305785). 면적 결측 시 총액 폴백(정직).
-        // ★총액·평당 **병기**(사용자 요청 2026-09-04). 종전엔 either/or 라 한쪽을 보려면
-        //   다른 쪽을 포기해야 했다.
-        //   ★평당가는 **서버가 준 값**을 쓴다 — 여기서 나눗셈하지 않는다. 산식이 세 곳에
-        //     흩어져 있었고(정본 realtx `per_pyeong_10k` · nearby_map 집계 내부 · 이 인라인),
-        //     그중 이 자리만 반올림 규약이 없어 허위 정밀도(4자리)를 찍고 있었다.
-        //   ★면적 결측이면 서버가 `null` 을 준다 → 평당을 **생략**한다(0 을 찍지 않는다).
-        // `unit-price` 컨트롤은 이제 **어느 쪽을 앞에 둘지**를 정한다(둘 다 항상 표시).
-        const priceTag = composeMarketPriceTag({
+        // ★★유형·색·팝업을 **한 `entry` 에서** 얻는다(#1018 MAJOR-6). 종전엔 여기서
+        //   `const { type, color: typeColor } = entry` 로 풀어 썼고, 그 지역변수를
+        //   `"apt"` 로 바꿔치기하면 **모든 마커가 「아파트」인데 2412건이 초록**이었다.
+        //   `entry` 를 통째로 넘겨 **바꿔치기할 지역변수를 없앤다** — 동일성은
+        //   `buildMarketMarker` 안에서 진짜 Leaflet 으로 검증된다.
+        buildMarketMarker(L, item, entry, {
           kind,
-          totalText: item.avg_price_10k ? won(item.avg_price_10k) : null,
-          perPyeong10k: item.price_per_pyeong_10k,
           pyeongFirst: pricePerPyeongOn,
+          ordinal,
+          typeLabelLimit,
+          group,
         });
-        bindSatongLabel(marker, `${item.name || "실거래"}${priceTag}`, { permanent: ordinal < typeLabelLimit, offsetY: radius });
         bounds.extend([item.lat, item.lon]);
       });
 
-      if (typeShown) byType[type] = typeShown;
+      if (typeShown) byType[entry.type] = typeShown;
     }
     setMarketTypeCounts(byType);
 
@@ -3703,6 +3854,12 @@ export function SatongMultiMap({
                     {shouldShowMarketDetails(marketPayload) && marketTypes.map((type) => (
                       <div key={type} className="flex items-center gap-1.5 font-semibold text-[var(--text-primary)]">
                         <span className="h-3 w-3 rounded-full border border-black/10 shadow-xs" style={{ backgroundColor: MARKET_TYPE_COLORS[type] || "#2563eb" }} />
+                        {/* ★2026-09-08(적대 리뷰 MINOR-4) — 여기는 **원시 키를 폴백 표시**하고,
+                            팝업/목록 배지는 **아무것도 안 찍는다**. 같은 파일에 정책이 둘인데
+                            **의도된 것**이다: 범례는 «켜진 유형마다 한 줄」이 계약이라 행을 비울 수
+                            없고(색 스와치·건수가 그 줄에 붙는다), 배지는 **선택적 부가정보**라
+                            모르면 안 적는 것이 정직하다.
+                            ★오늘 `marketTypes` 는 프론트 상수 파생이라 이 폴백은 **도달 불가**다. */}
                         <span>{MARKET_TYPE_LABELS[type] || type}</span>
                         {/* ★정직 표기: 켜졌지만 0건인 유형도 숨기지 않고 0건으로 명시(무음 금지) */}
                         <span className="ml-auto text-[var(--text-secondary)]">{marketTypeCounts[type] ?? 0}건</span>
@@ -3721,6 +3878,14 @@ export function SatongMultiMap({
                       <ul className="mt-1 flex max-h-40 flex-col gap-0.5 overflow-y-auto text-[10px]">
                         {unlocatedMarketGroups.slice(0, UNLOCATED_LIST_LIMIT).map((g) => (
                           <li key={g.key} className="flex items-center gap-1.5 text-[var(--text-secondary)]">
+                            {/* ★유형 배지(신고③ · 적대 리뷰 MAJOR-4) — 종전엔 `동 지번 · N건 · 가격`
+                                뿐이라 **토지 주소로만 읽혔다**. 값(`g.type`)은 이미 손에 있었다.
+                                모르면 아무것도 안 찍는다(팝업 배지와 **같은 무날조 정책**). */}
+                            {marketTypeLabelFromCategoryKey(g.type) && (
+                              <span className="shrink-0 font-bold text-[var(--text-primary)]">
+                                {marketTypeLabelFromCategoryKey(g.type)}
+                              </span>
+                            )}
                             <span className="truncate font-semibold text-[var(--text-primary)]">{g.label}</span>
                             <span className="ml-auto shrink-0">{g.count}건</span>
                             {g.avg != null && (
