@@ -11,15 +11,24 @@
 그래서 표만 읽은 사람은 `threshold_relax` 를 보고 *"제품에 닿는 효과기가 살아 있다"* 고
 읽는데, 실제로는 며칠째 조용할 수 있고 **그 사실을 알 방법이 없었다.**
 
-## 라이브 실측 (2026-08-27 12:33 UTC · 대조군 `zzz_nope` total=0 으로 조회기 생존 확인)
+## 라이브 실측 — ★**휴면 시간은 적지 않는다. 여기서 다시 재라.**
 
-    threshold_relax      PRODUCT    47건   최신 08-24T18:50    ★66시간 휴면
-    threshold_autotune   SELF      441건   최신 08-06T23:46    ★493시간(20일) 휴면
-    circuit_observe      NONE       30건   최신 07-24T11:55     817시간
-    cache_warm           NONE        2건   최신 08-03T18:30     570시간
+    await firing_status(db)     # 이 모듈의 함수. 발화수·최신시각·휴면 판정을 지금 값으로 낸다.
+
+★**왜 값을 지웠나 (2026-09-13)**: 종전엔 이 자리에 *"★66시간 휴면"* 이 적혀 있었는데
+  2026-09-12 재측정에서 **약 447시간**이었다. ***"넣으면 낡는다"고 경고하는 이 파일 안에서
+  그 경고가 그대로 실현됐다.*** 발화수·시각은 스냅샷이라 아래처럼 **기준을 달아** 남기고,
+  **거기서 계산되는 「휴면 N시간」은 지운다** — 그것이 낡는 유일한 칸이었다.
+
+    [스냅샷 · 168 propai-api-8001 · DB now 2026-09-12T14:27:08Z · 측정 sid=7af9eaa2]
+    threshold_autotune   SELF      441건   최신 2026-08-06T23:46Z
+    threshold_relax      PRODUCT    47건   최신 2026-08-24T18:50Z
+    circuit_observe      NONE       30건   최신 2026-07-24T11:55Z
+    cache_warm           NONE        6건   최신 2026-09-04T17:34Z
     feature_toggle       SELF        0건   ★한 번도 발화한 적 없음
     stale_reanalysis     NONE        0건   ★한 번도 발화한 적 없음
     prompt_ab_adopt      NONE        0건   ★한 번도 발화한 적 없음
+    ★대조군: `heal*` 이벤트 타입 전수 = [('heal_action', 524)] — 0건이 매체 오측정이 아니다.
 
 ★**양성 대조군**: L1 액션인 `threshold_autotune` 이 441건으로 잡혔다 —
 `_emit_l1_event` 도 `event_type='heal_action'` 으로 쓰므로(`feature_flags.py` 실측)
@@ -41,9 +50,23 @@ L0·L1 이 **같은 매체**에 있다. 따라서 위 0건은 매체를 잘못 �
 
 | 효과기 | 실제 | 0건의 뜻 |
 |---|---|---|
-| `feature_toggle` | **살아 있는 경로** — 조건 미충족 | ★진짜 발견. `down_pct >= 40` 이 필요한데 `analyzer._classify_quality` 는 20% 위에서만 `quality_drop` 을 낸다 |
+| `feature_toggle` | **살아 있는 경로** — 조건 미충족 | ★**데이터 조건**이다(배선 결함 아님). `down_pct >= 40` **이면서** `ftotal+vtotal >= 10` 인 서비스가 아직 없었을 뿐. 잠금: `tests/test_feature_toggle_band_is_reachable.py` |
 | `stale_reanalysis` | **자기참조** — 유일한 생산자가 자기 자신 | **건강한 시스템의 사실**(원장 훼손이 없었다는 뜻). 결함 아님 |
 | `prompt_ab_adopt` | ★**구조적 도달 불가** | `_pick_better_version` 이 `cand-N` 라벨을 기대하는데 텔레메트리는 `"v4"` 를 준다 → 언제나 `insufficient_versions`. **부트스트랩 교착** |
+
+★★**2026-09-13 정정 — `feature_toggle` 행의 근거가 거짓이었다.**
+  종전 근거: *"`down_pct >= 40` 이 필요한데 `_classify_quality` 는 **20% 위에서만** 낸다"*.
+  ***`> 20` 은 `>= 40` 을 포함한다*** — `down_pct=45` 는 20 도 넘으므로 발행되고 소비처도 통과한다.
+  임계 모순은 **없고** 경로는 **도달 가능**하다. 0건은 «그런 서비스가 없었다»는 데이터 조건이다.
+  ★**열(「조건 미충족」)은 맞았고 evidence 문장만 거짓이었다** — 결론이 맞으면 아무도 근거를 되짚지 않는다.
+  ★★**이 오진이 지시하는 처방이 위험하다**: *"임계가 어긋났으니 맞추자"* → `FEATURE_DISABLE_ERROR_PCT`
+    **40 → 20**. 그런데 `_classify_quality` 의 severity 는 **`"warn"` 하나뿐**이라 등급 구분이 없다
+    ⇒ 임계를 20 으로 내리면 ***「경고」와 「자동 비활성」이 같은 지점이 된다.*** 임계를 조금 낮추는 것이
+    아니라 **관측 층과 조치 층의 분리를 없애는 것**이다(`llm_narrative` 가 절반의 down 비율에 꺼진다).
+  ⇒ 그래서 산문을 고치는 데서 그치지 않고 **계약을 잠갔다**:
+    `tests/test_feature_toggle_band_is_reachable.py` — «생산처가 내는 severity ⊆ 소비처가 받는 severity»
+    (소비처를 `severity='critical'` 로 좁히면 이 효과기가 **조용히 도달 불가**가 된다. 그것이 진짜
+    «구조적 도달 불가»이고 지금은 아니다) + down_pct 바닥의 **두 모집단** + insight_type 오타 잠금.
 
 ★그래서 **이 표면의 `never_fired` 하나로 셋을 가를 수 없다.** "무장했으나 미발화"와
 "발화 불가"는 **처방이 다르다**(전자는 데이터 조건, 후자는 배선 결함).
@@ -210,7 +233,8 @@ async def firing_status(db: Any, *, now: datetime | None = None) -> dict[str, An
             # ★**임계 없는 사실** — 제품에 닿는 효과기 중 가장 오래 조용한 시간.
             #
             #   왜 이게 따로 필요한가: 이 작업을 촉발한 관측이 `threshold_relax` **66시간
-            #   휴면**이었는데, `DORMANT_HOURS=72` 라 그 사례는 `active` 로 분류된다.
+            #   휴면**(★**2026-08-27 당시의 관측값** — 지금 값이 아니다. 2026-09-12 재측정은
+            #   약 447시간이었다)이었는데, `DORMANT_HOURS=72` 라 그 사례는 `active` 로 분류된다.
             #   ★임계를 66 아래로 내려 그 하나를 잡게 만드는 것은 **관측에 지표를 맞추는
             #     것**이고(굿하트), 다음 관측에서 또 내려야 한다.
             #   그래서 라벨은 그대로 두고 **원값을 싣는다** — 라벨은 경보이고 이 값이 진실이다.
