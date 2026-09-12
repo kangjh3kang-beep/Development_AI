@@ -90,19 +90,49 @@ export interface BindSatongLabelOptions {
  * @param text    라벨 텍스트(원문 — textContent로 안전하게 삽입, 이스케이프 불필요)
  * @param opts    permanent/offsetY
  */
+/** 라벨 호스트의 최소 계약(구조적 타이핑 — Leaflet 전체를 끌어오지 않는다). */
+type SatongLabelHost = {
+  bindTooltip: (content: unknown, options: unknown) => unknown;
+  getPopup?: () => unknown;
+};
+
 export function bindSatongLabel(
-  marker: { bindTooltip: (content: unknown, options: unknown) => unknown },
+  marker: SatongLabelHost,
   text: string,
   opts: BindSatongLabelOptions,
 ): unknown {
   // 내용은 텍스트 노드로만 — HTML 주입(XSS) 여지 제거. 박스 스타일은 .satong-tooltip CSS 담당.
   const el = typeof document !== "undefined" ? document.createElement("span") : null;
   const content: unknown = el ? ((el.textContent = text), el) : text;
+  // ★★2026-09-09 사용자 신고③의 **나머지 절반**: *"토지로 필지로 표시되고 **인식되는건가**"*.
+  //   종전엔 라벨이 클릭을 **안 받고 아래 지도로 통과**시켜 `map.on("click")` 이
+  //   **필지 선택 팝오버**를 열었다(실측: jsdom + 진짜 Leaflet 로 map click **발화 1회**).
+  //   가격 라벨을 눌렀는데 엉뚱한 필지가 선택되는 것이 사용자가 말한 「인식」이다.
+  //
+  // ★**팝업이 있을 때만** interactive 로 만든다. Leaflet 이 그때
+  //   ①`leaflet-interactive` 클래스를 붙여 CSS 로 `pointer-events:auto` + `cursor:pointer` 를 주고
+  //   ②컨테이너를 interactive target 으로 등록하며
+  //   ③`Tooltip.onAdd` 의 `addEventParent(this._source)` 로 클릭을 **마커로 전파**해 팝업을 연다.
+  //   (`leaflet-src.js:9776-9778` 옵션 선언 · `:9875-9877` 소비 · `leaflet.css:592-595` 스타일)
+  //
+  // ★★**팝업이 없는 라벨(측정 면적·누적거리·선택 필지 앵커)은 그대로 둔다.** 실측:
+  //   interactive 인데 팝업이 없으면 `listens('click')` 이 거짓이라 **map click 이 정상 발화**한다
+  //   — 즉 켜도 안전하지만, 켜면 `cursor:pointer` 가 붙어 **누를 게 있다는 거짓 어포던스**가 된다.
+  //   그래서 «누를 것이 있는 라벨만» 클릭 가능하게 한다.
+  //
+  // ★내 초판은 이 옵션을 **효과 없다고 단정하고** DOM 에 핸들러를 손수 71줄 붙였다. 거짓이었다 —
+  //   `Tooltip` **블록만** 조회해 «언급 0건»을 봤는데, 옵션은 부모 `DivOverlay` 에 있어
+  //   그 범위로는 **상속 구현을 원리적으로 못 본다**(§26 위음성 — 패턴이 아니라 범위가 틀렸다).
+  //   ★형제 증거가 바로 옆에 있었다: `leaflet.css` 에 `.leaflet-tooltip.leaflet-interactive` 규칙이
+  //     실재한다 — Leaflet 이 인터랙티브 툴팁을 지원하지 않으면 **있을 이유가 없는 규칙**이다(§29).
+  //   그리고 손수 붙인 핸들러는 **측정 모드 클릭 수집과 앵커의 필지 선택까지 함께 삼켰다.**
+  const interactive = !!marker.getPopup?.();
   return marker.bindTooltip(content, {
     permanent: opts.permanent,
     direction: "top",
     offset: [0, -(opts.offsetY ?? 8)],
     className: "satong-tooltip",
+    interactive,
   });
 }
 
