@@ -96,4 +96,66 @@ Vault 생존 대조군: `AI-Sessions/wiki/errors/` **331 파일**(조회기 살�
 
 ## §6 변이 감사 (9조 §2 — `base:` 줄과 함께 인용)
 
-*실행 후 이 절을 채운다. 비어 있는 채로 PR 을 내지 않는다.*
+### ★★먼저 정직 표기 — **기계는 이 PR 에서 변이를 단 하나도 고를 수 없다**
+
+    $ .venvs/propai312/bin/python scripts/mutate_changed.py --base origin/main --tests <내 락>
+      base: origin/main → cd942c6ecd00 (공통 조상 · 남의 커밋 제외)
+    ★감사할 소스 변경이 없다 — 이 실행은 **아무것도 검증하지 않았다**.      EXIT=2
+    # 대조군(조회기 생존): git diff --name-only origin/main → 3파일
+
+`_changed_files` 가 `n.startswith("scripts/")` 로 **도구 자신을 배제**하기 때문이다.
+즉 **내가 고치는 결함 클래스가 한 층 위에서 내 PR 에 그대로 있다.**
+⇒ 아래 8건은 **내가 손으로 골랐다.** «8/8 CAUGHT» 는 *"내가 본 층"* 에 대해서만 참이다.
+   (이 자리를 닫는 것 = 위 §3-2 부채. `xfail(strict)` 로 초록 안에 드러냈다.)
+
+### 손 변이 — `scripts/mutate_manual.sh` · 8/8 CAUGHT (전부 「주입 확인」 통과)
+
+| # | 변이(등가 약화) | 판정 |
+|---|---|---|
+| M1 | 확장자 목록에서 `.sh` 제거 | `::VERDICT=CAUGHT` |
+| M2 | 구문 게이트의 `.sh` 분기를 `if False:` | `::VERDICT=CAUGHT` |
+| M3 | **`bash -n` → `sh -n`** | `::VERDICT=CAUGHT` |
+| M4 | 셸 `if` 규칙 무력화(`m = None`) | `::VERDICT=CAUGHT` |
+| M5 | `exit` 경계 제거(`[1-9][0-9]*` → `[0-9]+` · `exit 0` 도 대상) | `::VERDICT=CAUGHT` |
+| M6 | 참조 파생을 공집합으로(`return []`) | `::VERDICT=CAUGHT` |
+| M7 | 러너 경로 승격 제거 | `::VERDICT=CAUGHT` |
+| M8 | **판정 루프의 게이트 호출 무력화**(`broke = ""`) | `::VERDICT=CAUGHT` |
+
+★M8 이 중요하다 — 처음에는 함수만 잠가서 **호출부가 무잠금**이었다. 합성 git 저장소에
+도구를 통째로 태우는 종단 락을 넣고서야 CAUGHT 가 됐다(*존재를 잠그면 행위는 안 잠긴다*).
+★M5 첫 시도는 **제 sed 표현식이 잘못 주입**돼 판정이 안 났다 — 도구가 옳고 호출이 틀렸다.
+  「판정 없음」을 「생존」으로 읽지 않았다.
+
+### ★도구가 실제로 잡은 것 — #1032(머지·배포 완료) 소급 감사 (9조 §4)
+
+    $ python scripts/mutate_changed.py --base ec1892190~1 --only safe-deploy.sh --max 200
+      base: ec1892190~1 → 1b7c08a3dd2e (공통 조상 · 남의 커밋 제외)
+      변이 6건 · kill 2 · **생존 4**                                        EXIT=1
+
+**`safe-deploy.sh:112` 의 `exit 12` → `exit 0` 이 생존**했다. 가드 라이브러리를 못 읽었을 때
+중단하는 자리인데, 그것을 무력화해도 초록이다.
+
+기제는 **`or` 다** — `test_safe_deploy_wrong_host.py:352` 가
+`assert "guard-lib" in src or "exit 12" in src` 라, **두 생존자가 서로를 덮어** 개별 무잠금이다.
+추론이 아니라 **관측으로 갈랐다**(독립 도구 `mutate_manual.sh` 로 재현):
+
+| 대조군 | 변이 | 판정 |
+|---|---|---|
+| A | `exit 12` **단독** | `::VERDICT=SURVIVED` (기준선 초록 21건 · 주입 확인 · `bash -n` 통과) |
+| B | `exit 12` + `guard-lib` **동시** | `::VERDICT=CAUGHT` |
+
+★그 파일은 **내 레인이 아니다**(보드 16694 · `sid=e739d2a9` CLAIM · RELEASE 없음).
+**고치지 않고 관측만 보드에 넘겼다.** 형제 `rollback-web.sh` 도 같은 `or` 를 받는다.
+
+### 회귀 — **통과 수**로 대조(빨강 개수가 아니라)
+
+| | passed | skipped | xfailed | rc |
+|---|---|---|---|---|
+| base `cd942c6ec` | 269 | 25 | 6 | 0 |
+| 이 브랜치 | **283** | 25 | **8** | 0 |
+
+**델타 +14 passed · +2 xfailed = 추가한 락 16건과 정확히 일치**(회귀 0).
+★같은 venv 의 `tests/unit` 수집오류 **21건은 양쪽 동일** — 환경(로컬 의존성)이지 내 변경이 아니다
+(대조군으로 갈랐다. 깨진 로컬을 기준선으로 쓰지 않았다).
+★ruff: 이 파일 위반 **기준선 8 ↔ 내 판 8**(늘린 것 0). 단 CI 의 ruff 잡은
+`working-directory: propai-platform/apps/api` 라 **저장소 루트 `scripts/` 는 그 게이트 밖**이다.
