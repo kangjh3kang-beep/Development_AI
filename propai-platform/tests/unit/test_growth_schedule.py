@@ -164,11 +164,23 @@ async def test_compute_due_seeds_long_jobs_and_runs_short_ones_on_first_boot():
     assert due["heal"] is True and due["analyze"] is True and due["correct"] is True
     assert due["learn"] is False and due["improve"] is False
 
-    seeded = {k for k, _v, _u in fake.writes}
+    # ★축을 **씨드 쓰기**로 좁힌다(2026-09-12). 종전엔 `fake.writes` **전체**를 씨드로 셌는데,
+    #   그러면 «워터마크를 건드리지 않는 관측용 쓰기»가 하나만 늘어도 이 단언이 깨진다.
+    #   ***측정이 의도보다 넓으면, 무관한 변경이 락을 빨갛게 만들고 사람은 락을 고치게 된다.***
+    #   대신 아래에 **진짜 불변식**을 따로 단언한다 — 씨드가 아닌 쓰기는 **워터마크 키를 건드리지 않는다**.
+    seeded = {k for k, _v, u in fake.writes if u and "seed" in u}
     assert seeded == {watermark_key("learn"), watermark_key("improve")}, (
         "긴 주기만 씨드해야 한다 — 짧은 주기까지 씨드하면 영영 안 돈다"
     )
-    assert all(u and "seed" in u for _k, _v, u in fake.writes), "씨드 출처가 안 남는다"
+    assert seeded, "씨드 출처(updated_by)가 안 남아 씨드 쓰기를 식별할 수 없다"
+    wm_keys = {watermark_key(j) for j in JOB_SPECS}
+    touched_by_nonseed = {
+        k for k, _v, u in fake.writes if not (u and "seed" in u)
+    } & wm_keys
+    assert touched_by_nonseed == set(), (
+        f"씨드가 아닌 쓰기가 워터마크를 덮었다: {touched_by_nonseed} — "
+        "그 잡은 돌지 않았는데 «돌았다»가 된다"
+    )
 
 
 @pytest.mark.asyncio
