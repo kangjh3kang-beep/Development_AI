@@ -88,6 +88,23 @@ if ! mkdir "$LOCKDIR" 2>/dev/null; then
 fi
 trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT
 
+# ★형제 스윕(2026-09-12) — safe-deploy.sh 와 **같은 모호한 실패**가 여기 있었다.
+#   여긴 더 위험하다: **장애 중에 집는 스크립트**라, 틀린 진단이 붙으면 복구가 늦어진다.
+#   그리고 이 파일 헤더에는 「A1」 언급이 **0건**이라 실행자가 기계를 오인하기 더 쉽다.
+# shellcheck source=lib/assert-a1-host.sh
+# ★★R2(독립 리뷰 MAJOR-B) — **가드가 자기 의존에 fail-open 이었다.**
+#   이 스크립트에는 `set -e` 가 없다(`set -uo pipefail` 뿐). source 가 실패해도 흘러가
+#   `assert_a1_host: command not found` → **가드를 그냥 지나** `cd "$REPO"` 로 가서
+#   **`FAIL cd-repo` · rc=1** 을 낸다 — ***이 PR 이 없애려는 바로 그 문구다.***
+#   도달 경로도 실재한다: A1 은 `git reset --hard` 를 **가드 뒤**에 하므로, 가드가 도는
+#   시점의 체크아웃이 옛 판이면 lib 가 없다.
+#   ⇒ source 실패를 **명시적으로** 차단한다(안전망이 없으면 켜지 않는다).
+if ! . "$(dirname "${BASH_SOURCE[0]}")/lib/assert-a1-host.sh"; then
+  echo "★중단 — 가드 라이브러리(lib/assert-a1-host.sh)를 읽지 못했습니다." >&2
+  echo "  체크아웃이 불완전합니다. 이 상태로 진행하면 「경로 오류」로 오진하게 됩니다." >&2
+  exit 12
+fi
+assert_a1_host "$REPO" ""
 cd "$COMPOSE_DIR" || { echo "!! cd 실패: $COMPOSE_DIR"; exit 1; }
 report_assets || exit 1
 

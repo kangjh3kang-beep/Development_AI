@@ -80,6 +80,29 @@ describe("SatongMapShell 스모크", () => {
     ).toBeInTheDocument();
     expect(screen.getByTestId("dynamic-map-stub")).toBeInTheDocument();
   });
+
+  /**
+   * ★건축개요 진입점의 **실제 계약**은 「비활성」이 아니라 **「없다」**.
+   *
+   * 2026-09-12 · 적대 리뷰: 종전 소스에 `disabled={selectedParcels.length === 0}` 가 있었고
+   * 주석은 *"필지 0개면 비활성"* 이라 설명했으나, 버튼은 `selectedParcels.length > 0` 블록
+   * **안**이라 그 상태가 **원리적으로 도달 불가**였다(계획서가 그것을 「잠금」으로 선언했지만
+   * **대조군 자체를 만들 수 없어** 락을 쓸 수도 없었다). 죽은 가드를 지우고 참인 명제를 잠근다.
+   * ★여기에 두는 이유 — 이 파일이 **이미 이 셸을 렌더하는 하네스**를 갖고 있다(§29 형제 훑기).
+   *   별도 파일에 목을 새로 세우면 같은 하네스가 두 벌이 되고 한쪽만 낡는다.
+   */
+  it("★건축개요 진입점은 필지를 고르기 전에는 **없다**(비활성이 아니라 부재)", () => {
+    render(<SatongMapShell locale="ko" />);
+    expect(screen.queryByTestId("open-building-overview")).toBeNull();
+    // 공허 진리 방지 — 아무것도 안 그려서 「없다」가 참인 게 아니어야 한다.
+    expect(screen.getByTestId("dynamic-map-stub")).toBeInTheDocument();
+  });
+
+  // ★부채를 **초록 안에** 남긴다(커밋 메시지에만 적으면 드러나지 않는다 · §B-13).
+  it.todo(
+    "★필지를 고른 상태에서 진입점이 보이고 모달이 열린다 — 이 하네스는 지도 상호작용 없이 " +
+      "선택 상태를 만들 수 없다. 세션 시드(satong_map_selection)로 여는 경로를 만든 뒤 상환한다.",
+  );
 });
 
 // ── UX 트랙 B R2(리뷰어 LOW): B4 접힘·B1 h2 강등 무회귀망 ──
