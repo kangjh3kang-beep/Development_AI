@@ -272,11 +272,17 @@ A(`exit 12` 단독) `::VERDICT=SURVIVED` ↔ B(둘 동시) `::VERDICT=CAUGHT`.
 `tests/unit` 은 로컬 venv 의존성 부족으로 **양쪽 다 수집오류 21건**이라 제외했다
 (`--continue-on-collection-errors` 로 전수를 돌리면 절대값이 커지지만 **델타는 같다**).
 ***절대값을 인용할 때는 「어느 명령으로 쟀는지」를 같이 적어야 한다.***
+★**sha 는 리베이스마다 썩는다** — 값을 물려받지 말고 다시 재라(양측 같은 명령으로):
+
+    git -C <base워크트리> checkout --detach origin/main
+    (각 트리에서) cd propai-platform && python -m pytest tests/ --ignore=tests/unit -q --no-header
+
+★리베이스를 네 번 했고 **델타는 매번 같았다**(`+54 / +4`). 변한 것은 절대값이 아니라 **base sha** 뿐이다.
 
 | | passed | skipped | xfailed | rc |
 |---|---|---|---|---|
-| base `ce5acc502`(★리베이스마다 **재측정**) | 269 | 25 | 6 | 0 |
-| 이 브랜치 `69e78a0c1` | **323** | 25 | **10** | 0 |
+| base `89fa2da46`(★리베이스마다 **재측정**) | 269 | 25 | 6 | 0 |
+| 이 브랜치 `b22f5b5a4` | **323** | 25 | **10** | 0 |
 
 **+54 passed · +4 xfailed = 추가한 락 58건과 정확히 일치**(회귀 0 · 단독 실행도 `54 passed, 4 xfailed`).
 ★리베이스로 base 가 움직일 때마다 **기준선을 다시 쟀다** — 움직인 base 로 «정확히 일치»를
