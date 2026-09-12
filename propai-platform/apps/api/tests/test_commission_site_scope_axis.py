@@ -124,7 +124,8 @@ import pytest  # noqa: E402
 #   ★**skip 이 아니라 이유를 남긴다** — 조용한 skip 은 「돌았는데 통과」와 구별되지 않는다.
 _NEEDS_311 = pytest.mark.skipif(
     sys.version_info < (3, 11),
-    reason="extension.py 가 datetime.UTC(3.11+)를 임포트한다 — CI(3.12)에서 실행된다",
+    reason="extension.py 가 datetime.UTC(3.11+)를 임포트한다 — CI(3.12)에서 실행된다. "
+           "★로컬에서 돌리려면 3.12 venv 를 쓴다: /home/kangjh3kang/.venvs/propai312/bin/python -m pytest <이 파일> (propai312 · GDAL 불필요).",
 )
 
 

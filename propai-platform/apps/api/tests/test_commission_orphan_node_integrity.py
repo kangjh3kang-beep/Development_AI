@@ -315,6 +315,7 @@ async def test_commissionable_chain_distinguishes_its_two_failures() -> None:
     reason="★이 저장소는 개발 환경(3.10)에서 **파싱조차 안 된다** — `app/crud/base.py` 가 3.11+ 문법. "
            "`datetime.UTC` 셰임으로 우회를 시도했으나 SyntaxError 라 원리적으로 불가. "
            "⇒ 이 락은 **CI(3.12)에서 처음 실행된다**(로컬 미실행 = 부채, 계획서 §5 에 명시). "
+           "★로컬에서 돌리려면 3.12 venv 를 쓴다: /home/kangjh3kang/.venvs/propai312/bin/python -m pytest <이 파일> (propai312 · GDAL 불필요). "
            "같은 축을 임포트 없이 보는 `test_router_wiring_is_declared_in_source` 는 로컬에서 돌고, "
            "그쪽으로 생존 3건이 CAUGHT 로 뒤집히는 것을 실측했다.",
 )
@@ -656,7 +657,8 @@ def test_hierarchy_table_is_defined_exactly_once() -> None:
     sys.version_info < (3, 11),
     reason="라우터 모듈이 `datetime.UTC`(3.11+)를 쓰는 의존을 끌고 온다 — CI(3.12)에서 실행된다. "
            "★위 `test_hierarchy_table_is_defined_exactly_once` 가 임포트 없이 같은 축을 잠그므로 "
-           "이 스킵이 무잠금을 뜻하지 않는다.",
+           "이 스킵이 무잠금을 뜻하지 않는다. "
+           "★로컬에서 돌리려면 3.12 venv 를 쓴다: /home/kangjh3kang/.venvs/propai312/bin/python -m pytest <이 파일> (propai312 · GDAL 불필요).",
 )
 async def test_router_shares_the_service_hierarchy_object() -> None:
     """★**동일성 락** — 라우터가 보는 표가 서비스 층의 **바로 그 객체**인가(사본이 아닌가).
