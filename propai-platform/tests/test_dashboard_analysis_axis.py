@@ -449,3 +449,143 @@ def test_no_arg_run_is_not_the_library_gate():
     r = subprocess.run(["bash", "-c", f"timeout 25 bash '{SCRIPT}' 2>&1 | head -1"],
                        cwd=REPO, capture_output=True, text=True)
     assert "통합자 계기판" in r.stdout, repr(r.stdout[:200])
+
+
+#: ★★**판정식 SSOT** — 프로덕션 락과 탐지 락이 **같은 것**을 써야 한다.
+#:
+#:   ★변이 실측(2026-09-12 R2b): 탐지 락 안에 같은 정규식을 **손으로 복사**해 뒀더니
+#:     프로덕션 쪽(:527)만 약화해도 **SURVIVED** 였다(둘 다 약화해야 CAUGHT).
+#:     ***나는 「사본이 갈리면 이 락이 장식이 된다」를 그 함수의 독스트링에 적고,
+#:       같은 함수 안에서 사본을 만들었다.*** 적어 두는 것과 다음 줄에 지키는 것은 다른 축이다.
+#:   ⇒ 한 곳에서 만들고 **양쪽이 호출**한다. 이걸 약화하면 **두 락이 함께** 빨개진다.
+def _astate_assign_re(value: str | None = None):
+    """셸의 `ASTATE=` **대입**을 잡는 정규식. `value` 를 주면 그 값까지 결속한다.
+
+    ★`echo '…'` 같은 **표시 문구**는 계약이 아니라 대입만 본다(줄 시작 또는 `;`/`&`/`|` 뒤).
+    ★따옴표는 `'` 와 `"` 를 **둘 다** 받는다 — 리팩토링이 계약을 안 바꾸면 빨개지면 안 된다.
+    """
+    import re as _re
+    body = _re.escape(value) if value is not None else r"[^\'\"]*"
+    return _re.compile(r"""(?:^|[;&|]\s*)ASTATE=(['"])""" + body + r"\1", _re.M)
+
+
+# ── ⑧ ★셸 리터럴 ↔ 파이썬 상수 **계약**(독립 리뷰 2회가 각각 REQUEST CHANGES 를 냈다) ────
+#    동료 세션(sid=e739d2a9)이 자기 PR 에서 찾은 형태를 제 코드에 대 보니 **같은 구멍**이었다:
+#      *「락이 전부 **심볼**을 참조하면 값을 바꿔도 **양쪽이 함께 움직여 원리적으로 판별 불가**」*
+#    ★**변이로 확인했다**: `ASTATE_MISSING = "(필드없음)"` → `"(no-field)"` 로 바꿔도 **SURVIVED**.
+#      리터럴 입력(`("(필드없음)", …)`)조차 못 잡는다 — 값이 바뀌면 그 입력은 **폴백으로 떨어지는데
+#      폴백도 `unknown`** 이라 kind 가 같기 때문이다. ***같은 답을 내는 두 경로는 서로를 가리지 못한다.***
+#
+#    ★★R2 — **초판 락이 두 리뷰에서 각각 뚫렸다.** 둘 다 이 PR 이 고치겠다고 선언한 클래스였다:
+#      ① 주석은 배제했는데 **문자열은 안 배제**했다. 셸 리터럴을 바꾸고 `echo '…(필드없음)…'` 한 줄만
+#         남기면 **SURVIVED**(계약은 깨져 있는데 초록). ★이 스크립트는 상태 문구를 찍는 것이 본업이라
+#         안내문 추가는 **정상 변경**이다 — 억지 예가 아니다.
+#      ② 「0건」 단언에 **대조군이 없었다.** 판정기를 `code = []` 로 **파괴해도 SURVIVED**.
+#         같은 변이에 형제 락은 **CAUGHT** — 갈라 준 것은 오직 **대조군의 유무**였다.
+#      ③ 형태 결속이 과했다: `ASTATE="{값}"` 정확 형태라 `ASTATE=\'…\'`·`${X:-"…"}` 로 리팩토링하면
+#         **계약은 그대로인데 빨개진다**(위양성).
+#    ⇒ 처방: **정본 `_scan_guard` 를 쓴다**(사본 금지). `assert_absent` 는 `positive_control`·`reason` 이
+#      **필수 키워드 인자**라 ②가 **구조적으로 재발 불가**하고, 대조군 파괴는 `ScannerDeadError`,
+#      진짜 위반은 `AssertionError` 로 **갈라서** 던진다.
+#    ★그리고 **면역을 넓게 주장하지 않는다**: `code_lines()` 는 **줄 주석만** 걷어낸다(정본 독스트링 명문).
+#      후행 주석·히어독·문자열은 **여전히 남는다** — 그래서 값 결속을 **대입 모양**으로 좁힌다.
+def test_shell_literal_and_python_constant_are_one_contract():
+    """★셸의 **대입**과 프로브의 상수가 같은 값이어야 한다(둘 다 소스에서 파생).
+
+    ★`echo '…'` 같은 **표시 문구**는 계약이 아니다 — 대입만 본다.
+      그래서 패턴을 «줄 시작/구분자 뒤의 `ASTATE=`» 로 좁히고, 따옴표는 **둘 다** 받는다
+      (리팩토링 위양성 방지 · 리뷰 ③).
+    """
+    import re as _re
+
+    # ★형제 관례를 따른다 — `tests._scan_guard` **패키지 임포트**
+    #   (`test_coord_summary_contract.py:32` · `test_deploy_workflow_cannot_deadlock.py:61`)
+    from tests import _scan_guard as sg   # ★정본을 쓴다(사본 금지 — 한계가 갈린다)
+
+    probe = PROBE.read_text(encoding="utf-8")
+    m = _re.search(r'^ASTATE_MISSING\s*=\s*"([^"]+)"', probe, _re.M)
+    assert m, "★ASTATE_MISSING 선언을 못 찾았다 — 조회기가 죽었다(이름이 바뀌었나)"
+    py_value = m.group(1)
+
+    dash_code = sg.code_lines(SCRIPT.read_text(encoding="utf-8"))
+    # 대입만 본다: 줄 시작 또는 `;`/`&&`/`||`/`&` 뒤 · 따옴표는 ' 와 " 둘 다
+    values = [m.group(0).split("=", 1)[1][1:-1] for m in _astate_assign_re().finditer(dash_code)]
+    assert values, (
+        "★셸에서 `ASTATE=` **대입**을 하나도 못 찾았다 — 조회기 사망(패턴/파일 확인).\n"
+        + "\n".join(ln for ln in dash_code.splitlines() if "ASTATE" in ln)[:400]
+    )
+    assert py_value in values, (
+        f"★셸의 ASTATE 대입값 {values!r} 에 프로브 상수 {py_value!r} 가 없다 — "
+        "값이 갈리면 «필드 없음」이 전용 사유를 잃고 폴백으로 **조용히 강등**된다"
+    )
+
+
+def test_absent_constant_is_not_silently_shadowed():
+    """★형제 `ASTATE_ABSENT` 는 **프로브 안에서만** 쓰인다 — 셸에 새면 그것도 계약이 된다.
+
+    ★부재 단언은 **대조군 없이 하지 않는다**(리뷰 ②). 정본 `assert_absent` 는
+      `positive_control`·`reason` 이 **필수 키워드**라 대조군 없는 호출이 **문법적으로 불가능**하고,
+      **대조군 파괴는 `ScannerDeadError`**, 진짜 위반은 `AssertionError` 로 갈라 던진다.
+    ★한계(정직): `code_lines()` 는 **줄 주석만** 걷어낸다 — 후행 주석·히어독·문자열은 남는다.
+      그래서 여기서도 **대입 모양**으로 좁혀 그 잔여를 줄인다.
+    """
+    import re as _re
+
+    from tests import _scan_guard as sg
+
+    probe = PROBE.read_text(encoding="utf-8")
+    m = _re.search(r'^ASTATE_ABSENT\s*=\s*"([^"]+)"', probe, _re.M)
+    assert m, "★ASTATE_ABSENT 선언을 못 찾았다 — 조회기가 죽었다"
+    absent_value = m.group(1)
+
+    dash_code = sg.code_lines(SCRIPT.read_text(encoding="utf-8"))
+    sg.assert_absent(
+        dash_code,
+        pattern=_astate_assign_re(absent_value),
+        # ★대조군 — 셸이 **실제로 하는** 대입. 이게 0건이면 조회기가 죽은 것이다.
+        positive_control=_astate_assign_re(),
+        reason=(f"★셸이 {absent_value!r} 를 직접 대입하기 시작했다 — 그러면 이것도 계약이므로 "
+                "`test_shell_literal_and_python_constant_are_one_contract` 와 같은 락이 필요하다"),
+        where="integrator_dashboard.sh",
+    )
+
+def test_the_absence_guard_actually_detects_a_violation():
+    """★★**탐지 축** — 부재 단언은 「위반이 있으면 정말 터지는가」를 따로 잠가야 한다.
+
+    ★변이 실측(2026-09-12 R2): `assert_absent` 의 **패턴만** 매칭 0 짜리로 약화하면
+      **SURVIVED** 였다. `positive_control` 은 «조회기가 살아 있나」를 보지
+      «내 패턴이 그 위반을 집는가」를 보지 **않는다** — 둘은 다른 축이다.
+      ***특이도(위반 0)만 있고 탐지(위반이 있으면 터진다)가 없으면, 패턴이 죽어도 초록이다.***
+
+    ⇒ **합성 위반**을 만들어 가드가 실제로 터지는지 태운다(저장소 §가드 3축: 탐지·특이도·배선).
+    """
+    import re as _re
+
+    from tests import _scan_guard as sg
+
+    probe = PROBE.read_text(encoding="utf-8")
+    absent_value = _re.search(r'^ASTATE_ABSENT\s*=\s*"([^"]+)"', probe, _re.M).group(1)
+
+    def _guard(text: str):
+        """프로덕션 락과 **같은 패턴**을 쓴다 — 사본이 갈리면 이 락이 장식이 된다."""
+        return sg.assert_absent(
+            sg.code_lines(text),
+            # ★★**사본을 만들지 않는다** — 프로덕션 락과 **같은 함수**를 부른다.
+            #   사본이면 프로덕션 쪽만 약화해도 이 락이 초록이다(변이로 실측했다).
+            pattern=_astate_assign_re(absent_value),
+            positive_control=_astate_assign_re(),
+            reason="합성 탐지 테스트",
+        )
+
+    # ① 위반이 있으면 **AssertionError** 로 터진다(탐지)
+    violating = f'ASTATE="ok"\nASTATE="{absent_value}"\n'
+    with pytest.raises(AssertionError) as ei:
+        _guard(violating)
+    assert not isinstance(ei.value, sg.ScannerDeadError), "★위반인데 「조회기 사망」으로 던졌다"
+
+    # ② 위반이 없으면 **통과**한다(특이도 — 위양성도 결함이다)
+    _guard('ASTATE="(필드없음)"\nASTATE="starved"\n')
+
+    # ③ ★조회기가 죽으면 **다른 예외**로 갈라 던진다(0 과 뭉치지 않는다)
+    with pytest.raises(sg.ScannerDeadError):
+        _guard('echo "대입이 하나도 없다"\n')
