@@ -145,9 +145,24 @@ describe("★신고③ — 팝업이 「무엇의 거래인지」 말한다", ()
       expect(sig, "기본값이 붙으면 호출부 누락이 tsc 를 통과한다").not.toMatch(/marketType[^,)]*=\s*undefined/);
     });
 
-    it("★대조군 — 호출부가 유형을 **실제로 넘긴다**", () => {
+    it("★팝업 조립부가 유형을 **entry 에서** 넘긴다(effect 호출부 아님 — 이름을 정직하게)", () => {
+      // ★★2026-09-09 R2 정정 — 이 락의 이름은 «호출부»였는데, 리팩토링 후 이 자리는
+      //   **`buildMarketMarker` 함수 본문 안**이다. 진짜 effect 호출부(`:3029`)는 이 락의
+      //   **시야 밖**이고, 그쪽은 이제 `SatongMultiMap.marketEffectWiring.test.tsx` 가
+      //   **DOM 으로** 태운다. ***이름과 명제가 어긋나면 다음 사람이 덮였다고 오독한다.***
+      // ★★2026-09-09 정정 — 이 락이 호출 모양을 **리터럴**(`marketPopupHtml(item, kind, type)`)로
+      //   봤는데, 마커 생성이 `buildMarketMarker` 로 추출되면서 **깨졌다.**
+      //   계약(«호출부가 유형을 실제로 넘긴다»)은 **그대로**이므로 ***깨진 쪽은 락이다*** —
+      //   코드를 되돌리지 않고 락을 고친다(볼트 `2026-09-03_락이_리팩토링에_깨지면…` 그대로).
+      // ★그리고 **모양이 아니라 명제**로 좁힌다: 3번째 인자가 **entry 에서 온 유형**이어야 한다.
       const src = scan("components/map/SatongMultiMap.tsx");
-      expect(src).toContain("marketPopupHtml(item, kind, type)");
+      const i = src.indexOf("marketPopupHtml(item,");
+      expect(i, "팝업 호출부를 못 찾았다 — 조회기 사망").toBeGreaterThan(-1);
+      const call = src.slice(i, src.indexOf(")", i) + 1);
+      // ★양성 — 유형 인자가 실린다(어디서 오든 «entry 의 type» 이어야 한다).
+      expect(call, `호출부: ${call}`).toMatch(/marketPopupHtml\(item,\s*[\w.]+,\s*entry\.type\)/);
+      // ★음성 — 리터럴로 못 박지 않았다(그것이 #1018 이 잡은 「모든 마커가 아파트」다).
+      expect(call).not.toMatch(/marketPopupHtml\(item,\s*[\w.]+,\s*["'`]/);
     });
 
     it("★두 벌 어휘 방지 — 라벨을 **파생 맵**에서 얻는다(인라인 리터럴 맵 금지)", () => {
@@ -201,19 +216,19 @@ describe("★신고③ — 팝업이 「무엇의 거래인지」 말한다", ()
   });
 
   // ★부채를 초록 안에 남긴다(§C-13).
+  // ★★2026-09-09 — 여기 있던 `it.todo` 두 건을 **갱신**한다(#1024). 그대로 두면 다음 사람이
+  //   미수정으로 오독한다(§C-12) — 적대 리뷰가 그 방치를 지적했다.
+  //   ① «라벨 클릭이 필지 팝오버로 샌다» → **고쳤다**(#1024). 그리고 그때 적은
+  //      *"`bindSatongLabel` 은 **5개 레이어 공용**이라 별건"* 은 **거짓이었다** — 소비처는 **8곳**이다.
+  //   ② «Leaflet 목이 필요하다» → **틀렸다.** 목은 필요 없었다 — `leaflet` 이 의존성에 선언돼 있고
+  //      **jsdom 에서 그대로 돈다**(`lib/__tests__/satong-label-click.test.ts` 가 그 하네스를 쓴다).
+  //      ★남은 것은 「목이 없다」가 아니라 **「이 파일의 effect 를 그 하네스로 아직 안 태웠다」**이다.
   it.todo(
-    "★★신고의 나머지 절반 — **라벨 클릭이 필지 팝오버로 샌다**(적대 리뷰 MAJOR-5). " +
-      "`.satong-tooltip{pointer-events:none}`(globals.css) 이라 클릭이 **통과**해 지도로 떨어지고, " +
-      "`map.on(\"click\")` 이 `setClickMenu`(필지 선택)를 연다. 가드는 `readOnly` 뿐인데 " +
-      "SatongMapShell 은 그 prop 을 **안 넘긴다**(0건). ★코드 4단계는 실측 · **브라우저 미측정**. " +
-      "고치려면 `bindSatongLabel` 을 건드려야 하는데 그건 **5개 레이어 공용**이라 별건이다",
+    "`SatongMultiMap` 의 지도 effect 를 **진짜 Leaflet 하네스**로 태운다 — 배선 동일성 축" +
+      "(호출부에서 `const type = \"apt\"` 로 바꿔치기해도 초록)이 아직 무잠금이다. " +
+      "하네스는 이제 있다(#1024) — 목이 없어서가 아니라 아직 안 쓴 것이다",
   );
-  it.todo(
-    "★배선의 **동일성 축**이 무잠금(적대 리뷰 MAJOR-6) — 호출부에서 `const type = \"apt\"` 로 " +
-      "바꿔치기하면 **모든 마커가 「아파트」라고 말하는데** 2412건이 초록이다(SURVIVED 실측). " +
-      "tsc 가 잡는 것은 **누락(arity)** 뿐이다. 닫으려면 `SatongMultiMap` 용 **Leaflet 목**이 필요하다 " +
-      "— 세 PR 연속 같은 벽이다(#1012·#1017·#1018)",
-  );
+
   it.todo(
     "마커 **라벨**에도 유형을 넣는다 — 지금은 이름+가격뿐이라 팝업을 열어야만 유형을 안다. " +
       "라벨 버짓·겹침 규약(labelPlan)을 함께 봐야 해서 이 PR 범위 밖",
