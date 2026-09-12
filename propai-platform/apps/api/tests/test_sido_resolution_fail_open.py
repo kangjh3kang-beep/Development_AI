@@ -1951,13 +1951,18 @@ async def test_default_source_says_why_it_fell_back(monkeypatch) -> None:
     down = await desk_appraisal(address="서울특별시 강남구 1", area_sqm=500.0,
                                 official_price_per_sqm=1_000_000.0,
                                 monthly_rent_won=5_000_000, deposit_won=100_000_000)
-    inc = str((down.get("income") or {}).get("rationale") or "")
-    assert "R-ONE 미설정" in inc, inc
+    # ★★두 필드를 **각각** 본다(자기적용 변이 2026-09-12 — 종전엔 합쳐진 `rationale` 문자열을
+    #   단언해서, `cap_source` 만 죽이는 변이를 **`conv_source` 가 가려** SURVIVED 였다).
+    #   한 문자열에 두 값이 들어가면 그 단언은 **둘 중 하나만 살아 있어도 참**이다.
+    inc_d = down.get("income") or {}
+    assert "R-ONE 미설정" in str(inc_d.get("cap_rate_source") or ""), inc_d.get("cap_rate_source")
+    assert "R-ONE 미설정" in str(inc_d.get("deposit_conv_source") or ""), inc_d.get("deposit_conv_source")
 
     _patch_rone(monkeypatch, _many_months("서울", rate=0.5))
     _patch_statbl(monkeypatch, _many_months("서울", rate=0.5))
     up = await desk_appraisal(address="서울특별시 강남구 1", area_sqm=500.0,
                               official_price_per_sqm=1_000_000.0,
                               monthly_rent_won=5_000_000, deposit_won=100_000_000)
-    inc2 = str((up.get("income") or {}).get("rationale") or "")
-    assert "R-ONE 미설정" not in inc2, inc2
+    inc_u = up.get("income") or {}
+    assert "R-ONE 미설정" not in str(inc_u.get("cap_rate_source") or ""), inc_u.get("cap_rate_source")
+    assert "R-ONE 미설정" not in str(inc_u.get("deposit_conv_source") or ""), inc_u.get("deposit_conv_source")
