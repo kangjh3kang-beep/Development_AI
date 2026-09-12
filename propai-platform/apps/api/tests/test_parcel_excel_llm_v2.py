@@ -849,8 +849,16 @@ def test_template_example_rows_no_fake_area_injection():
     raw = pes.build_template_xlsx()
     out = asyncio.run(pes.ParcelExcelService().parse(raw, "template.xlsx", use_llm=False))
     assert not out.get("error")
-    for p in out["parcels"]:
-        assert p.get("area_sqm") not in (14959, 8500), "예시행의 옛 하드코딩 면적값이 재발하면 안 됨"
+    # ★2026-09-12 재조준 — 이 단언은 **공허 진리가 됐다.** 양식에서 예시행을 없애
+    #   `out["parcels"]` 가 **0건**이 되면서 for 문 본문이 **한 번도 실행되지 않았다**.
+    #   수(65 passed)는 그대로라 «회귀 0» 으로 보였다 — ***개수는 락의 생존을 증명하지 않는다.***
+    #   ⇒ 원래 지키려던 것(«예시행의 하드코딩 면적이 실제 필지로 새어 들어가지 않는다»)을
+    #     **더 강한 형태**로 바꾼다: 빈 양식에는 **필지 자체가 없다.**
+    assert out["parcels"] == [], (
+        f"빈 양식에서 필지가 생겼다 — 예시행이 되살아났다: {out['parcels'][:3]}"
+    )
+    # 그리고 예시행이 **있던 시절의 결함**은 신규 락이 두 모집단으로 지킨다
+    #   (`test_parcel_template_minimal_columns.py::test_blank_template_yields_zero_parcels…`).
 
 
 # ── ⑩ 빈/깨진 파일 — 정직 실패(크래시 없이 error) ────────────────────────
