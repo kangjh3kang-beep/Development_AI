@@ -40,15 +40,28 @@ class _Res:
 
 
 class _FakeDB:
-    """실행된 SQL 로 질의를 가른다 — 핸들러를 **실물로** 태우기 위한 최소 스텁."""
+    """실행된 SQL 로 질의를 가른다 — 핸들러를 **실물로** 태우기 위한 최소 스텁.
 
-    def __init__(self, actions=(), blocked=(), flags=()):
+    ★2026-09-12 독립 리뷰(MAJOR-1): 종전 스텁은 `params` 를 **받아 놓고 한 번도 안 봤고**,
+      행을 SELECT 목록과 **무관하게** 늘 같은 튜플로 돌려줬다. 그래서 **bind 값 축**과
+      **컬럼 순서 축**이 원리적으로 무잠금이었고, 독립 변이 **6건이 전부 생존**했다
+      (SELECT 순서 뒤집기 · `created_at` 삭제 · `at` 상수화 · `limit`→1 · `DESC`→`ASC` · `offset`→0).
+      ★그중 순서 뒤집기는 실 Postgres 에서 `/growth/heal-log` **전체가 500** 이 되는 변이다.
+      ⇒ 스텁이 **params 를 기록**하고 테스트가 그것을 단언한다. 「스텁도 계약이다.」
+    """
+
+    def __init__(self, actions=(), blocked=(), flags=(), reasons=()):
         self.actions, self.blocked, self.flags = list(actions), list(blocked), list(flags)
+        self.reasons = list(reasons)
         self.seen: list[str] = []
+        self.binds: list[dict] = []
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)
         self.seen.append(sql)
+        self.binds.append(dict(params or {}))
+        if "payload->>'reason'" in sql and "GROUP BY" in sql:
+            return _Res(rows=self.reasons)
         if "platform_settings" in sql:
             return _Res(rows=self.flags)
         if "heal_blocked" in sql:
@@ -116,17 +129,86 @@ async def test_null_payload_does_not_explode():
     assert out.blocked[0].reason is None and out.blocked[0].created_at == NOW
 
 
-@pytest.mark.asyncio
-async def test_blocked_query_selects_the_columns_it_reads():
-    """★스텁은 SELECT 목록을 무시한다 — 그래서 **질의 자체**를 본다.
+def _row_query(db) -> str:
+    q = [x for x in db.seen if "heal_blocked" in x and "COUNT(*)" not in x and "GROUP BY" not in x]
+    assert q, "blocked 행 질의가 없다"
+    return q[0]
 
-    (기계 변이 실증: SELECT 문자열을 바꿔도 스텁이 같은 튜플을 주므로 초록이었다.)
+
+def _select_clause(sql: str) -> str:
+    """★`created_at` 은 **ORDER BY 절에도** 있다 — 전체 문자열로 보면 SELECT 에서 지워도 참이다
+    (독립 리뷰 MINOR-1 이 변이로 실증). 그래서 SELECT…FROM 구간만 잘라서 본다."""
+    head = sql.upper().index("SELECT")
+    tail = sql.upper().index("FROM")
+    return sql[head:tail]
+
+
+@pytest.mark.asyncio
+async def test_blocked_query_selects_the_columns_it_reads_in_order():
+    """★읽는 열을 **순서까지** 단언한다.
+
+    `br[0]`=payload · `br[1]`=created_at 로 위치 인덱싱하므로, SELECT 순서가 뒤집히면
+    실 Postgres 에서 `bpl.get(...)` 이 datetime 을 받아 **AttributeError → 500** 이다.
+    신규 필드만 죽는 것이 아니라 **대시보드 기존 3필드가 함께** 죽는다.
     """
     db = _FakeDB(blocked=[BLOCKED_ROW])
     await _call(db)
-    q = [x for x in db.seen if "heal_blocked" in x and "COUNT(*)" not in x]
-    assert q, "blocked 행 질의가 없다"
-    assert "payload" in q[0] and "created_at" in q[0], "읽는 열을 SELECT 하지 않는다"
+    sel = _select_clause(_row_query(db))
+    assert "payload" in sel, "payload 를 SELECT 하지 않는다"
+    assert "created_at" in sel, "created_at 을 SELECT 하지 않는다(ORDER BY 절과 혼동 금지)"
+    assert sel.index("payload") < sel.index("created_at"), \
+        "SELECT 순서가 뒤집혔다 — br[0]/br[1] 위치 인덱싱과 어긋난다(실 DB 에서 500)"
+
+
+@pytest.mark.asyncio
+async def test_blocked_query_orders_newest_first():
+    db = _FakeDB(blocked=[BLOCKED_ROW])
+    await _call(db)
+    sql = " ".join(_row_query(db).split()).upper()
+    assert "ORDER BY CREATED_AT DESC" in sql, "최신순이 아니다 — 목록의 뜻이 바뀐다"
+
+
+@pytest.mark.asyncio
+async def test_filter_and_paging_bind_values_reach_the_query():
+    """★**bind 값**을 단언한다 — 종전 스텁은 `params` 를 버려서 이 축이 무잠금이었다."""
+    db = _FakeDB(blocked=[BLOCKED_ROW])
+    await _call(db, action_type="threshold_relax", since=NOW - timedelta(hours=1), limit=7, offset=3)
+    row_binds = [b for b, q in zip(db.binds, db.seen, strict=True)
+                 if "heal_blocked" in q and "COUNT(*)" not in q and "GROUP BY" not in q]
+    assert row_binds, "blocked 행 질의의 bind 를 못 봤다"
+    b = row_binds[0]
+    assert b.get("at") == "threshold_relax", f"action_type 이 bind 되지 않았다: {b}"
+    assert b.get("limit") == 7, f"limit 이 bind 되지 않았다: {b}"
+    assert b.get("offset") == 3, f"offset 이 bind 되지 않았다: {b}"
+    assert b.get("since") is not None, "since 가 bind 되지 않았다"
+
+
+@pytest.mark.asyncio
+async def test_limit_and_offset_are_not_the_same_population():
+    """★limit·offset 이 **서로 다른 값**으로 도달하는지(한 변수로 뭉개면 둘 다 무잠금)."""
+    db = _FakeDB(blocked=[BLOCKED_ROW])
+    await _call(db, limit=11, offset=5)
+    b = [x for x, q in zip(db.binds, db.seen, strict=True)
+         if "heal_blocked" in q and "COUNT(*)" not in q and "GROUP BY" not in q][0]
+    assert (b.get("limit"), b.get("offset")) == (11, 5)
+
+
+@pytest.mark.asyncio
+async def test_blocked_by_reason_does_not_merge_two_states():
+    """★★합산이 **저장소가 갈라 놓은 두 상태**를 뭉개지 않는가(독립 리뷰 MAJOR-2).
+
+    `healing_rules` 는 `CAP_BLOCK_REASONS`(기록: global_cap+trigger_cap)와
+    `ESCALATION_COUNT_REASONS`(판정: **trigger_cap 하나**)를 의도적으로 가른다.
+    `blocked_total` 만 내면 그 구별이 다시 사라진다 — 사유별 계수가 **서로 다른 수**여야 한다.
+    """
+    out = await _call(_FakeDB(
+        blocked=[BLOCKED_ROW, BLOCKED_ROW, BLOCKED_ROW],
+        reasons=[("global_cap", 2), ("trigger_cap", 1)],
+    ))
+    assert out.blocked_by_reason == {"global_cap": 2, "trigger_cap": 1}
+    assert out.blocked_by_reason["global_cap"] != out.blocked_by_reason["trigger_cap"], \
+        "두 사유가 같은 수를 냈다 — 픽스처가 두 상태를 안 가른다"
+    assert sum(out.blocked_by_reason.values()) == 3
 
 
 @pytest.mark.asyncio

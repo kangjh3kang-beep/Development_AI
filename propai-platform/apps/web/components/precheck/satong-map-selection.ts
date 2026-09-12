@@ -435,3 +435,46 @@ export function emptySelectionSiteAnalysisPatch(): Partial<SiteAnalysisData> {
     zoneMixed: false,
   };
 }
+
+// ── 건축개요(사용자가 손으로 친 값) 세션 미러 ────────────────────────────────
+/**
+ * ★사용자가 **손으로 친 값**은 화면 상태에만 두지 않는다.
+ *
+ * 실증(2026-09-12 · 적대 리뷰): `buildingOverview` 가 `useState` 에만 있어 참조가 3건
+ * (선언·writer·자기 되먹임)뿐이었다 — 대지면적·지상/지하 연면적·용도 구성을 전부 입력해도
+ * **새로고침 한 번에 소실**됐다. 저장소 §「유료·비가역 산출물 규율」 3번의 재현이다.
+ *
+ * ★이 키를 **셸 안에 숨기지 않고 이 모듈에 두는 이유** — `clearAllProjectData` 가 여기
+ * 상수를 임포트해 계정 전환 시 일괄 와이프한다. 셸에 숨기면 그 목록에서 빠져 **이전 계정의
+ * 건축개요가 잔존**한다(`SATONG_MAP_SELECTION_KEY` 가 과거에 정확히 그렇게 샌 전례가 있다).
+ * 잠금은 `lib/projectSync.wipeCoverage.test.ts` 가 소스에서 세션 키를 **전수 추출**해 본다.
+ */
+export const SATONG_BUILDING_OVERVIEW_KEY = "satong_building_overview";
+
+/** 저장 — `null` 이면 지운다(빈 객체를 남기면 「입력됨」 배지가 거짓말을 한다). */
+export function writeSatongBuildingOverview(overview: unknown | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (overview === null) window.sessionStorage.removeItem(SATONG_BUILDING_OVERVIEW_KEY);
+    else window.sessionStorage.setItem(SATONG_BUILDING_OVERVIEW_KEY, JSON.stringify(overview));
+  } catch {
+    /* 용량 초과·프라이빗 모드 — 저장 실패가 화면을 죽이지 않는다 */
+  }
+}
+
+/**
+ * 조회 — 손상된 값은 **null**(부분 복원 금지).
+ * ★`0` 을 채워 되살리지 않는다 — 「모름」이 유효값을 입으면 관측이 된다.
+ */
+export function readSatongBuildingOverview(): unknown | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(SATONG_BUILDING_OVERVIEW_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}

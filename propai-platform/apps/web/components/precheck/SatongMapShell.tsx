@@ -46,6 +46,9 @@ import { ApiClientError, apiClient, apiV1BaseUrl, hasAccessToken } from "@/lib/a
 import { formatArea, formatPercent, formatPercentPoint } from "@/lib/formatters"; // 면적·비율 표기 SSOT(비율=정수 반올림 금지·0과 미확보 구분)
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { AnalysisPipelineStepbar, type PipelineStep } from "@/components/common/AnalysisPipelineStepbar"; // UX 트랙 C4 — 엑셀 업로드 진행표시(기존 프리미티브 재사용)
+import { BuildingOverviewModal } from "@/components/building-overview/BuildingOverviewModal";
+import { deriveLandAreaIntake, describeSelectionArea } from "@/lib/building-overview-intake";
+import type { BuildingOverview } from "@/lib/building-overview";
 import { ContextHeader } from "@/components/common/ContextHeader"; // 집계 SSOT 단일표면(UX 트랙 B2)
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { DominantConstraintBanner } from "@/components/precheck/DominantConstraintBanner"; // W1 지배 제약 — 필지 상세 최상단
@@ -115,6 +118,8 @@ import {
   selectionToSiteAnalysisPatch,
   siteAnalysisToSelection,
   writeDominantConstraintCache,
+  readSatongBuildingOverview,
+  writeSatongBuildingOverview,
   writeSatongMapSelection,
   type SatongSelectionParcel,
 } from "./satong-map-selection";
@@ -851,6 +856,32 @@ export function SatongMapShell({
   const integrityNotice = useMemo(
     () => selectionIntegrityNotice(selectionIntegrity),
     [selectionIntegrity],
+  );
+
+  // ★건축개요 입력(2026-09-09) — 통합 필지에서 연다.
+  //   대지면적은 선택 필지 합계에서 자동 산입하되 **선택 무결성이 허락할 때만**이다.
+  //   위 주석(842행)이 적어 둔 사고 — 15.86km 떨어진 6필지가 「통합 5,781㎡」로 묶인 것 —
+  //   을 그대로 재현하지 않기 위해 `deriveLandAreaIntake` 를 경유한다.
+  const [overviewOpen, setOverviewOpen] = useState(false);
+  // ★세션 미러에서 **초기화 시점에** 되살린다 — effect 로 미루면 첫 렌더가 「미입력」을 그리고
+  //   그 사이 사용자가 다시 열면 입력값이 빈 폼으로 보인다.
+  //   ★lazy initializer 로 부른다(매 렌더 sessionStorage 를 읽지 않는다).
+  const [buildingOverview, setBuildingOverview] = useState<BuildingOverview | null>(
+    () => (readSatongBuildingOverview() as BuildingOverview | null) ?? null,
+  );
+  /**
+   * 저장 통로 — **상태와 세션 미러를 함께** 움직인다.
+   *
+   * ★한쪽만 쓰는 호출부가 생기면 그 순간 갈린다(이 파일이 선택 저장에서 정확히 그 문제를
+   *   겪고 `saveSelectionForOutputs` 하나로 강제한 전례가 있다 — R2b).
+   */
+  const commitBuildingOverview = useCallback((v: BuildingOverview | null) => {
+    setBuildingOverview(v);
+    writeSatongBuildingOverview(v);
+  }, []);
+  const landAreaIntake = useMemo(
+    () => deriveLandAreaIntake(selectedParcels.map((p) => p.areaSqm ?? null), selectionIntegrity),
+    [selectedParcels, selectionIntegrity],
   );
   // ★관측(2026-08-24) — 고지는 위에서 하지만 **빈도는 아무도 몰랐다.**
   //   빈도를 모르면 "이미 오염된 프로젝트를 정리할지"를 근거 없이 결정하게 된다.
@@ -1952,8 +1983,13 @@ export function SatongMapShell({
         updateSiteAnalysis(emptySelectionSiteAnalysisPatch(), { source: "user" });
       }
       saveSelectionForOutputs(parcels);
+      // ★선택이 비면 건축개요도 버린다 — 그 개요는 **그 선택의 대지면적**을 담고 있다.
+      //   남겨 두면 다음 선택에서 「입력됨」 배지가 남의 필지 값을 가리킨다(배지가 거짓말한다).
+      //   ★같은 통로에 붙이는 이유 — 삭제·전체취소 등 모든 경로가 여기를 지나므로
+      //     한 경로만 빠뜨리는 비대칭이 구조적으로 불가능하다(위 주석의 규율과 같다).
+      if (parcels.length === 0) commitBuildingOverview(null);
     },
-    [commitParcelsToContext, updateSiteAnalysis, saveSelectionForOutputs],
+    [commitParcelsToContext, updateSiteAnalysis, saveSelectionForOutputs, commitBuildingOverview],
   );
 
   const addParcels = useCallback(
@@ -3066,7 +3102,9 @@ export function SatongMapShell({
             </p>
             <p className="mt-0.5 truncate text-sm font-black text-[var(--text-primary)]">
               {selectedParcels.length > 0
-                ? `필지 선택 ${selectedParcels.length}건 · 합산 면적 ${formatArea(selectedTotalArea || null, 0)}`
+                ? // ★같은 화면이 **두 가지 서사**를 말하지 않게 — 모달과 **같은 게이트**를 쓴다.
+                  //   종전 이 줄은 무결성 검사 없이 「합산 면적」이라 단정했다(2026-08-23 사고의 형태).
+                  `필지 선택 ${selectedParcels.length}건 · ${describeSelectionArea(formatArea(selectedTotalArea || null, 0), landAreaIntake).label}`
                 : "지도에서 필지를 선택하면 여기에 요약이 표시됩니다."}
             </p>
           </div>
@@ -4202,6 +4240,31 @@ export function SatongMapShell({
               <p className="text-[11px] font-bold leading-4 text-[var(--text-hint)]">
                 완료(등록)·산출물 실행 시 &apos;{deriveProjectNameFromParcels(selectedParcels) ?? "새 프로젝트"}&apos; 프로젝트가 자동 생성됩니다.
               </p>
+              {/* ★건축개요 입력 진입점. 자동 산입 보류 사유는 모달이 보여 준다.
+                  ★★2026-09-12 — 종전엔 `disabled={selectedParcels.length === 0}` 가 붙어 있었고
+                    주석은 *"필지가 0개면 비활성"* 이라고 설명했다. **일어날 수 없는 일이다** —
+                    이 버튼은 바로 위 `selectedParcels.length > 0` 블록 **안**에 있어 0개일 때는
+                    애초에 렌더되지 않는다. 항상 `false` 인 죽은 가드였고, 계획서가 그것을
+                    「잠금」으로 선언했으나 **대조군 자체가 도달 불가**라 락을 쓸 수도 없었다.
+                    → 가드를 지우고 **렌더 조건이 곧 계약**임을 아래 락이 잡는다. */}
+              <button
+                type="button"
+                data-testid="open-building-overview"
+                onClick={() => setOverviewOpen(true)}
+                className="mt-2 min-h-11 justify-self-start rounded-lg border border-[var(--line)] px-3 py-1.5 text-xs font-bold text-[var(--text-secondary)] disabled:opacity-40"
+              >
+                건축개요 입력{buildingOverview ? " (입력됨)" : ""}
+              </button>
+              <BuildingOverviewModal
+                open={overviewOpen}
+                intake={landAreaIntake}
+                initial={buildingOverview}
+                onSave={(v) => {
+                  commitBuildingOverview(v);
+                  setOverviewOpen(false);
+                }}
+                onCancel={() => setOverviewOpen(false)}
+              />
               <button
                 type="button"
                 onClick={handleCreateProjectNow}
