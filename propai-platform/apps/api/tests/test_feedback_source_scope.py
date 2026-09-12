@@ -123,7 +123,9 @@ def test_excluded_targets_are_pinned_to_literals() -> None:
     정확히 그 구멍을 짚었다(코드 문자열 변경 3건 생존 → 리터럴 핀 후 CAUGHT).
     """
     assert FS.AUTO_EFFECTOR_EXCLUDED_TARGETS == ("analysis",)
-    assert FS.FEEDBACK_TARGET_TYPES == frozenset({"llm_output", "analysis", "recommendation"})
+    # ★`sorted(...)` 로 비교한다 — `frozenset({...})` 과의 직접 비교는 ruff SIM300 에 걸리고,
+    #   정렬 리스트가 **읽기도 더 쉽다**(어휘 전수가 한눈에 보인다).
+    assert sorted(FS.FEEDBACK_TARGET_TYPES) == ["analysis", "llm_output", "recommendation"]
 
 
 def test_excluded_targets_are_within_the_closed_vocabulary() -> None:
