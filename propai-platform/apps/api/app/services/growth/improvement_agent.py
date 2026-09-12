@@ -196,7 +196,13 @@ async def _store_proposal(db, insight_id: str | None, proposal: dict[str, Any]) 
     # phase_f 승인게이팅 패턴: confidence + requires_approval 메타 부착.
     artifact = {
         "source_insight_id": insight_id,
-        "requires_approval": True,   # ★사람 승인 필수(자동 머지 절대 금지).
+        # ★★2026-09-12 — **이 메타는 라벨이지 게이트가 아니다.** 종전 주석은 «사람 승인 필수
+        #   (자동 머지 절대 금지)» 였는데, 그 말을 **강제하는 소비처가 0** 이다(아래 락이 전수로 잠근다).
+        #   읽는 곳 셋은 전부 **게이트가 아니다**: `ledger_adapters.py:69`(원장으로 중계) ·
+        #   `growth_pr_task.py:176`(PR 본문 **문자열**) · `services/domain_agents_service.py`(phase_f —
+        #   **다른 하위체계의 자기 변수**). 위 :196 주석이 phase_f 패턴을 «차용» 한다고 적는데,
+        #   **차용한 것은 라벨이고 게이트는 차용하지 않았다.**
+        "requires_approval": True,   # 라벨(사람이 읽는 표시) — 강제하는 소비처 없음. 아래 xfail 참조.
         "auto_merge": False,
         "confidence": float(proposal.get("confidence") or 0.0),
         "affected_files": files,
@@ -394,7 +400,12 @@ async def _register_candidate(db, service: str, label: str,
     existing.append(label)
     value = {
         "candidates": existing,
-        # ★active=False: 등록만, 자동 채택 금지(설계 §6.2). 채택은 별도 안전장치.
+        # ★★2026-09-12 — 이 플래그도 **읽히지 않는다.** 채택 경로가 후보를 가져오는
+        #   `dynamic_config.get_prompt_candidates` 는 `val["candidates"]` 만 보고 `active` 를
+        #   **0회** 언급한다(대조군: 같은 파일이 다른 키는 읽는다). 그리고 **아무도 True 로
+        #   만들지 않는다**(전수 조회). 즉 «등록만, 자동 채택 금지» 는 **이 플래그가 보장하지 않는다.**
+        #   실제 채택 조건은 «후보 레이블 멤버십 + samples >= PROMPT_AB_MIN_SAMPLES» 뿐이다.
+        #   ★지금 발화하지 않는 이유는 **표본 부족**이지 게이트가 아니다 — 트래픽이 늘면 발화한다.
         "active": False,
         "last_proposal": {
             "label": label,
@@ -415,7 +426,10 @@ async def _store_prompt_candidate(db, service: str, label: str,
     artifact = {
         "service": service,
         "candidate_label": label,
-        "requires_approval": True,   # ★사람 승인/안전장치 하에서만 채택(자동 적용 금지).
+        # ★★같은 이유로 문구를 낮춘다(위 참조). 그리고 이 자리의 **실제** 채택 경로는
+        #   `feature_flags.apply_prompt_ab` 인데 그 모듈은 `requires_approval` 을 **0회** 언급한다
+        #   (대조군: 같은 모듈이 후보 메타의 `trigger_key`·`error_pct`·`stats_meta` 는 읽는다).
+        "requires_approval": True,   # 라벨 — 채택 경로가 읽지 않는다. 아래 xfail 참조.
         "auto_adopt": False,
         "confidence": float(proposal.get("confidence") or 0.0),
         "proposal": proposal,
