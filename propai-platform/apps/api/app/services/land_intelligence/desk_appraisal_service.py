@@ -506,6 +506,22 @@ async def desk_appraisal(
         if (market_stats.get("jeonse_conversion_rate") or {}).get("rate"):
             deposit_conv = market_stats["jeonse_conversion_rate"]["rate"]
             conv_source = "R-ONE"
+        # ★★독립 리뷰 R9 LOW-1(2026-09-09): 거부 사유가 **`기본` 한 글자로 뭉개졌다** —
+        #   «R-ONE 통계표 미설정» 과 «조회는 됐는데 값을 채택 못 함»(항목 축 혼재 거부 ·
+        #   카디널리티 거부 · sane 범위 이탈)이 사용자·조사자 양쪽에서 **구별 불가**였다.
+        #   사유는 `logger.info` 로 서버에만 남아 화면·제출본 어디에도 없었다.
+        #   ⇒ 반환 타입을 바꾸지 않고 **가를 수 있는 만큼** 가른다(모름을 한 값으로 뭉개지 않는다).
+        # ★★축 교정(독립 리뷰 R10 · 2026-09-12): 종전엔 `rone_available` 로 갈랐는데 그것은
+        #   **다섯 통계의 OR** 이다. 전월세전환율 통계표가 **미설정**이어도 지가변동률만 살아
+        #   있으면 사유가 «값 채택 불가»(= 조회해서 거부했다)로 찍혔다 — **거짓 사유**다.
+        #   ⇒ 축을 **그 통계표 단위**로 내린다.
+        from app.services.land_intelligence.reb_statistics_service import _statbl
+        if cap_source == "기본":
+            cap_source = ("기본(R-ONE 값 채택 불가)" if _statbl("commercial_yield")
+                          else "기본(R-ONE 미설정)")
+        if conv_source == "기본":
+            conv_source = ("기본(R-ONE 값 채택 불가)" if _statbl("jeonse_conv")
+                           else "기본(R-ONE 미설정)")
     except Exception:  # noqa: BLE001
         market_stats = {}
 
@@ -789,6 +805,16 @@ async def desk_appraisal(
         "base_year": base_year,
         "time_adjust": round(time_adjust, 4),
         "time_adjust_basis": ta["rationale"],
+        # ★★독립 리뷰 R6 MEDIUM-2(2026-09-08): 같은 «대체 scope» 신호에 두 모듈이 **반대로**
+        #   반응한다 — `market_precision.resolve_time_adjustment` 는 요청 지역 값이 아니면
+        #   **적용하지 않고** UNKNOWN 을 낸다. 여기는 **적용하고 고지한다**.
+        #   ★이것은 실수가 아니라 **다른 계약**이고, 그 사실이 코드에 안 적혀 있던 것이 결함이었다:
+        #     · `market_precision` = Zero-Trust 사실 파이프라인 — «관측 아니면 값 없음»(무날조)
+        #     · `desk_appraisal`   = **참고용 추정** — 값을 내되 그 한계를 **표면까지** 싣는다
+        #       (`disclaimer` 가 감정평가가 아님을 명시하고, `time_adjust_basis` 가 대체 범위를 말한다)
+        #   ⇒ 어느 쪽인지 기계가 읽을 수 있게 `scope` 를 **여기서도 싣는다**. 종전에는 이 PR 이
+        #     새로 만든 `ta["scope"]` 를 여기서 **읽지 않아** 정직성이 산문 한 줄에만 실렸다.
+        "time_adjust_scope": ta.get("scope"),
         "market_stats": market_stats,   # R-ONE 부동산통계(시점수정·cap rate·전환율) 출처 투명화
         "disclaimer": "본 추정치는 「감정평가 및 감정평가사에 관한 법률」상 감정평가가 아니며, "
                       "공시지가·실거래 등 공개데이터에 기반한 참고용 예상 시세 추정입니다. "
