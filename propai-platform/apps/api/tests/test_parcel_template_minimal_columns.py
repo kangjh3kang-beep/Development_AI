@@ -96,6 +96,9 @@ def test_data_sheet_has_no_example_rows():
     """예시행을 데이터 시트에 두지 않는다 — 안 지우고 올리면 없는 필지가 등록된다."""
     ws = _sheet(pes.build_template_xlsx(), "토지조서")
     assert ws.max_row == 1, f"머리글 말고 {ws.max_row - 1}행이 더 있다"
+    # ★틀 고정 — 산문이 아니라 **산출물의 동작**이다(수백 행을 채울 때 머리글이 사라지면
+    #   어느 칸이 주소인지 모른다). 손 변이 F 에서 **SURVIVED** 였다(도구가 이 줄을 안 골랐다).
+    assert ws.freeze_panes == "A2", f"머리글 틀 고정이 없다: {ws.freeze_panes!r}"
 
 
 def test_guide_sheet_shows_the_example_instead():

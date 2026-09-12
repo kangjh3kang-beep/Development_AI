@@ -634,7 +634,17 @@ def _role_format_ok(role: str, val: str, source_cell: str) -> bool:
 
 
 def build_template_xlsx() -> bytes:
-    """토지조서 다필지 업로드용 표준 엑셀 양식(예시행 + 안내 시트) 생성."""
+    """토지조서 다필지 업로드용 표준 엑셀 양식 생성 — **주소·지번 두 칸만** 받는다.
+
+    ★**기계 변이 감사의 공백을 여기 적는다**(2026-09-12 실측). `scripts/mutate_changed.py` 는
+      **diff 의 「바뀐 줄」만** 변이 대상으로 고른다. 이 변경의 본체는 **삭제**였고
+      (열 10개 제거 · 예시행 제거 · `+46/-29`), 남은 두 열 `("소재지(주소)",…)`·`("지번","224")`
+      은 **원래 있던 줄이라 diff 에 `+` 도 `-` 도 없다.**
+      ⇒ 기계 변이 **25건이 전부 안내문 산문**에 떨어졌고 **정작 중요한 두 자리에는 0건**이었다.
+      ***「삭제로 이뤄진 변경」은 기계 감사의 분모에 들어오지 않는다*** — 이 파일을 고치는
+      다음 사람은 «도구를 돌렸다»를 보증으로 읽지 말고 **손 변이로 그 자리를 직접 태워라**
+      (`test_parcel_template_minimal_columns.py` 가 그 자리들을 잠그고 있다).
+    """
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
 
