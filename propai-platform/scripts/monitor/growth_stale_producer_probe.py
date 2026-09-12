@@ -45,13 +45,22 @@ def is_stale_stack(spans):
 ANALYSIS_SETTING_KEY = "growth_analysis"
 #: 「돌았다」만 말하는 워터마크(TTL 없음). `state` 와 **다른 명제**라 둘 다 읽는다.
 ANALYZE_WATERMARK_KEY = "growth_last_run.analyze"
+#: 스케줄 스냅샷. ★`schedule.py` 의 `SCHEDULE_SNAPSHOT_KEY` 와 **같은 값**이다.
+#:   잡별 «경과/주기» 를 싣는다 — 이것이 없으면 **「7일 전」이 정상인지 장애인지 못 가른다**
+#:   (실측 2026-09-12: `learn` 9,471분 경과가 **정상**이었고 나는 장애로 의심했다).
+SCHEDULE_SETTING_KEY = "growth_schedule"
 
 #: 프로브가 이 필드를 **아예 안 준다**(옛 사본)는 것을 나타내는 표식.
 #: ★`"idle"` 이나 `""` 로 두면 «안 재 봤다»가 «축이 없다»로 읽힌다.
 ASTATE_MISSING = "(필드없음)"
-#: 설정 행 자체가 없다. ★analyze 주기 60분 · TTL 180분이라 **정상 동작 중에는
-#:   만료되지 않는다**(매 실행이 만료를 앞으로 민다). 행이 없으면 **3회 연속 미실행**이다.
-#:   이 산수는 `analyzer.py` 의 `_ANALYSIS_TTL_MIN` 주석이 근거다.
+#: 설정 행 자체가 없다. ★정상 동작 중에는 **매 실행이 만료를 앞으로 민다** — 그러므로
+#:   행 부재는 「유휴」가 아니라 **연속 미실행**이다.
+#:   ★★**횟수를 여기서 단정하지 않는다**(2026-09-12 정정). 종전엔 «TTL(180분) > 주기(60분)
+#:     이므로 3회» 라고 적었는데 그 **두 수가 손으로 복사**돼 있었다 — `schedule.py` 의
+#:     주기나 `analyzer.py` 의 TTL 이 바뀌면 **사용자에게 나가는 사유가 조용히 거짓**이 된다
+#:     (주기 60→90 이면 180/90=2 인데 문장은 여전히 «3회» 라고 말한다).
+#:     주기는 이제 스냅샷에서 **파생**하고, TTL 은 이 프로브가 읽을 수 없으므로
+#:     **횟수를 말하지 않는다** — 진단 못 하는 자리에서 진단하지 않는다.
 ASTATE_ABSENT = "(행없음)"
 
 
@@ -116,7 +125,7 @@ def parse_axes(aaxes):
 #:   상태 어휘를 새로 내보내려면 **소비처(계기판 표시·기계 판독)를 같은 커밋에** 만들어야 한다.
 
 
-def analysis_verdict(astate, insights_24h, aaxes=None):
+def analysis_verdict(astate, insights_24h, aaxes=None, analyze_period_min=None):
     """계기판 ③ 이 인사이트 24h 창 **0** 을 만났을 때 무엇이라 불러야 하는가.
 
     ★**순수 함수다** — DB 없이 태울 수 있고, 셸이 규칙을 다시 구현하지 않는다
@@ -139,8 +148,14 @@ def analysis_verdict(astate, insights_24h, aaxes=None):
     if astate == ASTATE_MISSING:
         return "unknown", "프로브에 분석상태 필드가 없다 — 컨테이너의 프로브가 옛 사본이다"
     if astate == ASTATE_ABSENT:
-        # ★행 부재를 「유휴」로 읽지 않는다. TTL 산수상 부재는 **3회 연속 미실행**이다.
-        return "obs", "분석상태 행이 없다 — TTL(180분) > 주기(60분) 이므로 **3회 연속 미실행**"
+        # ★행 부재를 「유휴」로 읽지 않는다 — 정상 동작 중엔 매 실행이 만료를 앞으로 민다.
+        #   ★**횟수는 말하지 않는다**: 그러려면 TTL 이 필요한데 이 프로브는 못 읽는다.
+        #     종전 문장의 `180`·`60` 은 **손으로 복사한 상수**였다(위 `ASTATE_ABSENT` 주석 참조).
+        per = "" if not analyze_period_min else " · analyze 주기 %s분" % analyze_period_min
+        return "obs", (
+            "분석상태 행이 없다 — 만료됐다는 뜻이고 정상 동작 중엔 그럴 수 없다"
+            "(연속 미실행%s · 횟수는 TTL 을 못 읽어 확정 불가)" % per
+        )
     if astate == "starved":
         # ★★`starved` 는 **두 사실을 덮는다**(독립 리뷰 2026-09-12 · 라이브 실측이 그 증거):
         #     axes = "fal 0/0 lat 0/0 pay 0/1 qua 0/0"

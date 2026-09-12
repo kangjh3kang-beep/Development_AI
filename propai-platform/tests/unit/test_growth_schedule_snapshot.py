@@ -135,3 +135,118 @@ async def test_publishing_does_not_change_the_due_verdict():
     due = await compute_due(None, fake, NOW)
     assert set(due) == set(JOB_SPECS)
     assert all(due.values()), f"99일 경과인데 발화하지 않는 잡이 있다: {due}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★기계 변이가 짚은 생존 5건을 닫는다 (2026-09-12 · 손 변이 5/5 CAUGHT **뒤에** 나온 것들)
+#   ***«N/N CAUGHT» 뒤에는 «그 N 을 누가 골랐나»가 온다*** — 위 다섯은 내가 골랐고,
+#   아래 다섯은 도구가 골랐다. 내 분모 밖이었다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import ast as _ast
+from pathlib import Path as _Path
+
+_REPO = _Path(__file__).resolve().parents[2]          # …/propai-platform
+_PROBE = _REPO / "scripts" / "monitor" / "growth_stale_producer_probe.py"
+
+
+def test_snapshot_key_literal_is_pinned_and_matches_the_probe():
+    """★상수를 **자기 자신과 비교하지 않는다**.
+
+    `SCHEDULE_SNAPSHOT_KEY` 를 임포트해 쓰는 단언은 값을 바꿔도 초록이다(기계 변이 실측:
+    이 줄의 문자열 변경이 **생존**했다). 그런데 소비처인 프로브는 **다른 프로세스**라
+    같은 문자열을 자기 파일에 들고 있다 — **둘이 갈리면 계기판이 영원히 「확인 불가」** 다.
+    그래서 ①리터럴로 핀하고 ②프로브 쪽 상수와 **문법으로** 대조한다.
+    """
+    assert SCHEDULE_SNAPSHOT_KEY == "growth_schedule"   # ① 리터럴 핀
+
+    src = _PROBE.read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+    found = {}
+    for node in _ast.walk(tree):                       # ② 주석·독스트링이 아니라 **실행 대입**만
+        if isinstance(node, _ast.Assign) and len(node.targets) == 1:
+            tgt = node.targets[0]
+            if isinstance(tgt, _ast.Name) and isinstance(node.value, _ast.Constant):
+                found[tgt.id] = node.value.value
+    assert "SCHEDULE_SETTING_KEY" in found, (
+        f"프로브에 SCHEDULE_SETTING_KEY 대입이 없다(소비처 0) — 찾은 상수: {sorted(found)}"
+    )
+    assert found["SCHEDULE_SETTING_KEY"] == SCHEDULE_SNAPSHOT_KEY, (
+        f"생산자 {SCHEDULE_SNAPSHOT_KEY!r} ↔ 소비처 {found['SCHEDULE_SETTING_KEY']!r} 가 갈렸다"
+    )
+
+
+def test_probe_reason_has_no_handcopied_period_or_ttl():
+    """★사용자에게 나가는 사유에 **손복사 상수**가 없다(실행되는 줄만 본다).
+
+    종전 `:143` 은 «TTL(180분) > 주기(60분) 이므로 3회 연속 미실행» 이라고 단정했고
+    그 두 수는 `schedule.py`/`analyzer.py` 에서 **손으로 복사**된 것이었다 —
+    주기가 60→90 이면 180/90=2 인데 문장은 여전히 «3회» 라고 말한다.
+    ★주석에는 그 경위가 남아 있으므로 **실행 리터럴만** 본다(주석을 보면 위양성이 된다).
+    """
+    tree = _ast.parse(_PROBE.read_text(encoding="utf-8"))
+    strings = [
+        n.value for n in _ast.walk(tree)
+        if isinstance(n, _ast.Constant) and isinstance(n.value, str)
+    ]
+    # 독스트링(모듈·함수·클래스의 첫 표현식)은 실행 문자열이 아니다 — 걷어낸다.
+    docstrings = set()
+    for n in _ast.walk(tree):
+        if isinstance(n, (_ast.Module, _ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+            d = _ast.get_docstring(n, clean=False)
+            if d:
+                docstrings.add(d)
+    live = [s for s in strings if s not in docstrings]
+    # ★대조군 — 조회기가 살아 있는가(이 문자열은 반드시 실행 리터럴에 있다)
+    assert any("분석상태 행이 없다" in s for s in live), (
+        "대조군 실패 — 실행 문자열을 하나도 못 읽었다(파서가 죽었다)"
+    )
+    offenders = [s for s in live if "180분" in s or "60분) 이므로" in s or "3회 연속" in s]
+    assert offenders == [], f"사유에 손복사 상수가 남아 있다: {offenders}"
+
+
+def test_at_is_published_and_is_the_liveness_signal():
+    """★`at` 이 빠지면 **「스케줄러가 도는가」를 판정할 수 없다**(기계 변이: 줄삭제 생존).
+
+    TTL 을 안 걸었으므로 행은 늘 노출된다 — 살아 있음의 유일한 축이 `at` 의 나이다.
+    """
+    p = schedule_snapshot_payload([("analyze", NOW)], NOW)
+    assert "at" in p, f"at 이 없다 — 나이를 못 재면 정지와 정상이 같은 모양이다: {p}"
+    assert p["at"] == NOW.isoformat(), p["at"]
+    assert datetime.fromisoformat(str(p["at"])) == NOW      # 파싱 가능해야 한다
+
+
+def test_unknown_job_is_not_silently_dropped():
+    """`JOB_SPECS` 에 없는 잡이 와도 **조용히 사라지지 않는다**(기계 변이: `?/?` 생존)."""
+    p = schedule_snapshot_payload([("analyze", NOW), ("zzz_nope", NOW)], NOW)
+    got = _jobs_map(p)
+    assert "zzz_nope" in got, f"모르는 잡이 요약에서 증발했다: {p}"
+    assert got["zzz_nope"] == ("?", "?"), got
+    assert "zzz_nope" not in str(p["overdue"]).split(), "주기를 모르면서 지연이라 단정했다"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_write_identifies_its_producer_and_is_not_a_seed():
+    """★`updated_by` 는 장식이 아니다(기계 변이: 줄삭제·문자열변경 **둘 다 생존**).
+
+    형제 락(`test_growth_schedule.py`)이 **「씨드가 아닌 쓰기는 워터마크를 안 건드린다」**
+    를 `updated_by` 에 `"seed"` 가 있는지로 가른다 — 이 값이 비거나 `seed` 를 품으면
+    그 락이 **조용히 무력화**된다.
+    """
+    fake = _FakeSettings({watermark_key(j): NOW.isoformat() for j in JOB_SPECS})
+
+    captured: list[tuple[str, str | None]] = []
+    orig = fake.set_setting
+
+    async def spy(_db, key, value, *, scope="global", ttl_expires_at=None, updated_by=None):
+        captured.append((key, updated_by))
+        return await orig(_db, key, value, scope=scope,
+                          ttl_expires_at=ttl_expires_at, updated_by=updated_by)
+
+    fake.set_setting = spy
+    await compute_due(None, fake, NOW)
+
+    ub = dict(captured).get(SCHEDULE_SNAPSHOT_KEY, None)
+    assert ub, f"스냅샷 쓰기에 updated_by 가 없다 — 출처 불명 행이 생긴다: {captured}"
+    assert "seed" not in ub, f"스냅샷이 씨드로 위장했다({ub!r}) — 형제 락이 무력화된다"
+    assert "scheduler" in ub, f"생산자를 식별할 수 없다: {ub!r}"
