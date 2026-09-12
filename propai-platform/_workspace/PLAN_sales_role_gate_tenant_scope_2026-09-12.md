@@ -120,12 +120,30 @@ _MANAGER_ROLES = {"superadmin", "super_admin", "admin", "owner", "developer", "a
 
     app/routers/admin_sales_rls.py:25
     app/routers/analysis_ledger.py:22
+    routers/admin_lists.py:31          ← ★R2 추가(아래 정정)
 
 둘 다 가입 기본값(`admin`·`owner`)을 담고 있어 **살아 있는 role 게이트처럼 읽힌다.**
 실제 게이트는 같은 파일의 **tier** 다(주석이 그렇게 적는다). 다음 사람이 이 상수를 보고
 «여기도 role 로 판별하는구나» 로 오독하거나, 되살려 쓰면 같은 누출이 생긴다.
 ★이 PR 범위 밖이라 **지우지 않는다** — 좌표만 남긴다.
-★독립 리뷰가 셋째 좌표로 든 `admin_lists.py:31` 은 **실재하지 않는다**(내 전수 실측: 2건).
+★★**정정(R2)** — 종전에 *"셋째 좌표 `admin_lists.py:31` 은 **실재하지 않는다**(전수 2건)"* 라고
+적었는데 **내 위음성**이었다. **실재한다**: `apps/api/routers/admin_lists.py:31`.
+
+★원인은 **범위**다 — 이 저장소에는 `routers/` 디렉토리가 **둘**이다(실측):
+
+    apps/api/app/routers/*.py   37파일   ← 내가 본 곳
+    apps/api/routers/*.py       80파일   ← **통째로 밖**
+
+***「0건」은 결론이 아니라 조회 결과이고, 이번엔 대상이 아니라 **범위**가 틀렸다.***
+계획서 §0 에 적은 *"중단한 조회의 부분값을 0건으로 적지 마라"* 의 **형제**다 —
+**완주한 조회도 범위가 좁으면 「0건」이 거짓이다.** (동료 sid=e739d2a9 가 잡았다.)
+
+★**그래서 다시 쟀다 — 넓은 범위에서도 이 PR 의 범위는 옳다**:
+  · `_SUPERADMIN_ROLES`·`_TENANT_FINANCE_ROLES` **소비처 전수**를 `apps/api` **전체**로 다시
+    돌려도 **같은 8건**이고 전부 `app/api/` 안이다(넓은 트리에 소비처 0).
+  · 넓은 트리에서 «가입 기본값을 담은 역할 집합» 전수 = **3건**이고 **셋 다 참조=1(정의뿐)**,
+    실제 게이트는 `is_super_admin`(**tier**)다 ⇒ **살아 있는 role 게이트는 여전히
+    `market._MANAGER_ROLES` 하나**이고 그것은 `xfail(strict=True)` 로 초록 안에 있다.
 
 ### ★R1 부수 — 리뷰 지적 중 **내가 반증한 것**
 
