@@ -11,7 +11,12 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.api.deps_sales import SalesCtx, sales_ctx
+from app.api.deps_sales import (
+    _DEVELOPER_ROLES,
+    _SUPERADMIN_ROLES,
+    SalesCtx,
+    sales_ctx,
+)
 from apps.api.database.models.sales.commission_mh_harness import (
     SalesCommissionDistribution,
     SalesCommissionMaster,
@@ -68,10 +73,13 @@ def _classify_error(exc: BaseException) -> str:
 #     유지하면서, 플랫폼 등급(superadmin/developer) 또는 '본인 테넌트 현장 소유(시행사)'만
 #     허용한다. 이는 sales_ctx 의 분류(_SUPERADMIN_ROLES/_DEVELOPER_ROLES/owns_site→DEVELOPER)
 #     와 동일 의미다. 순수 viewer(영업직/구독 최하위, 소유현장 0)는 403 으로 차단(권한상승 방지).
-_TENANT_FINANCE_ROLES = {
-    "superadmin", "super_admin", "admin", "owner", "총괄관리자", "platform_admin",
-    "developer", "시행사", "dev",
-}
+# ★★**손복사하지 않는다 — SSOT 에서 파생시킨다**(2026-09-12).
+#   위 주석이 *"sales_ctx 의 분류(_SUPERADMIN_ROLES/_DEVELOPER_ROLES/owns_site→DEVELOPER)와
+#   **동일 의미**"* 라고 적는데, 종전엔 같은 9문자열을 **손으로 베껴** 두 곳이 갈릴 수 있었다.
+#   실제로 `_SUPERADMIN_ROLES` 에서 가입 기본값(`admin`·`owner`)을 뺀 이번 변경에서,
+#   손복사를 남겼으면 이 게이트만 **여전히 전원 통과**해 그 주석이 거짓이 됐다.
+#   ⇒ 합집합으로 **파생**시킨다. 한 곳을 고치면 여기가 따라온다.
+_TENANT_FINANCE_ROLES = _SUPERADMIN_ROLES | _DEVELOPER_ROLES
 
 
 async def require_tenant_finance(

@@ -65,6 +65,11 @@ type GrowthInsight = {
   narrative: string | null;
   recommended_action: string | null;
   created_at: string | null;
+  /** ★왜 아직 `open` 인가 — 빈 배열 = **후보 쿼리 술어를 전부 통과**(≠「반드시 치유된다」).
+   *  `null` = 열려 있지 않음(판정 대상 아님). 백엔드 `healing_rules.open_blockers` 가 정본. */
+  open_blockers?: string[] | null;
+  /** 사람이 읽는 사유. 타입 면제에는 그 타입의 기록된 사유가 실린다. */
+  open_blocker_reason?: string | null;
 };
 
 type GrowthInsightList = {

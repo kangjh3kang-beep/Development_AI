@@ -44,7 +44,13 @@ function unzipWithPython(bytes: Uint8Array): Record<string, string> {
         ].join("\n"),
         zipPath,
       ],
-      { encoding: "utf8" },
+      // ★stderr 를 **삼킨다**(2026-09-10). 이 헬퍼는 «깨진 아카이브면 던진다» 가 계약이라
+      //   음성 대조군에서 파이썬이 **일부러** `AssertionError` 로 죽는다. 그 traceback 이
+      //   상속돼 나가면 vitest 가 `Errors 1 error` 로 세고, **exit 0 인데 빨간 글씨**가 남는다.
+      //   실측: 적대 리뷰가 이 자리에서 시간을 쓰고 결국 «원인 미측정» 으로 남겼다(MINOR 7).
+      //   ★의미 없는 경보는 **진짜 경보를 가린다** — 「경보를 안 냄 ≠ 이상 없음」의 쌍둥이다.
+      //   던지는 계약은 그대로다(`execFileSync` 는 rc≠0 이면 여전히 throw 한다).
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
     return JSON.parse(out);
   } finally {

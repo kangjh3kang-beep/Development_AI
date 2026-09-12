@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -34,7 +35,12 @@ from app.api.deps import get_current_user, get_db
 # 선택 기준(상위 권한 우선)과 일치시킨다(표시=적용 일관).
 from app.api.deps_sales import _SUPERADMIN_ROLES, _node_priority
 from app.core.config import settings
+
+# ★진입 판정은 의존 없는 서비스 모듈에 산다 — 어디서든 태울 수 있게(2026-09-09).
+from app.services.sales.site_entry import membership_kind, resolve_entry
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
+
+logger = logging.getLogger(__name__)
 
 site_auth_router = APIRouter(tags=["sales-auth"])
 
@@ -139,10 +145,26 @@ async def _get_site(db: AsyncSession, site_id) -> SalesSite:
         cond = SalesSite.id == uuid.UUID(sid)
     except (ValueError, AttributeError, TypeError):
         cond = SalesSite.site_code == sid  # UUID가 아니면 현장코드로 조회
-    site = (await db.execute(select(SalesSite).where(cond))).scalar_one_or_none()
+    # ★삭제된 현장은 주지 않는다(2026-09-09 리뷰 M5). `SalesSite` 는 `SoftDeleteMixin` 을 달고,
+    #   같은 파일의 형제 조회 **3곳**(`my_sites` (a)(b)(c))은 전부 이 필터를 건다 — **4중 1곳만**
+    #   빠져 있었고, 하필 그 하나가 `enter_site`·`set_site_password`·`site_role` 이 쓰는 것이다.
+    #   비번 미설정 현장이 진입 가능해지면서 «삭제된 현장에 토큰 발급» 이 열린다.
+    site = (await db.execute(select(SalesSite).where(
+        cond, SalesSite.deleted_at.is_(None)))).scalar_one_or_none()
     if not site:
         raise HTTPException(404, "현장을 찾을 수 없습니다")
     return site
+
+
+def _log_entry(site_id: str, user, role: str, auth: str) -> None:
+    """현장 진입을 **양쪽 경로 모두** 같은 모양으로 남긴다.
+
+    ★2026-09-09 리뷰 M4: 앞 판은 membership 진입만 로그했다. 그러면 «오늘 몇 명이 비번으로
+      들어왔나» 를 셀 수 없고, 두 경로가 **로그에서 비대칭**이 된다 — 응답에 `auth` 를 실어
+      «구별한다» 고 주석에 써 놓고 정작 로그에서는 하나만 보였다.
+    ★한쪽만 부르면 그것이 이 결함의 재발이다 — 그래서 **헬퍼 하나**로 묶는다.
+    """
+    logger.info("현장 진입: site=%s user=%s role=%s auth=%s", site_id, user.id, role, auth)
 
 
 def _features(role: str) -> list[str]:
@@ -187,7 +209,13 @@ class SetPasswordRequest(BaseModel):
 
 
 class EnterRequest(BaseModel):
-    password: str
+    """★`password` 는 **선택**이다(2026-09-09).
+
+    승인된 멤버십이 곧 인증이다 — 아래 `enter_site` 독스트링 참조.
+    현장이 2차비번을 **설정해 둔 경우에만** 이 값이 검증된다.
+    """
+
+    password: str | None = None
 
 
 # ── 1) 현장 2차비번 설정/변경 ────────────────────────────────────────────────
@@ -281,6 +309,45 @@ async def my_sites(db: AsyncSession = Depends(get_db), user=Depends(get_current_
                 "role": "SUPERADMIN", "role_label": _ROLE_LABEL["SUPERADMIN"], "membership": "admin",
             })
 
+    # ★★현장마다 «2차 비밀번호가 설정돼 있나» 를 **한 쿼리로** 싣는다(2026-09-09 리뷰 C1).
+    #
+    #   【왜】「승인이 곧 인증」 뒤에는 **비번 미설정 현장이 다수**다(라이브 실측 14 중 11).
+    #     그런데 목록 카드는 진입 전 현장 전부에 «2차 비밀번호» 라벨을 무조건 그리고 있었고
+    #     (`SiteListClient.tsx`), 그 라벨은 11현장에서 **거짓**이 된다.
+    #   【그리고 이 필드가 게이팅을 만든다】진입 모달은 열리면 비번 없이 조용히 먼저 시도하는데,
+    #     비번이 **설정된** 현장에서 그 시도를 하면 잠금 카운터를 향해 노크하는 셈이다.
+    #     서버가 카운터 앞에서 400 으로 막지만(`resolve_entry` → `no_secret_supplied`),
+    #     **애초에 두드리지 않는 것**이 옳다 — 그 판정에 이 필드가 쓰인다.
+    #   ★N+1 이 되지 않게 `IN` 한 번으로 받는다. 목록이 비면 쿼리 자체를 건너뛴다.
+    if out:
+        # ★★**장식 필드 하나가 목록 전체를 500 으로 만들지 않게** 한다(2026-09-12 · 리뷰 MINOR 4).
+        #   초판은 여기서 `_ensure(db)`(멱등 DDL 2건 + **commit**)를 불렀다. 그러면
+        #   ①GET 경로가 **CREATE 권한에 의존**하게 되고(종전엔 아니었다)
+        #   ②`_ENSURED` 가 프로세스 전역이라 **실행 순서에 의존**하는 실패가 생겼다
+        #     (실제로 CI 에서 선재 테스트 2건이 `commit` 없는 스텁으로 깨졌다).
+        #   ⇒ DDL 을 부르지 않고, **형제 패턴**(`services/sales/org/overview.py:137-148`)처럼
+        #     「테이블 미존재(42P01)」만 흡수하고 나머지 DB 오류는 **전파**한다(은폐 금지).
+        #   ★흡수했을 때 값은 `False` 가 아니라 **`None`(모름)** 이다 — 「비번 없음」과
+        #     「아직 못 알아봤다」를 같은 값으로 뭉개면 프론트 게이팅이 거짓 확신을 갖는다.
+        with_pw: set[str] | None = None
+        try:
+            pw_rows = (await db.execute(
+                text("SELECT site_id::text FROM sales_site_passwords WHERE site_id = ANY(:ids)"),
+                {"ids": list(out.keys())},
+            )).all()
+            with_pw = {r[0] for r in pw_rows}
+        except Exception as e:  # noqa: BLE001 — 분류 후 「정상 0」만 흡수, 실오류는 전파
+            # ★사본을 **더 만들지 않는다** — 이 판정자는 저장소에 이미 6곳에 복제돼 있다
+            #   (SSOT 부채는 별건). 선례대로 형제에서 가져온다(`lifecycle_p5.py:349` 와 같은 형태).
+            from app.services.sales.org.overview import _missing_object_sqlstate
+            if _missing_object_sqlstate(e):
+                logger.info("my_sites: sales_site_passwords 미존재(42P01) — password_set=모름")
+            else:
+                logger.exception("my_sites: 비번 설정 조회 실패(테이블부재 외 오류 — 전파)")
+                raise
+        for sid, item in out.items():
+            item["password_set"] = (sid in with_pw) if with_pw is not None else None
+
     return list(out.values())
 
 
@@ -293,10 +360,34 @@ async def enter_site(site_id: str, body: EnterRequest,
     sid = str(site.id)  # 이후 SQL·토큰은 해석된 실제 UUID 사용
 
     org_path, role = await _resolve_role(db, site, user)
-    if not role:
+    # ★★멤버십 거부도 **판정 값**으로 받는다(2026-09-09 리뷰 C2).
+    #   종전엔 `if not role:` **한 줄**에만 살아서 `if role is None:` 로 바꿔도
+    #   (비멤버는 `""` 를 받으므로 **영원히 거짓**) 락 11건이 전부 초록이었다 —
+    #   그 변이는 **인증된 아무나 아무 현장에** 진입시킨다. 판정이 값이어야 태울 수 있다.
+    if resolve_entry(role, None, None) == "forbidden":
         raise HTTPException(403, "이 현장의 멤버가 아닙니다")
 
     now = datetime.now(UTC)
+    # ★★**승인이 곧 인증이다**(2026-09-09). 위 `_resolve_role` 이 이미 «이 현장의 멤버인가» 를
+    #   물었고, 멤버십은 **관리자·상위 레벨이 승인해야** 생긴다(`sales_org_nodes`).
+    #
+    #   ★라이브 실측(2026-09-09 · 읽기 전용 프로브): **14현장 중 11현장이 비번 미설정**이라
+    #     그 현장들은 «2차비밀번호가 아직 설정되지 않았습니다» 409 로 **멤버여도 진입이 막혀
+    #     있었다.** 워크스페이스 전체와 등록신청 승인 화면이 그 뒤에 있다.
+    #
+    #   ★볼트 R5(채택 · Zoom 벤치마킹): *"passcode(공유 설계) ↔ password(공유 금지) 구분 —
+    #     우리는 **공유되도록 설계된 값을 비밀번호로 저장 중**"*. 현장 2차비번은 그 현장 사람
+    #     모두가 아는 **공유 비밀**이고 회전되지 않는다. 「관리자가 개인에게 부여한 멤버십」보다
+    #     약한 인증을 그 위에 강제하고 있었던 셈이다.
+    #
+    #   ⇒ **설정돼 있으면 요구하고, 없으면 멤버십으로 충분하다.** 비번을 지우지는 않는다 —
+    #     이미 설정한 현장(실측 3곳)의 2차 요소를 **조용히 걷어내지 않기** 위해서다.
+    #
+    # ★★**정정(2026-09-12 · 리뷰 M6)**: 위 «관리자·상위 레벨이 승인해야 생긴다» 는
+    #   **노드 기반 경로에서만 참**이다. `resolve_site_membership` 은 노드가 0건일 때
+    #   플랫폼 역할만 보고 `("", "SUPERADMIN")`/`("", "DEVELOPER")` 를 준다 — **승인 없이**.
+    #   그 둘을 같은 `auth="membership"` 으로 기록하면 감사에서 구별되지 않으므로
+    #   `membership_kind(org_path)` 로 가른다. 폐지가 아니라 **가시화**다.
     # rate-limit: 잠금 여부 확인
     att = (await db.execute(text(
         "SELECT fail_count, locked_until FROM sales_site_login_attempts WHERE site_id=:s AND user_id=:u"
@@ -313,15 +404,44 @@ async def enter_site(site_id: str, body: EnterRequest,
         "SELECT password_hash FROM sales_site_passwords WHERE site_id=:s"
     ), {"s": sid})).first()
     if not pw:
-        raise HTTPException(409, "현장 2차비밀번호가 아직 설정되지 않았습니다. 관리자에게 문의하세요")
+        # ★비번 미설정 현장 — **승인된 멤버십으로 진입한다**(종전엔 409 로 막혔다).
+        #   passwordless 진입은 감사에 남긴다(누가 무엇으로 들어왔는지 구별 가능해야 한다).
+        await db.execute(text(
+            "DELETE FROM sales_site_login_attempts WHERE site_id=:s AND user_id=:u"),
+            {"s": sid, "u": str(user.id)})
+        await db.commit()
+        auth_kind = membership_kind(org_path)
+        _log_entry(sid, user, role, auth_kind)
+        token = issue_site_token(user.id, getattr(user, "tenant_id", None), site.id, role, org_path)
+        return {
+            "site_token": token,
+            "token_type": "bearer",
+            "expires_in": _SITE_TOKEN_HOURS * 3600,
+            "site_id": sid,
+            "role": role,
+            "role_label": _ROLE_LABEL.get(role, role),
+            "features": _features(role),
+            # ★어떤 인증으로 들어왔는지 **말한다** — 두 경로가 같은 응답이면 진단이 불가능하다.
+            #   ★`membership`(노드 승인) ↔ `platform_fallback`(승인 없는 플랫폼 역할)을 가른다.
+            "auth": auth_kind,
+        }
 
-    ok = False
-    try:
-        ok = bcrypt.checkpw((body.password or "").encode(), pw.password_hash.encode())
-    except (ValueError, TypeError):
-        ok = False
+    # ★판정은 **서비스 층**이 한다(`site_entry.verify_site_secret`) — 라우터는 3.10 에서
+    #   임포트조차 안 돼(PEP 695 의존) 여기 두면 **CI 에서 처음 실행되는 락**만 남는다.
+    outcome = resolve_entry(role, pw.password_hash, body.password)
+    if outcome == "no_secret_supplied":
+        # ★**실패 카운트를 올리지 않는다**(리뷰 C1). 「안 보냈다」와 「틀렸다」는 다른 사건이고,
+        #   전자가 후자의 예산을 쓰면 모달을 몇 번 여는 것만으로 계정이 잠긴다.
+        #
+        # ★★**이 문구에 변이를 넣으면 생존한다 — 그리고 그것이 옳다**(2026-09-10 전수 감사
+        #   63건 중 생존 3건의 하나). 계약은 **400 이라는 상태코드**와 **카운터 앞이라는
+        #   위치**이고 둘 다 잠겨 있다(`test_missing_secret_is_not_a_failed_attempt` ·
+        #   `test_router_maps_each_outcome_to_its_own_status`). 안내 **문구**는 계약이 아니라
+        #   표현이라, 못 박으면 다듬을 때마다 깨지는 취약한 락이 된다(저장소 §C-30).
+        #   ⇒ 점수를 위해 단언을 늘리지 않고, **왜 구멍이 아닌지**를 여기 적는다.
+        raise HTTPException(400, "이 현장은 2차 비밀번호가 필요합니다")
 
-    if not ok:
+    if outcome != "password":
         # 실패 누적 + 임계 도달 시 잠금
         new_fail = (att.fail_count if att else 0) + 1
         locked = now + timedelta(minutes=_LOCK_MINUTES) if new_fail >= _MAX_FAILS else None
@@ -340,6 +460,7 @@ async def enter_site(site_id: str, body: EnterRequest,
                      {"s": sid, "u": str(user.id)})
     await db.commit()
 
+    _log_entry(sid, user, role, "password")
     token = issue_site_token(user.id, getattr(user, "tenant_id", None), site.id, role, org_path)
     return {
         "site_token": token,
@@ -349,6 +470,7 @@ async def enter_site(site_id: str, body: EnterRequest,
         "role": role,
         "role_label": _ROLE_LABEL.get(role, role),
         "features": _features(role),
+        "auth": "password",
     }
 
 
@@ -364,6 +486,15 @@ async def site_role(site_id: str, db: AsyncSession = Depends(get_db),
     await _ensure(db)
     has_pw = (await db.execute(text(
         "SELECT 1 FROM sales_site_passwords WHERE site_id=:s"), {"s": sid})).first() is not None
+    # ★★잠금 상태를 **볼 수 있게** 한다(2026-09-09 리뷰 «잠금 해제/조회 수단이 없다»).
+    #   종전에는 `fail_count`·`locked_until` 이 **오직 401/429 응답에만** 드러나서,
+    #   잠긴 사용자는 «틀렸다» 와 «잠겼다» 를 구별하려면 **또 시도해야** 했고
+    #   관리자는 그 상태를 조회할 방법이 아예 없었다(유일한 해제 수단이 비번 재설정의 부작용).
+    #   ★이 값은 **자기 자신의 상태**다 — 남의 잠금을 보여 주지 않는다.
+    att = (await db.execute(text(
+        "SELECT fail_count, locked_until FROM sales_site_login_attempts "
+        "WHERE site_id=:s AND user_id=:u"), {"s": sid, "u": str(user.id)})).first()
+    locked_until = att.locked_until if att else None
     return {
         "site_id": sid,
         "role": role,
@@ -371,5 +502,8 @@ async def site_role(site_id: str, db: AsyncSession = Depends(get_db),
         "org_path": org_path,
         "can_manage": role in _MANAGE_ROLES,
         "password_set": has_pw,
+        # ★진단 불가는 그 자체로 장애다 — 「몇 번 남았나」와 「언제 풀리나」를 말한다.
+        "fail_count": (att.fail_count if att else 0),
+        "locked_until": (locked_until.isoformat() if locked_until is not None else None),
         "features": _features(role),
     }

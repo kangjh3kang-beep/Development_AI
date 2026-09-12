@@ -89,17 +89,24 @@ def _candidate_sql() -> str:
     raise AssertionError("후보 조회의 text(...) SQL 상수를 못 찾았다 — 파서가 죽었다")
 
 
-def _handled_param_sources() -> set[str]:
-    """`db.execute(...)` 의 파라미터 dict 에서 `handled` 값이 참조하는 **이름들**."""
+def _param_sources(param: str) -> set[str]:
+    """`db.execute(...)` 의 파라미터 dict 에서 `param` 값이 참조하는 **이름들**.
+
+    ★파라미터명만 바꾼 **사본을 두지 않는다** — 사본이면 한쪽만 고쳐도 조용히 초록이 된다.
+    """
     node = _fn_ast(H._candidate_actions)
     names: set[str] = set()
     for sub in ast.walk(node):
         if not isinstance(sub, ast.Dict):
             continue
         for k, v in zip(sub.keys, sub.values, strict=False):
-            if isinstance(k, ast.Constant) and k.value == "handled":
+            if isinstance(k, ast.Constant) and k.value == param:
                 names |= {n.id for n in ast.walk(v) if isinstance(n, ast.Name)}
     return names
+
+
+def _handled_param_sources() -> set[str]:
+    return _param_sources("handled")
 
 
 def test_declared_handled_types_match_the_actual_branches():
@@ -119,9 +126,14 @@ def test_the_query_actually_filters_by_type():
     """
     sql = _candidate_sql()
     assert "insight_type = ANY(:handled)" in sql, "타입 필터가 질의에 없다"
-    assert "recommended_action IN ('heal','none','correct')" in sql, "사유 필터가 사라졌다"
+    # ★2026-09-12: 조치 어휘가 SQL 리터럴에서 **상수 파라미터**로 옮겨졌다
+    #   (`CANDIDATE_ACTIONS` — 판정을 설명하는 `open_blockers` 가 **같은 값**을 봐야 하므로).
+    #   그래서 모양만 보면 **어휘가 비어도 초록**이 된다 → 세 축으로 잠근다.
+    assert "recommended_action = ANY(:actions)" in sql, "사유 필터가 사라졌다"
     assert "HANDLED_INSIGHT_TYPES" in _handled_param_sources(), \
         "handled 파라미터가 상수를 경유하지 않는다(리터럴 하드코딩)"
+    assert "CANDIDATE_ACTIONS" in _param_sources("actions"), \
+        "actions 파라미터가 상수를 경유하지 않는다(리터럴 하드코딩)"
 
 
 def test_order_by_has_an_id_tiebreaker():
@@ -154,4 +166,11 @@ def test_recommended_action_filter_is_kept_too():
 
     한쪽만 남기면 반대 방향(같은 타입인데 조치 대상이 아닌 행)이 무제한이 된다.
     """
-    assert "recommended_action IN ('heal','none','correct')" in _candidate_sql()
+    assert "recommended_action = ANY(:actions)" in _candidate_sql()
+    # ★어휘를 **리터럴로 못 박는다** — 파라미터화 후에는 모양 검사가 값을 못 본다.
+    #   이게 없으면 `CANDIDATE_ACTIONS = ()` 로 비워도 위 단언이 통과한다(= 전 행 제외).
+    assert H.CANDIDATE_ACTIONS == ("heal", "none", "correct"), (
+        f"후보 조치 어휘가 바뀌었다: {H.CANDIDATE_ACTIONS}"
+    )
+    assert "CANDIDATE_ACTIONS" in _param_sources("actions"), \
+        "상수는 있는데 질의가 그것을 안 쓴다(장식이 된다)"
