@@ -451,6 +451,24 @@ def test_no_arg_run_is_not_the_library_gate():
     assert "통합자 계기판" in r.stdout, repr(r.stdout[:200])
 
 
+#: ★★**판정식 SSOT** — 프로덕션 락과 탐지 락이 **같은 것**을 써야 한다.
+#:
+#:   ★변이 실측(2026-09-12 R2b): 탐지 락 안에 같은 정규식을 **손으로 복사**해 뒀더니
+#:     프로덕션 쪽(:527)만 약화해도 **SURVIVED** 였다(둘 다 약화해야 CAUGHT).
+#:     ***나는 「사본이 갈리면 이 락이 장식이 된다」를 그 함수의 독스트링에 적고,
+#:       같은 함수 안에서 사본을 만들었다.*** 적어 두는 것과 다음 줄에 지키는 것은 다른 축이다.
+#:   ⇒ 한 곳에서 만들고 **양쪽이 호출**한다. 이걸 약화하면 **두 락이 함께** 빨개진다.
+def _astate_assign_re(value: str | None = None):
+    """셸의 `ASTATE=` **대입**을 잡는 정규식. `value` 를 주면 그 값까지 결속한다.
+
+    ★`echo '…'` 같은 **표시 문구**는 계약이 아니라 대입만 본다(줄 시작 또는 `;`/`&`/`|` 뒤).
+    ★따옴표는 `'` 와 `"` 를 **둘 다** 받는다 — 리팩토링이 계약을 안 바꾸면 빨개지면 안 된다.
+    """
+    import re as _re
+    body = _re.escape(value) if value is not None else r"[^\'\"]*"
+    return _re.compile(r"""(?:^|[;&|]\s*)ASTATE=(['"])""" + body + r"\1", _re.M)
+
+
 # ── ⑧ ★셸 리터럴 ↔ 파이썬 상수 **계약**(독립 리뷰 2회가 각각 REQUEST CHANGES 를 냈다) ────
 #    동료 세션(sid=e739d2a9)이 자기 PR 에서 찾은 형태를 제 코드에 대 보니 **같은 구멍**이었다:
 #      *「락이 전부 **심볼**을 참조하면 값을 바꿔도 **양쪽이 함께 움직여 원리적으로 판별 불가**」*
@@ -491,8 +509,7 @@ def test_shell_literal_and_python_constant_are_one_contract():
 
     dash_code = sg.code_lines(SCRIPT.read_text(encoding="utf-8"))
     # 대입만 본다: 줄 시작 또는 `;`/`&&`/`||`/`&` 뒤 · 따옴표는 ' 와 " 둘 다
-    assign = _re.compile(r'(?:^|[;&|]\s*)ASTATE=([\'"])(.*?)\1', _re.M)
-    values = [v for _q, v in assign.findall(dash_code)]
+    values = [m.group(0).split("=", 1)[1][1:-1] for m in _astate_assign_re().finditer(dash_code)]
     assert values, (
         "★셸에서 `ASTATE=` **대입**을 하나도 못 찾았다 — 조회기 사망(패턴/파일 확인).\n"
         + "\n".join(ln for ln in dash_code.splitlines() if "ASTATE" in ln)[:400]
@@ -524,9 +541,9 @@ def test_absent_constant_is_not_silently_shadowed():
     dash_code = sg.code_lines(SCRIPT.read_text(encoding="utf-8"))
     sg.assert_absent(
         dash_code,
-        pattern=_re.compile(r'(?:^|[;&|]\s*)ASTATE=([\'"])' + _re.escape(absent_value) + r'\1', _re.M),
+        pattern=_astate_assign_re(absent_value),
         # ★대조군 — 셸이 **실제로 하는** 대입. 이게 0건이면 조회기가 죽은 것이다.
-        positive_control=_re.compile(r'(?:^|[;&|]\s*)ASTATE=[\'"]', _re.M),
+        positive_control=_astate_assign_re(),
         reason=(f"★셸이 {absent_value!r} 를 직접 대입하기 시작했다 — 그러면 이것도 계약이므로 "
                 "`test_shell_literal_and_python_constant_are_one_contract` 와 같은 락이 필요하다"),
         where="integrator_dashboard.sh",
@@ -553,8 +570,10 @@ def test_the_absence_guard_actually_detects_a_violation():
         """프로덕션 락과 **같은 패턴**을 쓴다 — 사본이 갈리면 이 락이 장식이 된다."""
         return sg.assert_absent(
             sg.code_lines(text),
-            pattern=_re.compile(r'(?:^|[;&|]\s*)ASTATE=([\'"])' + _re.escape(absent_value) + r'\1', _re.M),
-            positive_control=_re.compile(r'(?:^|[;&|]\s*)ASTATE=[\'"]', _re.M),
+            # ★★**사본을 만들지 않는다** — 프로덕션 락과 **같은 함수**를 부른다.
+            #   사본이면 프로덕션 쪽만 약화해도 이 락이 초록이다(변이로 실측했다).
+            pattern=_astate_assign_re(absent_value),
+            positive_control=_astate_assign_re(),
             reason="합성 탐지 테스트",
         )
 
