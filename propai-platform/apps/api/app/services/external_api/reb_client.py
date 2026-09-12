@@ -280,9 +280,32 @@ def narrow_to_period_aggregate(
 
 
 def latest_value_from_rows(
-    rows: list[dict[str, Any]], region_sido: str = ""
+    rows: list[dict[str, Any]], region_sido: str = "", *,
+    itm_allow: tuple[str, ...] | None = None,
 ) -> tuple[float, str] | None:
-    """월/분기 행에서 지역 매칭 최신 시점의 값(%)·작성시점을 반환. 값 필드 방어적 탐색."""
+    """월/분기 행에서 지역 매칭 최신 시점의 값(%)·작성시점을 반환. 값 필드 방어적 탐색.
+
+    `itm_allow` — **호출자가 «무엇의 값을 원하는지» 선언한다**(기본 `None` = 종전 동작).
+
+    ★왜 필요한가(2026-09-12 라이브 실측): 이 함수에는 항목 **카디널리티** 가드만 있었다 —
+      한 시점에 `ITM_NM` 이 여럿이면 거부한다(아래 `_homogeneous`). 그런데 **단일 오항목**은
+      «모호하지 않다» 는 이유로 **그대로 채택**된다. 실측:
+
+          latest_value_from_rows([{ITM_NM:"투자수익률", CLS_NM:"서울", DTA_VAL:6.96, …}], "서울")
+              → (6.96, '2005')   ★채택된다
+
+      `commercial_cap_rate` 가 부르는 상업용 표(`A_2024_00683` 계열)는 `distinct_ITM_NM` 이
+      **`['투자수익률']` 하나뿐**이라 정확히 이 경로를 탄다. 그리고 형제 모듈이 이미
+      *"투자수익률 = 소득수익률 + 자본수익률이라 **cap rate 로 쓰면 산식이 틀린다**"* 라고
+      적어 두었다 — **저장소가 아는 사실인데 강제하는 것이 없었다.**
+      ⇒ «모호하면 거부» 만으로는 부족하다. **«무엇인지 모르면 채택하지 않는다»** 가 필요하다.
+
+    ★형제 정합: `rate_series_from_rows` 는 처음부터 항목 필터(`변동률`)를 갖고 있었다.
+      **같은 축의 처방을 형제 한쪽에만 걸어 두었던 것**을 여기서 맞춘다(전역 §D-20).
+
+    ★선언하면 «혼재» 도 읽을 수 있다: 항목을 특정했으므로 더 이상 모호하지 않다.
+      선언하지 않으면 종전 계약(혼재 → 거부)이 **그대로** 유지된다.
+    """
     if not rows:
         return None
     if not region_sido:
@@ -332,6 +355,67 @@ def latest_value_from_rows(
     _matched_raw = [
         row for row in rows if isinstance(row, dict) and region_sido in row_region_names(row)
     ]
+    # ★항목 식별 가드 — 호출자가 선언한 항목만 남긴다(선언이 없으면 무동작).
+    #   ★**시점 그룹화보다 먼저** 건다. 뒤에 걸면 «엉뚱한 항목이 섞였다» 는 이유로 혼재 거부가
+    #     먼저 발화해, 선언한 항목이 그 시점에 **있는데도** 거부된다.
+    # ★필터 **전에** 최신 시점을 확정한다(MEDIUM-1). 필터 뒤에 재면 «구값이 최신» 이 된다.
+    _latest_period_before_itm = max(
+        (_period_of(r, _TIME_KEYS) for r in _matched_raw), default="",
+    ) if itm_allow is not None else ""
+
+    if itm_allow is not None:
+        # ★★독립 적대 리뷰 MAJOR-1/MEDIUM-1(2026-09-12) — **초판이 자기 계약을 어겼다.**
+        #   초판은 면제를 **행 단위**로 걸었다(«표기 없는 행은 통과»). 그랬더니:
+        #
+        #       rows = [ITM_NM=""  7.5, ITM_NM="전월세전환율" 5.4]   (같은 지역·같은 시점)
+        #         선언 없음                 → None        (혼재 거부 · 옳다)
+        #         itm_allow=("소득수익률",) → **(7.5, …)**  ★표에 **없는** 항목을 선언했는데 값이 나온다
+        #
+        #   필터가 표기된 행을 지우고 표기 없는 행만 남겨 **혼재가 해소**되어 «모호하지 않다» 가
+        #   됐다. 그 7.5 는 **무엇의 값인지 아무도 모른다.** 이 함수가 선언한 계약
+        #   («무엇인지 모르면 채택하지 않는다»)의 **정반대**이고, **선언을 함으로써** 생긴다.
+        #   ★저장소는 옳은 축을 이미 적어 뒀다 — `tests/…:2122` 는 면제를 **표 단위**로 정의한다
+        #     (*"표 **전체**에 ITM 필드가 없으면(구형 표) 종전대로 동작한다"*). 그것에 맞춘다.
+        #
+        # ★변이 감사 기록(2026-09-12 · `base: origin/main → ffb74f919521` · 27변이 · CAUGHT 15 / 생존 12)
+        #   생존 12건의 분류 — **설명할 수 없는 생존만 구멍이다**:
+        #     ① **진짜 구멍 2건이었다**(잠갔다):
+        #        · 로그 가드 조건무력화 → `test_rejection_is_not_silent`
+        #          («로그를 낸다»는 **동작 주장**인데 단언이 없어 지워도 초록이었다)
+        #        · `basis` f-string 문자열변경 → `test_cap_rate_basis_string_is_pinned_across_the_boundary`
+        #          (파생 단언은 **접두·접미가 바뀌어도 참**이다. 그 문자열은 제출 PDF 와
+        #           프론트 정규식이 **값으로 분기**하므로 계약이다 — 리터럴로 못 박았다)
+        #     ② **구멍이 아닌 것**: 로그·예외의 **문구** 변이, 그리고 `_STAT_REGISTRY["keyword"]` ·
+        #        `secret_store` 의 `desc` — 둘 다 **프로덕션 소비처 0**인 설명문이다(사람이 읽는다).
+        #        문구는 계약이 아니라 표현이라 단언하면 다듬을 때마다 깨지는 취약한 락이 된다(§G-30).
+        # ★MINOR-4: 문자열을 그대로 넘기면 **음절 집합**이 되어 전량 거부되고 로그도 없다.
+        if isinstance(itm_allow, str):  # pragma: no cover - 호출측 계약 위반 방어
+            raise TypeError("itm_allow 는 문자열이 아니라 시퀀스여야 한다(음절 분해 방지)")
+        _allow = {str(x).strip() for x in itm_allow}
+        # ★**표 단위 면제** — 매칭된 행 중 **하나라도** 항목을 표기하면 그 표는 「표기하는 표」다.
+        #   그때 표기 없는 행은 통과시키지 않는다(모름이 이기지 못하게).
+        _labeled_present = any(str(r.get("ITM_NM") or "").strip() for r in _matched_raw)
+
+        def _itm_ok(row: dict[str, Any]) -> bool:
+            itm = str(row.get("ITM_NM") or "").strip()
+            if _labeled_present:
+                return itm in _allow
+            # 표 전체에 항목 표기가 없다(구형 표) → 형제 `rate_series_from_rows` 의 계약과 같이 통과.
+            #   ★★이것은 **의도된 면제**이자 **부채**다: 항목을 표기하지 않는 표에서는 이 가드가
+            #     아무 일도 하지 않는다. 거부로 바꾸면 **정상 경로를 막는다**(위양성 — 기존 회귀
+            #     `test_cap_rate_refuses_for_unknown_region` 이 그것을 잡는다).
+            return True
+
+        _before = len(_matched_raw)
+        _matched_raw = [r for r in _matched_raw if _itm_ok(r)]
+        if len(_matched_raw) != _before:
+            # ★MEDIUM-2: 종전엔 이 거부가 **로그 한 줄도 없어** 사유가 다시 「기본」으로 뭉개졌다
+            #   (형제 거부 경로는 둘 다 `logger.info` 를 낸다 — 같은 파일 안에서 축이 갈렸다).
+            logger.info(
+                "R-ONE 최신값 항목 선언 불일치 — 선언 밖 행을 제외",
+                region=region_sido, allow=sorted(_allow),
+                dropped=_before - len(_matched_raw), kept=len(_matched_raw),
+            )
     # ★★독립 리뷰 R8 F-2(2026-09-08) — **내가 만든 회귀**다. 이 함수에는 항목(ITM) 필터가
     #   **한 줄도 없는데** 집계행 좁히기를 붙였다. 그래서 집계행(`CLS_NM="전체"`)이 **다른 항목**
     #   (예: `지수`)이면 그것이 좁히기에서 이겨 **엉뚱한 항목의 값**이 채택된다. 실측:
@@ -363,6 +447,20 @@ def latest_value_from_rows(
     for row in _matched_raw:
         _by_period.setdefault(_period_of(row, time_keys), []).append(row)
     _latest_period = max(_by_period, default="")
+    # ★★독립 적대 리뷰 MEDIUM-1 — **구값을 「최신」인 척 내보내지 않는다.**
+    #   선언 필터가 최신 시점을 통째로 지우면 그 아래 시점이 «최신» 이 된다. 실측:
+    #       [소득수익률 4.2 @2005, 투자수익률 6.96 @2012] + itm_allow=("소득수익률",)
+    #         → (4.2, '2005')   ★7년 묵은 값이 최신으로 나갔다
+    #   이 파일은 같은 속성을 **두 번** 이름으로 못 박았다
+    #   (`test_missing_aggregate_at_the_latest_period_rejects_not_returns_stale` · R9 HIGH-1).
+    #   **세 번째 원인**(선언 항목이 최신 시점에 없음)도 같은 쪽으로 처리한다.
+    #   ★`wrttime` 은 화면·PDF 어디에도 렌더되지 않으므로 사용자가 알 방법이 없다.
+    if _latest_period_before_itm and _latest_period != _latest_period_before_itm:
+        logger.info(
+            "R-ONE 최신값 — 선언 항목이 최신 시점에 없어 거부(구값 반환 금지)",
+            region=region_sido, latest=_latest_period_before_itm, fell_back_to=_latest_period,
+        )
+        return None
     _homogeneous: list[dict[str, Any]] = []
     for _period, _grp in _by_period.items():
         # ★«부재» 도 하나의 항목값으로 센다(discard 하지 않는다 — R9 HIGH-2).
