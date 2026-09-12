@@ -126,6 +126,24 @@ delta_verdict() {
   fi
   echo "viol"
 }
+# ── ③ 분석 상태 판정 ──
+#   ★**규칙을 셸에 다시 구현하지 않는다.** 프로브의 순수 함수 `analysis_verdict` 를
+#     **그대로** 태운다. 2026-08-26 에 이 저장소는 큐 정렬을 *산문*으로 주고 받는 쪽이
+#     다르게 구현해 **없는 결함을 신고**했다 — 산문은 여러 구현을 허용한다.
+#     여기서 `case "$ASTATE" in starved) …` 를 쓰면 정확히 그 재발이다.
+#   ★락이 이 함수를 태울 수 있도록 `--verdict-lib` 게이트 **위**에 둔다(형제 `delta_verdict` 와 같은 이유).
+analysis_verdict_of() {   # $1=astate  $2=insights_24h  → stdout "kind|사유"
+  local d
+  d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from growth_stale_producer_probe import analysis_verdict
+kind, why = analysis_verdict(sys.argv[2], sys.argv[3])
+print(kind + "|" + why)
+' "$d" "$1" "$2" 2>/dev/null || echo "unknown|판정 함수를 태우지 못했다(python3 또는 프로브 경로 확인)"
+}
+
 if [ "${1:-}" = "--verdict-lib" ]; then return 0 2>/dev/null || exit 0; fi
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # ★cd 이전에 확정한다
@@ -224,12 +242,38 @@ else
     # ★창에서만 0 → **술어는 살아 있고 시스템이 유휴**다. 이건 검사기 사망이 **아니다**.
     #   ★그렇다고 "이상 없음"도 아니다 — 판정을 **못 한** 것이므로 그렇게 적는다.
     #   ★`exit 2` 도 내지 않는다: 유휴는 위반이 아니고, `#868` 의 기각(상시 빨강)을 존중한다.
-    echo "   ★판정 불가 — 술어는 **살아 있는데**(전 역사 ${ctrl_all}건) 24h 창이 0 이다 = **시스템 유휴**."
-    echo "     이 줄은 '검사기 사망'도 '이상 없음'도 아니다. 성장루프가 인사이트를 안 만들고 있다는 뜻이고,"
-    echo "     그 이유(표본 하한 미달/트래픽/분석기)는 여기서 판정하지 않는다."
-    # ★★판정을 **exit 0 으로 떨어뜨리지 않는다.** 이 줄이 없으면 마지막 줄이
-    #   "이상 없음 — 모든 프로브 생존"을 찍는데, **그 프로브는 판정을 못 했다.**
-    OBS=1
+    # ★★종전엔 여기서 «판정 불가» 를 찍고 끝냈다 — **정직하지만 답이 아니었다.**
+    #   답은 `analyzer.py` 가 **이미 발행하고 있었다**(`growth_analysis` 설정키 · TTL 180분).
+    #   빠진 것은 기능이 아니라 **이 레인의 소비처**였다(실측 2026-09-12 08:2xZ:
+    #   state=starved · axes="fal 0/0 lat 0/19 pay 0/1 qua 0/0" · at=08:05:05Z).
+    #   ★내가 그 사실을 **소스 grep 으로 못 찾고 라이브 응답으로 알았다** —
+    #     «매체»(`INSERT INTO platform_events`)로 찾으면 «목적»(분석기가 실행을 어디 남기나)을 놓친다.
+    ASTATE=$(echo "$G" | grep -oE 'astate=[^ ]+' | cut -d= -f2)
+    AAT=$(echo   "$G" | grep -oE 'aat=[^ ]+'    | cut -d= -f2)
+    AAXES=$(echo "$G" | grep -oE 'aaxes=[^ ]+'  | cut -d= -f2)
+    AINS=$(echo  "$G" | grep -oE 'ains=[^ ]+'   | cut -d= -f2)
+    ALAST=$(echo "$G" | grep -oE 'alast=[^ ]+'  | cut -d= -f2)
+    # ★필드가 비면 «(필드없음)» 으로 **명시**한다 — 빈 문자열을 그냥 넘기면
+    #   «옛 프로브 사본» 이 «축이 없다(idle)» 로 조용히 둔갑한다(형제 `overlap` 과 같은 규율).
+    [ -z "$ASTATE" ] && ASTATE="(필드없음)"
+    AV=$(analysis_verdict_of "$ASTATE" "${ctrl:-0}" 2>/dev/null)
+    AK=${AV%%|*}; AR=${AV#*|}
+    # ★★판정기 자체가 없으면(함수 미정의·python3 부재) `AV` 가 **빈 문자열**이고
+    #   그러면 사유 칸이 통째로 **비어서 출력된다** — 이 파일이 금지하는 바로 그 침묵이다.
+    #   실측: 형제 락(`test_dashboard_idle_vs_dead_scanner.py`)이 블록만 떼어 돌렸더니
+    #   «★ — **0 으로 읽지 마라**» 라는 **사유 없는 경보**가 나왔다. 그 락이 잡아 줬다.
+    #   ⇒ 빈 값은 «모른다» 로 승격하되 **사유를 반드시 채운다.**
+    if [ -z "$AK" ] || [ "$AK" = "$AR" ]; then
+      AK="unknown"
+      AR="분석상태 판정기를 태우지 못했다(함수 미정의 또는 python3 부재) — 이 줄은 '유휴'가 아니다"
+    fi
+    echo "   인사이트 24h 창 0 (전 역사 ${ctrl_all}건 = 술어 생존)"
+    echo "   분석기 상태: state=${ASTATE} · 축 ${AAXES:--} · 인사이트 ${AINS:--} · 발행 ${AAT:--} · 워터마크 ${ALAST:--}"
+    case "$AK" in
+      ok)      echo "   ✅ ${AR}" ;;
+      obs)     OBS=1; echo "   ★${AR}" ;;
+      *)       DEAD=1; echo "   ★${AR} — **0 으로 읽지 마라**" ;;
+    esac
   else
     echo "   불가능 행: 정지 이후 ${post}건 / 정지 이전 ${pre}건   [대조군 latency_regression 24h ${ctrl}건 = 술어 생존]"
     echo "   엔진 생존: 정지 이후 인사이트 ${live}건 기록"

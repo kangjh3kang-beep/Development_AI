@@ -40,6 +40,52 @@ def is_stale_stack(spans):
 
 
 
+#: 분석 상태 스냅샷이 사는 자리. ★**새 표면을 만들지 않는다** — `analyzer.py` 의
+#: `ANALYSIS_STATUS_SETTING_KEY` 와 **같은 값**이다. 여기서 다시 정하면 두 곳이 갈린다.
+ANALYSIS_SETTING_KEY = "growth_analysis"
+#: 「돌았다」만 말하는 워터마크(TTL 없음). `state` 와 **다른 명제**라 둘 다 읽는다.
+ANALYZE_WATERMARK_KEY = "growth_last_run.analyze"
+
+#: 프로브가 이 필드를 **아예 안 준다**(옛 사본)는 것을 나타내는 표식.
+#: ★`"idle"` 이나 `""` 로 두면 «안 재 봤다»가 «축이 없다»로 읽힌다.
+ASTATE_MISSING = "(필드없음)"
+#: 설정 행 자체가 없다. ★analyze 주기 60분 · TTL 180분이라 **정상 동작 중에는
+#:   만료되지 않는다**(매 실행이 만료를 앞으로 민다). 행이 없으면 **3회 연속 미실행**이다.
+#:   이 산수는 `analyzer.py` 의 `_ANALYSIS_TTL_MIN` 주석이 근거다.
+ASTATE_ABSENT = "(행없음)"
+
+
+def analysis_verdict(astate, insights_24h):
+    """계기판 ③ 이 인사이트 24h 창 **0** 을 만났을 때 무엇이라 불러야 하는가.
+
+    ★**순수 함수다** — DB 없이 태울 수 있고, 셸이 규칙을 다시 구현하지 않는다
+      (형제 `is_stale_stack`·`latency_burst_probe.classify_buckets` 와 같은 구조).
+      산문으로 주면 받는 쪽마다 다르게 구현한다 — 이 저장소가 이미 값을 치른 형태다.
+
+    반환: `("ok"|"obs"|"unknown", 사람이 읽을 사유)`
+      ok      — 설명된 상태. 「이상 없음」이라 불러도 되는 유일한 갈래
+      obs     — 위반은 아니나 **이상 없음도 아니다**(계기판 exit 4)
+      unknown — **안 재 봤다**. 0 과 절대 뭉치지 않는다
+
+    ★네 모집단이 **서로 다른 값**을 내야 한다. 하나로 접으면 이 함수는 장식이다.
+    """
+    if astate == ASTATE_MISSING:
+        return "unknown", "프로브에 분석상태 필드가 없다 — 컨테이너의 프로브가 옛 사본이다"
+    if astate == ASTATE_ABSENT:
+        # ★행 부재를 「유휴」로 읽지 않는다. TTL 산수상 부재는 **3회 연속 미실행**이다.
+        return "obs", "분석상태 행이 없다 — TTL(180분) > 주기(60분) 이므로 **3회 연속 미실행**"
+    if astate == "starved":
+        return "ok", "배치는 돌았고 **모든 축이 표본 하한 미달**이다 — 유휴이지 고장이 아니다"
+    if astate == "idle":
+        return "obs", "커버리지 축 자체가 없다 — 분석기가 축을 하나도 못 돌렸다"
+    if astate == "judged":
+        if int(insights_24h or 0) > 0:
+            return "ok", "판정했고 인사이트도 있다"
+        # ★판정했다면서 24h 창이 비었다 = 두 관측이 **모순**이다. 침묵으로 두지 않는다.
+        return "obs", "판정했다는데 24h 창이 비었다 — 발행·보존(supersede) 경로를 보라"
+    return "unknown", "분석상태 값을 해석하지 못했다: %s" % (astate,)
+
+
 async def main():
     # ★DB 임포트는 함수 안에서 — 테스트가 `is_stale_stack` 만 가져갈 때
     #   app 패키지·드라이버가 없어도 임포트가 성공해야 한다.
@@ -87,10 +133,35 @@ async def main():
         bs = ",".join("%s=%s" % (b, c) for b, c, _f, _l in builds) or "(행없음)"
         overlaps = is_stale_stack([(b, f, l) for b, _c, f, l in builds])
         ov = ";".join("%s~%s" % (a, b) for a, b in overlaps) or "none"
+        # ⑤ ★**분석기가 왜 아무 말도 안 하는지**를 같은 프로브가 가져온다.
+        #   계기판은 여기서 «판정 불가» 를 찍고 있었는데, 그 답은 `analyzer.py` 가
+        #   **이미 발행하고 있었다**(`growth_analysis` 설정키 · 프론트는 읽는다).
+        #   빠진 것은 기능이 아니라 **이 레인의 소비처**였다.
+        #   ★두 키를 **둘 다** 읽는다 — 워터마크는 「돌았다」를, 스냅샷은 「됐다/굶었다」를
+        #     말한다. 다른 명제다.
+        arow = (await s.execute(text(
+            "select value from platform_settings where key = :k "
+            "  and (ttl_expires_at is null or ttl_expires_at > now())"),
+            {"k": ANALYSIS_SETTING_KEY})).scalar()
+        wm = (await s.execute(text(
+            "select value from platform_settings where key = :k"),
+            {"k": ANALYZE_WATERMARK_KEY})).scalar()
+        if isinstance(arow, dict):
+            astate = str(arow.get("state") or ASTATE_ABSENT)
+            aat = str(arow.get("at") or "-")
+            aaxes = str(arow.get("axes") or "-").replace(" ", "_")
+            ains = arow.get("insights")
+        else:
+            # ★`None` 과 «dict 가 아닌 값» 을 **같이** 여기로 보낸다 — 둘 다
+            #   "이 스냅샷으로는 판정 못 한다" 이고, 갈라 봐야 처방이 같다.
+            astate, aat, aaxes, ains = ASTATE_ABSENT, "-", "-", "-"
+        alast = str(wm).strip('"') if wm else "-"
         print("PROBE now=%s ctrl_type_total=%s ctrl_type_alltime=%s "
               "impossible_post=%s impossible_pre=%s "
-              "engine_alive=%s builds=%s overlap=%s"
-              % (now.strftime("%Y-%m-%d %H:%M"), ctrl, ctrl_all, post, pre, alive, bs, ov))
+              "engine_alive=%s builds=%s overlap=%s "
+              "astate=%s aat=%s aaxes=%s ains=%s alast=%s"
+              % (now.strftime("%Y-%m-%d %H:%M"), ctrl, ctrl_all, post, pre, alive, bs, ov,
+                 astate, aat, aaxes, ains, alast))
 
 if __name__ == "__main__":  # ★임포트만으로 DB 에 붙지 않는다(테스트가 순수 함수를 태운다)
     asyncio.run(main())
