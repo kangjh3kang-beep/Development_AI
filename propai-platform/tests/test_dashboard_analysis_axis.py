@@ -263,3 +263,55 @@ def test_watermark_key_is_derived_from_its_producer():
     beat = (REPO / "propai-platform" / "apps" / "api" / "app" / "tasks"
             / "celery_app.py").read_text(encoding="utf-8")
     assert f"growth_tasks.{job}_growth" in beat or f"growth_tasks.{job}" in beat, job
+
+
+# ── ⑤ 2차 변이 감사가 남긴 생존 중 **진짜 구멍**만 닫는다 ────────────────────
+def test_missing_insights_key_becomes_dash_not_none():
+    """★키가 없으면 `%s` 가 **문자열 "None"** 을 찍어 계기판에 `ains=None` 이 뜬다.
+
+    변이 실측(2026-09-12): `if ains is None:` 무력화가 **생존**했다 — 내 픽스처가
+    `insights: 0` 을 항상 줘서 **그 분기에 도달하지 못했다**(§«분기를 만들었으면 그 분기를
+    태우는 행을 같은 커밋에»).
+    """
+    m = _probe_mod()
+    assert m.analysis_fields({"state": "starved"}, None)[3] == "-"
+    assert m.analysis_fields({"state": "starved", "insights": None}, None)[3] == "-"
+    # ★대조군 — 0 은 «없음」이 아니라 **0 이어야** 한다(둘을 뭉개면 이 락이 거짓이다).
+    assert m.analysis_fields({"state": "starved", "insights": 0}, None)[3] == 0
+
+
+def test_missing_field_has_a_dedicated_reason_not_the_generic_template():
+    """★★«필드 없음» 분기를 끄면 **미지 어휘 폴백**으로 떨어지는데, 그 폴백은 값을
+    보간하므로 사유가 **여전히 달라 보인다** — 그래서 «다섯이 서로 다르다» 로는 못 잡는다.
+
+    변이 실측(2026-09-12): `if astate == ASTATE_MISSING:` 무력화가 두 판 연속 생존했다.
+    ⇒ 요구를 바꾼다: 이 모집단은 **자기 전용 설명**을 가져야 하고,
+      **폴백 템플릿에 값만 끼운 것이어서는 안 된다.**
+    """
+    m = _probe_mod()
+    dedicated = m.analysis_verdict(m.ASTATE_MISSING, "0")[1]
+    generic = m.analysis_verdict("zzz_probe_control", "0")[1]
+    # 폴백 템플릿을 «값만 바꾼」 형태로 재구성했을 때 전용 사유와 같으면 = 분기가 죽었다.
+    faked = generic.replace("zzz_probe_control", m.ASTATE_MISSING)
+    assert dedicated != faked, "★필드없음 분기가 폴백으로 떨어졌다(전용 설명이 없다)"
+    assert m.analysis_verdict(m.ASTATE_MISSING, "0")[0] == "unknown"
+
+
+def test_status_query_filters_expired_rows():
+    """★TTL 필터가 빠지면 **멈춘 분석기의 낡은 행**이 「현재」로 읽힌다.
+
+    `analyzer.py` 가 TTL 을 두는 이유가 바로 그것이다 — *«TTL 이 없으면 «분석기가
+    멈췄다»가 낡은 값으로 남아 «정상»과 구별되지 않는다»*. 형제
+    `test_alltime_query_has_no_window` 와 같은 축(질의의 창을 소스로 잠근다).
+    """
+    import re as _re
+    src = PROBE.read_text(encoding="utf-8")
+    m = _re.search(r"arow = \(await s\.execute\(text\(\s*(.*?)\)\s*,\s*\n", src, _re.DOTALL)
+    assert m, "★분석상태 질의를 못 찾았다 — 락이 낡았다(공허한 초록 방지)"
+    q = m.group(1)
+    assert "platform_settings" in q, "★다른 표를 읽고 있다"
+    assert "ttl_expires_at" in q, "★★TTL 필터가 없다 — 만료된 행을 현재로 읽는다"
+    assert "is null" in q, "★TTL 없는 행(영구 플래그)이 통째로 빠진다"
+    # ★대조군 — 워터마크 질의는 **의도적으로** TTL 필터가 없다(그 키는 TTL 이 없다).
+    m2 = _re.search(r"wm = \(await s\.execute\(text\(\s*(.*?)\)\s*,\s*\n", src, _re.DOTALL)
+    assert m2 and "ttl_expires_at" not in m2.group(1), "★두 질의가 같아졌다(축이 뭉개졌다)"

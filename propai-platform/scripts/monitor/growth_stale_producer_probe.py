@@ -181,6 +181,11 @@ async def main():
             "select value from platform_settings where key = :k"),
             {"k": ANALYZE_WATERMARK_KEY})).scalar()
         astate, aat, aaxes, ains, alast = analysis_fields(arow, wm)
+        # ★**변이 생존 기록**(2026-09-12 · 2차 감사): 아래 `now.strftime` 의 **표시 형식**과
+        #   워터마크 질의의 **문자열**을 바꾸는 변이는 생존한다. 구멍이 아니다 —
+        #   전자는 사람이 읽는 표시이고(계약이 아니다), 후자는 «TTL 필터가 **없어야** 한다»
+        #   쪽이 계약이라 락이 그 축을 대조군으로 단언한다
+        #   (`test_status_query_filters_expired_rows`). 키 이름은 생산자에서 파생해 따로 잠갔다.
         print("PROBE now=%s ctrl_type_total=%s ctrl_type_alltime=%s "
               "impossible_post=%s impossible_pre=%s "
               "engine_alive=%s builds=%s overlap=%s "
