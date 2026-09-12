@@ -53,7 +53,10 @@ def _mod():
         if "UTC" not in str(e):
             raise
         pytest.skip(f"py{sys.version_info.major}.{sys.version_info.minor} 에 datetime.UTC 없음 "
-                    f"— CI(3.12)에서는 실행된다: {e}")
+                    f"— CI(3.12)에서는 실행된다. ★로컬에서도 돌릴 수 있다: "
+                    f"~/.venvs/propai312/bin/python -m pytest (구축법은 "
+                    f"tests/test_interpreter_skips_carry_their_remedy.py 참조). "
+                    f"skip 은 「통과」가 아니라 「아직 모른다」다: {e}")
     return m
 
 

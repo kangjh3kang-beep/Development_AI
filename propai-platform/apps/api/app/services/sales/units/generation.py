@@ -78,7 +78,10 @@ async def map_from_design(db: AsyncSession, site_id: uuid.UUID, source_ref: str 
 
     from apps.api.database.models.sales.site_org import SalesSite
 
-    site = (await db.execute(select(SalesSite).where(SalesSite.id == site_id))).scalar_one_or_none()
+    # ★삭제된 현장에서 세대를 생성하지 않는다(리뷰 M3④ — 면제를 철회했다).
+    #   `if site and site.project_id`(다음 줄)가 이미 None 안전이라 무해하다.
+    site = (await db.execute(select(SalesSite).where(
+        SalesSite.id == site_id, SalesSite.deleted_at.is_(None)))).scalar_one_or_none()
     project_id = source_ref or (str(site.project_id) if site and site.project_id else None)
     if not project_id:
         return []

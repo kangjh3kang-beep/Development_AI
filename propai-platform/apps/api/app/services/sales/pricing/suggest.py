@@ -159,7 +159,13 @@ async def _site_location(
     db: AsyncSession, site_id: uuid.UUID,
 ) -> tuple[str | None, str | None, str | None]:
     """site → project 주소·첫 PNU(법정동코드 유도)·development_type."""
-    site = (await db.execute(select(SalesSite).where(SalesSite.id == site_id))).scalar_one_or_none()
+    # ★★삭제된 현장의 입지를 주지 않는다(2026-09-12 · 리뷰 M3③).
+    #   종전 면제 사유는 «인자가 이미 해석된 값» 이었는데 **거짓**이다 — 진입점 중
+    #   `POST /api/v2/feasibility/rough-scenario` 가 `Depends(get_current_user_optional)`
+    #   (익명 허용)로 요청 본문의 `site_id` 를 무검증 전달한다. 그 경로는 별건이고,
+    #   여기서는 **삭제 여부만** 막는다(`if not site` 가 이미 None 안전).
+    site = (await db.execute(select(SalesSite).where(
+        SalesSite.id == site_id, SalesSite.deleted_at.is_(None)))).scalar_one_or_none()
     if not site:
         return None, None, None
     row = (await db.execute(

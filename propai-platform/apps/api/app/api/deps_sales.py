@@ -254,12 +254,21 @@ async def resolve_site(request: Request, db: AsyncSession) -> SalesSite:
         raise HTTPException(400, "site context missing (X-Site-Code 헤더 또는 경로 site_id 필요)")
 
     # UUID 우선 시도, 실패 시 site_code 로 조회
+    # ★★삭제된 현장은 **없는 현장**이다(2026-09-09 · 전역 스윕). 형제 `site_auth._get_site`·
+    #   `views.list_sites`·`my_sites` 는 전부 `deleted_at` 을 걸었는데 **여기만 안 걸려**
+    #   있었다 — 없는 것을 새로 만드는 것이 아니라 **있는 것을 안 쓴** 자리다.
+    #   이 함수는 요청이 준 식별자(경로·헤더·서브도메인)로 현장을 여는 **진입점**이라,
+    #   빠지면 폐지된 현장의 전 라우트가 살아 있는 것과 같다.
     try:
-        site = (await db.execute(select(SalesSite).where(SalesSite.id == uuid.UUID(str(site_code))))).scalar_one_or_none()
+        site = (await db.execute(select(SalesSite).where(
+            SalesSite.id == uuid.UUID(str(site_code)), SalesSite.deleted_at.is_(None),
+        ))).scalar_one_or_none()
     except (ValueError, TypeError):
         site = None
     if site is None:
-        site = (await db.execute(select(SalesSite).where(SalesSite.site_code == str(site_code)))).scalar_one_or_none()
+        site = (await db.execute(select(SalesSite).where(
+            SalesSite.site_code == str(site_code), SalesSite.deleted_at.is_(None),
+        ))).scalar_one_or_none()
     if not site:
         raise HTTPException(404, "site not found")
     return site

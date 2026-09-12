@@ -75,6 +75,8 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
   const [role, setRole] = useState<RoleResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [needEnter, setNeedEnter] = useState(false);
+  // ★토큰이 없어 `role` 을 못 받는 경로에서 `password_set` 만 따로 보관한다(리뷰 M4).
+  const [pwSet, setPwSet] = useState<boolean | undefined>(undefined);
   const [pwOpen, setPwOpen] = useState(false);
   const [tab, setTab] = useState<string>("home");
   // 모바일 전체메뉴 시트 열림 상태(하단 탭바 '전체' 슬롯).
@@ -104,6 +106,16 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
         setNeedEnter(true);
         setLoading(false);
       });
+      // ★★**게이트가 여기서 inert 였다**(2026-09-12 · 리뷰 M4). 이 분기는 `setRole` 을
+      //   부르지 않으므로 `role` 이 `null` 이고, 모달에 넘기던 `role?.password_set` 이
+      //   **`undefined`** 였다 — 즉 신선 딥링크·토큰 만료라는 **주 경로**에서 자동 시도가
+      //   항상 노크했다. C1 게이트가 실제로 필요한 바로 그 경우다.
+      //   ⇒ `GET /sites/{id}/role` 은 **현장 토큰이 필요 없다**(일반 Bearer + 멤버십 판정)
+      //     므로 여기서도 물어볼 수 있다. 실패는 조용히 넘긴다(모름 = 시도한다).
+      apiClient
+        .get<RoleResponse>(`/sales/sites/${siteId}/role`)
+        .then((r) => setPwSet(r?.password_set))
+        .catch(() => {/* 비멤버·네트워크 → 모름으로 둔다 */});
       return;
     }
     // 일시적 인프라 오류(배포 전환·게이트웨이)는 자동 재시도해 사용자에게 노출하지 않는다.
@@ -441,12 +453,15 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
         </>
       )}
 
-      {/* 진입 토큰 없음/만료 → 재진입 모달 */}
+      {/* 진입 토큰 없음/만료 → 재진입 모달.
+          ★`password_set` 은 여태 **선언만** 돼 있고 읽는 곳이 0건이었다(2026-09-09 파생 전수).
+            여기서 소비한다 — 비번이 설정된 현장에는 모달이 자동 시도를 하지 않는다(리뷰 C1). */}
       {needEnter && (
         <SiteEnterModal
           locale={locale}
           siteId={siteId}
           siteName="이 현장"
+          passwordSet={role?.password_set ?? pwSet}
           open={needEnter}
           onClose={() => setNeedEnter(false)}
           onEntered={() => {

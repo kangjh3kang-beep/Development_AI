@@ -832,18 +832,33 @@ class _MyNode:
 
 
 class _MySitesDB:
-    """my_sites 의 3 SELECT 중 (a) org-node join 만 행을 돌려준다(소유/super 분기는 빈 결과).
+    """my_sites 의 SELECT 중 (a) org-node join 만 행을 돌려준다(소유/super 분기는 빈 결과).
 
-    첫 execute = node_rows(.all()), 이후 execute = 빈 scalars().all().
+    ★★**호출 횟수가 아니라 SQL 내용으로 라우팅한다**(2026-09-10 · 실측 사고로 교정).
+
+    종전 판은 «첫 execute = node_rows, 이후는 빈 결과» 였다. 그런데 `my_sites` 가
+    `_ensure(db)`(멱등 DDL 2건 + `commit`)를 부르게 되자 **첫 execute 가 DDL 이 되어**
+    이 스텁이 노드 행을 엉뚱한 자리에 돌려주고, 없는 `commit` 에서 죽었다:
+
+        AttributeError: '_MySitesDB' object has no attribute 'commit'   (CI 2026-09-09)
+
+    ★그리고 `_ensure` 는 **프로세스 전역 플래그**(`_ENSURED`)라, 다른 테스트가 먼저
+      태웠으면 짧게 끝나고 아니면 DDL 을 돈다 — 즉 이 실패는 **실행 순서에 의존**했다.
+      순서 의존 실패는 «가끔 빨갛다» 로 보여 원인을 엉뚱한 데서 찾게 만든다.
+
+    ⇒ 스텁의 라우팅 축을 **호출 순서 → 쿼리 내용**으로 바꾼다. 생산 코드가 쿼리를
+      더하거나 순서를 바꿔도 이 스텁은 계속 옳다.
     """
 
     def __init__(self, node_site_rows):
         self._rows = node_site_rows
-        self._calls = 0
+        self.sql: list[str] = []
 
     async def execute(self, statement, params=None):
-        self._calls += 1
-        rows = self._rows if self._calls == 1 else []
+        q = " ".join(str(statement).split())
+        self.sql.append(q)
+        # (a) 멤버십 조인만 행을 준다. 나머지(DDL · 비번 조회 · 소유 · 관리자 전체)는 빈 결과.
+        rows = self._rows if ("sales_org_nodes" in q and "sales_sites" in q) else []
 
         class _R:
             def all(self):
@@ -856,6 +871,9 @@ class _MySitesDB:
                 return _S()
 
         return _R()
+
+    async def commit(self):
+        """★`my_sites` 는 `_ensure` 를 거쳐 commit 할 수 있다 — **스텁도 계약이다.**"""
 
 
 @pytest.mark.asyncio
