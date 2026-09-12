@@ -411,3 +411,136 @@ def test_the_fallback_that_keeps_owners_in_is_still_developer() -> None:
     assert any("'DEVELOPER'" in r or '"DEVELOPER"' in r for r in returns), (
         f"소유자 폴백이 더 이상 DEVELOPER 를 주지 않는다 — 위 락의 축이 바뀌었다: {returns}"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E. **이 PR 이 실제로 바꾸는 행위**를 태운다 — 연결결산 게이트 (㉮ · 내가 남긴 약점)
+#
+# `views._TENANT_FINANCE_ROLES` 를 손복사 → SSOT 파생으로 바꾼 결과,
+# **가입 기본값(`admin`)이 그 집합에서도 빠진다.** 그래서 동작이 갈린다:
+#     소유 현장 0건인 tenant admin : 종전 통과 → **이제 403**
+#     소유 현장 1건 이상            : 종전·지금 **통과**(`owns > 0` 폴백)
+#
+# ★기존 락(`test_sales_admin_console.py::TestRequireTenantFinance`)은 `viewer`·`developer`·
+#   `superadmin` 을 태우는데 **`admin` 은 없다** — 즉 **이 PR 이 바꾸는 바로 그 모집단이
+#   무잠금**이었다. 집합 파생만 잠그고 **그 결과 나는 403 은 아무도 안 태웠다.**
+#
+# ★이것은 **의도된 변경**이다(그 함수 독스트링: *"차단: 순수 viewer … 소유 현장 0"*).
+#   그러나 **의도를 적는 것과 잠그는 것은 다르다** — 여기서 못 박아, 되돌아가면 빨개지게 한다.
+# ★미측정(권한 부족): «소유 현장 0건인 tenant admin» 이 라이브에 **몇 명인지** 모른다
+#   (DB 자격증명 없음). 도달성은 픽스처로 증명했고 **발생량은 미관측**이다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _FinanceUser:
+    def __init__(self, role: str, tenant_id):
+        self.role = role
+        self.tenant_id = tenant_id
+
+
+class _OwnedCountDB:
+    """소유 현장 수만 돌려주는 스텁 — `owns > 0` 폴백 분기를 가른다."""
+
+    def __init__(self, owned: int):
+        self._owned = owned
+        self.calls = 0
+
+    async def execute(self, *_a, **_k):
+        self.calls += 1
+
+        class _R:
+            def __init__(self, n):
+                self._n = n
+
+            def scalar(self):
+                return self._n
+
+        return _R(self._owned)
+
+
+@pytest.mark.asyncio
+async def test_registration_default_no_longer_grants_tenant_finance_without_owning_a_site() -> None:
+    """★★**모집단 ①** — 가입 기본값 + 소유 현장 **0** → **403**(이 PR 이 바꾸는 행위)."""
+    from fastapi import HTTPException
+
+    from app.api.endpoints.sales.views import require_tenant_finance
+
+    db = _OwnedCountDB(owned=0)
+    with pytest.raises(HTTPException) as ei:
+        await require_tenant_finance(db=db, user=_FinanceUser("admin", "tenant-1"))
+    assert ei.value.status_code == 403, (
+        f"가입 기본값이 소유 현장 없이 연결결산을 본다({ei.value.status_code}) — "
+        "손복사가 SSOT 파생으로 전파되지 않았다"
+    )
+    assert db.calls == 1, "소유 현장 폴백을 **거치기는 했는지** — 0회면 role 로 조기 통과한 것"
+
+
+@pytest.mark.asyncio
+async def test_owning_a_site_still_grants_tenant_finance_to_a_registered_user() -> None:
+    """★★**모집단 ②(반대편)** — 같은 라벨인데 소유 현장이 **있으면 통과**한다.
+
+    이것이 없으면 «전부 막는» 구현과 구별되지 않는다 — **과잉 차단도 결함이다.**
+    """
+    from app.api.endpoints.sales.views import require_tenant_finance
+
+    db = _OwnedCountDB(owned=1)
+    user = _FinanceUser("admin", "tenant-1")
+    assert await require_tenant_finance(db=db, user=user) is user, (
+        "자기 테넌트 현장을 소유한 사용자가 연결결산에서 막혔다 — 과잉 차단"
+    )
+
+
+@pytest.mark.asyncio
+async def test_platform_label_still_short_circuits_without_touching_the_db() -> None:
+    """★대조군 — 진짜 플랫폼 라벨은 **DB 를 안 거치고** 통과한다(집합이 안 비었다는 증거)."""
+    from app.api.endpoints.sales.views import require_tenant_finance
+
+    db = _OwnedCountDB(owned=0)
+    user = _FinanceUser("superadmin", "tenant-1")
+    assert await require_tenant_finance(db=db, user=user) is user
+    assert db.calls == 0, "플랫폼 라벨인데 소유 현장을 조회했다 — 조기 반환이 죽었다"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F. **부채를 초록 안에 보이게** — 같은 클래스가 「쓰기」 경로에 하나 더 있다
+#
+# 계획서에 좌표와 함께 적었지만 **산문은 재발 저수지**다(이 저장소 원장: 교훈의 77%가 산문만).
+# 여기서 `xfail(strict=True)` 로 **초록 안에 드러낸다**:
+#   · 고치기 전 → `xfailed` 로 **매 실행마다 보인다**(커밋 메시지와 달리 사라지지 않는다)
+#   · 고친 순간 → `XPASS` 가 **실패**로 뜬다 ⇒ 이 표식을 지우라고 기계가 말한다
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "★부채(별건) — `market.py:48 _MANAGER_ROLES` 에 가입 기본값(`admin`·`owner`)이 그대로 있고 "
+        "`:664` 에서 **테넌트·현장 검사 없이** 플랫폼 게이트로 쓰인다. 이 PR 은 `deps_sales` 축만 "
+        "고쳤다(사용자 승인 범위). ★그쪽은 **쓰기 경로**라 자체 분석·리뷰가 필요하다: "
+        "공고 INSERT(`market.py:436-452`, site 소유 검증 없음) → 작성자 본인 통과(`:610-637`) → "
+        "`sales_org_nodes` INSERT(`:688-693`) → `deps_sales.py:224-232` 가 살아 있는 노드를 무조건 "
+        "신뢰 ⇒ 남의 테넌트 현장에 **영속 멤버십**을 심을 수 있다(독립 리뷰 추론 · 쓰기 금지라 "
+        "실증 안 함). ★반증조건: `job_posts` INSERT 앞에 site 소유 검증이 있거나 `sales_org_nodes` "
+        "에 site↔tenant FK/트리거가 있으면 이 경로는 무너진다(애플리케이션 층 원문엔 없다). "
+        "★고치면 이 테스트가 XPASS 로 **실패**한다 — 그때 이 표식을 지워라."
+    ),
+)
+def test_market_manager_roles_also_drops_the_registration_default() -> None:
+    """★**아직 안 고친 자리**를 초록 안에 보이게 둔다(같은 결함 클래스 · 쓰기 경로)."""
+    import ast
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parents[1]
+           / "app/api/endpoints/sales/market.py").read_text(encoding="utf-8")
+    roles: set[str] = set()
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Set | ast.Tuple | ast.List):
+            for t in n.targets:
+                if isinstance(t, ast.Name) and t.id == "_MANAGER_ROLES":
+                    roles = {e.value for e in n.value.elts
+                             if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+    # ★공허 방지 — 상수를 못 찾으면 「위반 0」이 공짜가 된다(이 단언은 xfail 밖의 사실이다).
+    assert roles, "`market._MANAGER_ROLES` 를 못 찾았다 — 이 부채 표식의 축이 죽었다"
+
+    leaking = roles & {"admin", "owner"}
+    assert not leaking, (
+        f"`market._MANAGER_ROLES` 가 가입 기본값을 담고 있다: {sorted(leaking)}"
+    )
