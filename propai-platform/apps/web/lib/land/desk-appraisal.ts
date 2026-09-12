@@ -52,7 +52,9 @@ export type SubjectConsistency = {
   basis: string;
 };
 
-type Stat = { source?: string; pct?: number; basis?: string; rate?: number; factor?: number } | null;
+// ★`scope` = R-ONE 값이 **어느 범위**에서 나왔는가(요청 시·도 / 전국 대체). 표시 문구와 분리된
+//   기계 판독 축이다 — `source` 는 렌더 게이트라 `"R-ONE"` 로 고정돼 있어 이 구분을 못 나른다.
+type Stat = { source?: string; pct?: number; basis?: string; rate?: number; factor?: number; scope?: string } | null;
 
 /**
  * 탁상감정 응답 계약(DeskAppraisalReportClient 의 Result 를 이관 — 변경 없음).
@@ -84,15 +86,22 @@ export type DeskAppraisalResult = {
    */
   comparable_skipped_reason?: string | null;
   road_side?: string | null; time_adjust?: number; time_adjust_basis?: string; source?: string; base_year?: number;
+  /** ★시점수정 계수가 **실제로 나온 범위**. `market_stats.region` 과 다르면 요청 지역 값이 아니다. */
+  time_adjust_scope?: string | null;
   building?: { building_value_won: number; rationale: string } | null; complex_total_won?: number | null;
   income?: { income_value_won: number; rationale: string } | null; income_total_won?: number | null;
   complex_note?: string | null;
   market_stats?: {
     region?: string;
+    /** ★주소에서 시·도를 실제로 해석했는가. false 면 `region` 의 "전국" 은 **해석 결과가 아니라 기본값**이다. */
+    region_resolved?: boolean;
     rone_available?: boolean; cap_rate?: Stat; jeonse_conversion_rate?: Stat; housing_time_adjust?: Stat;
     land_price_trend?: {
       monthly?: { period: string; rate: number }[];
-      yearly?: { year: string; rate: number }[];
+      /** ★`months_counted` — 그 해에 **실제로 더한 달 수**. 12 미만이면 부분 합계다. */
+      yearly?: { year: string; rate: number; months_counted?: number }[];
+      /** ★같은 시점에 값이 갈려 **버린** 시점 수. >0 이면 통계가 일부 구간을 못 셌다. */
+      ambiguous_periods?: number;
       /** ★시계열의 실제 범위 — 화면이 라벨을 지어내지 않게(2026-09-07). */
       scope?: string;
       /** 고유 기간 수. 지역이 섞이면 같은 기간이 반복된다. */
