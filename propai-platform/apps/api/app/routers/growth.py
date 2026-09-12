@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.middleware.growth_telemetry import normalize_route
+from app.services.growth import feedback_scope as _fb_scope
 from apps.api.database.session import get_db
 
 #: `/api/v1`·`/api/v2` … 버전 접두사 판별(정규화기와 같은 형태).
@@ -677,7 +678,9 @@ async def rollback_heal(
 # verify_result(Phase3 verifier 발행) + 이 피드백이 analyzer.quality_drop 의
 # 양쪽 신호(verify fail 비율 + feedback down 비율)를 채운다.
 
-_FEEDBACK_TARGET_TYPES = {"llm_output", "analysis", "recommendation"}
+#: ★손목록을 **정본에 위임**한다(전역 §29 — 없는 것을 만드는 것과 있는 것을 안 쓴 것은 처방이 다르다).
+#  종전엔 같은 값이 여기와 서비스층에 **따로** 있었다.
+_FEEDBACK_TARGET_TYPES = _fb_scope.FEEDBACK_TARGET_TYPES
 _FEEDBACK_VERDICTS = {"up", "down"}
 
 

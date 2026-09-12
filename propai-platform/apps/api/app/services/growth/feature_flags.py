@@ -35,6 +35,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from app.services.growth import feedback_scope as _fb_scope
 from app.services.growth import healing_rules
 
 logger = logging.getLogger(__name__)
@@ -388,8 +389,10 @@ async def _ab_stats(db, w_hours: int = 24) -> dict[str, dict[str, dict[str, Any]
             "  SUM(CASE WHEN verdict='down' THEN 1 ELSE 0 END) AS down "
             "FROM ai_feedback "
             "WHERE service IS NOT NULL AND created_at >= :since "
+            # ★자동 채택 경로 — 자가검증 표면 제외(`feedback_scope` 정본 · analyzer 와 같은 이유).
+            "  AND target_type <> ALL(:excl_targets) "
             "GROUP BY service"
-        ), {"since": since})).fetchall()
+        ), {"since": since, "excl_targets": _fb_scope.auto_effector_excluded()})).fetchall()
         for r in fb:
             svc = r[0]
             vers = out.get(svc)

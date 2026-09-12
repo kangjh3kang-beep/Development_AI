@@ -1039,14 +1039,23 @@ async def _analyze_quality_drop(db, w0, w1, coverage: dict[str, dict[str, Any]] 
         "  AND created_at >= :w0 AND created_at < :w1 AND service IS NOT NULL"
     ), {"w0": w0, "w1": w1})).fetchall()
 
+    # ★**자동 효과기 경로**라 자가검증 표면의 피드백을 제외한다(`feedback_scope` 가 정본).
+    #   이 집계 → `quality_drop` → `feature_toggle`(서술기능 자동 비활성). 자가검증 배지의 👎 가
+    #   여기로 들어오면 *"값이 이상하다고 알려줄수록 그걸 설명하는 기능이 먼저 꺼지는"* 뒤집힌
+    #   루프가 된다(`apps/web/eslint.config.mjs` 가 그 사고를 빌드로 막으며 적어 둔 그것).
+    #   ★`target_type` 은 **NOT NULL** 이므로 `<> ALL` 이 행을 조용히 버리지 않는다
+    #     (그 전제를 `tests/test_feedback_source_scope.py` 가 DDL 원문으로 잠근다).
+    from app.services.growth.feedback_scope import auto_effector_excluded
+
     fb_rows = (await db.execute(text(
         "SELECT service, "
         "  SUM(CASE WHEN verdict='down' THEN 1 ELSE 0 END) AS down, "
         "  COUNT(*) AS total "
         "FROM ai_feedback "
         "WHERE created_at >= :w0 AND created_at < :w1 AND service IS NOT NULL "
+        "  AND target_type <> ALL(:excl_targets) "
         "GROUP BY service"
-    ), {"w0": w0, "w1": w1})).fetchall()
+    ), {"w0": w0, "w1": w1, "excl_targets": auto_effector_excluded()})).fetchall()
 
     agg: dict[str, dict[str, int]] = {}
     for r in verify_rows:

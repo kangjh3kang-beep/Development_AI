@@ -338,7 +338,10 @@ def test_backend_unresolved_calls_are_documented() -> None:
         #   느슨하게(파일 단위로) 바꾸지 말 것: 같은 파일의 **새** 비리터럴 호출이
         #   조용히 통과하게 된다. 밀렸으면 ast 로 **다시 파생해** 숫자를 갱신하라.
         #   (2026-09-05 `#989` 가 수신부 앞에 헬퍼를 넣어 98 → 137 로 밀렸다.)
-        "app/routers/growth.py:137(payload 비리터럴)",
+        # ★2026-09-12 sid=68ed1a1d: `feedback_scope` 임포트를 상단에 넣어 **137 → 138** 로 밀렸다.
+        #   이 락의 지시대로 **ast 로 다시 파생**해 갱신했다(느슨하게 바꾸지 않았다 —
+        #   파일 단위로 풀면 같은 파일의 **새** 비리터럴 호출이 조용히 통과한다).
+        "app/routers/growth.py:138(payload 비리터럴)",
         # LLM 호출 계측 — payload 를 **같은 함수 안에서 조건부로 조립**한다. 그 6키는
         # `DYNAMIC_BACKEND_KEYS` 로 올려 마스킹 단언에 **직접 실어** 태운다.
         "app/services/ai/base_interpreter.py:410(payload 비리터럴)",
