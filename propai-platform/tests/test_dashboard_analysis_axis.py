@@ -449,3 +449,52 @@ def test_no_arg_run_is_not_the_library_gate():
     r = subprocess.run(["bash", "-c", f"timeout 25 bash '{SCRIPT}' 2>&1 | head -1"],
                        cwd=REPO, capture_output=True, text=True)
     assert "통합자 계기판" in r.stdout, repr(r.stdout[:200])
+
+
+# ── ⑧ ★셸 리터럴 ↔ 파이썬 상수 **계약**(독립 리뷰가 가르쳐 준 축 · 2026-09-12) ────────
+#    동료 세션(sid=68ed1a1d)이 자기 PR 에서 찾은 형태를 제 코드에 대 보니 **같은 구멍**이었다:
+#      *「락이 전부 **심볼**을 참조하면 값을 바꿔도 **양쪽이 함께 움직여 원리적으로 판별 불가**」*
+#    ★**변이로 확인했다**: `ASTATE_MISSING = "(필드없음)"` → `"(no-field)"` 로 바꿔도 **SURVIVED**.
+#      리터럴 입력(`("(필드없음)", …)`)조차 못 잡는다 — 값이 바뀌면 그 입력은 **폴백으로 떨어지는데
+#      폴백도 `unknown`** 이라 kind 가 같기 때문이다. ***같은 답을 내는 두 경로는 서로를 가리지 못한다.***
+#    ⇒ 가르는 유일한 축은 **셸이 박아 둔 리터럴과의 일치**다. 그건 **계약**이다 —
+#      셸이 `ASTATE="(필드없음)"` 로 쓰고 파이썬이 그 값으로 분기하므로, 값이 갈리면
+#      「필드 없음」이 **전용 사유를 잃고 폴백으로 조용히 강등**된다.
+#    ★모든 상수를 리터럴로 핀하지는 않는다 — **소비처가 문자열로 분기하는 것만**이 계약이다.
+def test_shell_literal_and_python_constant_are_one_contract():
+    """★셸의 리터럴과 프로브의 상수가 **같은 값**이어야 한다(둘 다 소스에서 파생)."""
+    import re as _re
+    probe = PROBE.read_text(encoding="utf-8")
+    dash = SCRIPT.read_text(encoding="utf-8")
+
+    m = _re.search(r'^ASTATE_MISSING\s*=\s*"([^"]+)"', probe, _re.M)
+    assert m, "★ASTATE_MISSING 선언을 못 찾았다 — 조회기가 죽었다(이름이 바뀌었나)"
+    py_value = m.group(1)
+
+    # 셸이 **실행 라인에서** 그 값을 쓰는지(주석 배제 — 이 저장소는 주석에 뚫린 전례가 있다)
+    code = [ln for ln in dash.splitlines() if not ln.lstrip().startswith("#")]
+    hits = [ln for ln in code if f'ASTATE="{py_value}"' in ln]
+    assert hits, (
+        f"★셸이 ASTATE 를 {py_value!r} 로 채우지 않는다 — 값이 갈리면 «필드 없음」이 "
+        "전용 사유를 잃고 폴백으로 조용히 강등된다:\n"
+        + "\n".join(ln for ln in code if "ASTATE=" in ln)
+    )
+    # ★대조군 — 이 검사기가 살아 있는가(셸에 ASTATE 대입 자체가 있는가)
+    assert any("ASTATE=" in ln for ln in code), "조회기 사망"
+
+
+def test_absent_constant_is_not_silently_shadowed():
+    """★형제 상수도 같은 축으로 본다 — `(행없음)` 은 **프로브가 만들고 프로브가 읽는다**.
+
+    ★그래서 셸 리터럴 축이 **없는 것이 정상**이다(셸은 이 값을 쓰지 않는다).
+      대신 **생산자↔소비자가 같은 파일 안**이라는 것을 단언해, 나중에 셸로 새면 여기가 빨개진다.
+    """
+    probe = PROBE.read_text(encoding="utf-8")
+    dash = SCRIPT.read_text(encoding="utf-8")
+    m = __import__("re").search(r'^ASTATE_ABSENT\s*=\s*"([^"]+)"', probe, __import__("re").M)
+    assert m, "★ASTATE_ABSENT 선언을 못 찾았다"
+    code = [ln for ln in dash.splitlines() if not ln.lstrip().startswith("#")]
+    assert not [ln for ln in code if m.group(1) in ln], (
+        f"★셸이 {m.group(1)!r} 를 직접 쓰기 시작했다 — 그러면 이것도 계약이 되므로 "
+        "위 `test_shell_literal_and_python_constant_are_one_contract` 와 같은 락이 필요하다"
+    )
