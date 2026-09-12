@@ -61,7 +61,25 @@ assert_a1_host() {
   local self_repo
   self_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd -P)" || self_repo=""
 
-  [ -n "$status_fn" ] && "$status_fn" "ABORT wrong-checkout(REPO 부재)"
+  # ★★R3(독립 리뷰 MEDIUM-1) — **잰 값으로 실제로 갈라야 한다.**
+  #   R2 는 `self_repo` 를 **측정해 놓고 인쇄만** 했다. 그래서 기계가 읽는 축(rc·STATUS)이
+  #   서로 다른 두 사건에서 **완전히 동일**했다(실측):
+  #       표식 없는 기계 → ABORT wrong-checkout(REPO 부재) · rc=11
+  #       개발 워크트리  → ABORT wrong-checkout(REPO 부재) · rc=11
+  #   R1 에는 이름이 **둘**이었는데 R2 에서 **하나로 합쳐졌다.**
+  #   ⇒ ***이 파일의 명제가 한 층 위로 옮겨간 것이다*** — 나는 rc 축을 가르면서
+  #     **상태명 축에서 뭉쳤다.** 그리고 그 근거(«권장 실행법이 `setsid … >/dev/null` 이라
+  #     문구를 아무도 안 본다»)는 **내가 MAJOR-A 에서 직접 쓴 것**이다.
+  #   ★갈라 두면 **도달 불가 분기가 스스로 드러난다**(그게 이 처방의 부수 효과다).
+  local kind
+  if [ -z "$self_repo" ]; then
+    kind="unknown-checkout"      # 내가 어디서 도는지조차 못 쟀다 — 이것도 「모름」이다
+  elif [ "$self_repo" != "$repo" ]; then
+    kind="wrong-checkout"        # 기대한 저장소와 **다른 체크아웃**에서 돌고 있다
+  else
+    kind="repo-missing"          # 같은데 없다 = 진짜 체크아웃 손상(경합 외 도달 불가)
+  fi
+  [ -n "$status_fn" ] && "$status_fn" "ABORT ${kind}(\$REPO=${repo})"
   cat >&2 <<WRONGHOST
 ★중단 — \$REPO 가 없습니다. **경로 상수를 고치지 마십시오.**
 
@@ -78,7 +96,12 @@ assert_a1_host() {
   ◎ A1 에서 실행하십시오:
       ssh -i ~/.oci.key ubuntu@<A1> 'bash \$HOME/Development_AI/propai-platform/scripts/<이 스크립트>'
     (★A1 주소는 기억에서 적지 말고 저장소에서 파생하십시오)
-★두 값이 **같은데도** 이 메시지가 보인다면 그때는 진짜 체크아웃 손상입니다(디렉토리가 사라졌습니다).
+★판정: ${kind}
+  · wrong-checkout   → **기계가 다르거나 다른 체크아웃**입니다. 상수를 고치지 마십시오.
+  · unknown-checkout → 내가 어디서 도는지 못 쟀습니다(BASH_SOURCE 해석 실패).
+  · repo-missing     → 두 값이 **같은데** 없습니다 = 진짜 체크아웃 손상.
+    ★이 분기는 «\$REPO 가 없다」와 «self_repo == \$REPO» 를 동시에 요구하므로
+      **경합(삭제와 실행이 겹침) 말고는 도달 불가**입니다 — 뜨면 그 자체가 관측입니다.
 WRONGHOST
   exit 11
 }

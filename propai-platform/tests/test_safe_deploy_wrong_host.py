@@ -328,8 +328,11 @@ def test_guard_exit_code_is_unique_in_every_caller() -> None:
     for rel in users:
         src = (REPO_ROOT / rel).read_text(encoding="utf-8")
         # 그 스크립트 **자신이** 쓰는 종료코드(가드 source 줄은 제외한다)
-        own = set(re.findall(r"(?<!guard-lib-missing\n)^\s*(?:[^#\n]*;\s*)?exit (\d+)", src, re.M))
-        own.discard("12")  # 가드 라이브러리 부재 — 이 PR 이 도입한 전용 코드
+        # ★R3(독립 리뷰 MINOR-1) — 종전엔 `own.discard("12")` 가 있었다. **무동작이었고**
+        #   (`guard_codes=={'11'}` 이라 교집합에 12 가 들어올 일이 없다) **나중엔 구멍**이다:
+        #   가드가 12 를 쓰게 되는 순간 그 discard 가 **진짜 충돌을 조용히 지운다.**
+        #   ***지금 장식인 예외는 나중에 서식지가 된다.*** 지웠다.
+        own = set(re.findall(r"^\s*(?:[^#\n]*;\s*)?exit (\d+)", src, re.M))
         clash = guard_codes & own
         assert not clash, (
             f"{rel}: 가드 종료코드 {sorted(clash)} 가 그 스크립트의 **다른 사건**과 겹친다. "
@@ -380,3 +383,48 @@ def test_exemption_premises_are_true_not_just_written() -> None:
     assert "set -euo pipefail" not in other, (
         "대조군이 죽었다 — safe-deploy.sh 도 `-e` 를 갖게 됐다면 이 판별식은 무의미하다"
     )
+
+
+
+def test_kind_is_derived_from_the_measured_value(tmp_path: Path) -> None:
+    """★★**잰 값으로 실제로 가른다** — 측정해 놓고 인쇄만 하지 않는다(독립 리뷰 MEDIUM-1).
+
+    R2 는 ``self_repo`` 를 **측정해 놓고 분기에 쓰지 않아**, 기계가 읽는 축(rc·STATUS)이
+    서로 다른 입력에서 **완전히 동일**했다. ***이 PR 의 명제가 한 층 위로 옮겨간 것이다*** —
+    rc 축을 가르면서 **상태명 축에서 뭉쳤다**.
+
+    ★그런데 리뷰어가 든 두 시나리오는 **사실 같은 사건**이었다(둘 다 ``self_repo != repo``).
+    R1 의 두 이름(``wrong-host``/``repo-missing``)은 **「부재로부터 유도」가 만든 인공물**이고,
+    그것을 없앤 것이 MAJOR-1 의 수정이다. 그래서 **합쳐진 것 자체는 옳다.**
+    남은 진짜 축은 아래 셋이고, 이 테스트가 **그 셋이 서로 다른 이름을 갖는지**를 잠근다.
+    """
+    home = tmp_path / "home"
+    (home / "My_Projects" / "Development_AI").mkdir(parents=True)
+    _run(str(home), str(REPO_ROOT))
+    status = Path("/tmp/deploy_status.txt").read_text(encoding="utf-8")
+    assert "wrong-checkout" in status, f"측정값으로 안 갈랐다: {status!r}"
+    # ★상태 문구가 **잰 값을 싣는다** — 두 입력이 같은 kind 여도 사람이 구별할 수 있어야 한다.
+    assert str(home) in status, f"어떤 $REPO 를 기대했는지 상태에 없다: {status!r}"
+
+
+def test_three_kinds_have_distinct_names() -> None:
+    """★세 사건이 **서로 다른 이름**을 갖는다 — 하나라도 겹치면 애초의 결함이 그대로다."""
+    lib = (REPO_ROOT / "propai-platform/scripts/lib/assert-a1-host.sh").read_text(encoding="utf-8")
+    kinds = set(re.findall(r'kind="([a-z-]+)"', lib))
+    assert kinds == {"unknown-checkout", "wrong-checkout", "repo-missing"}, (
+        f"판정 이름 집합이 바뀌었다: {sorted(kinds)}"
+    )
+    # [판별력] 판정이 **분기**에서 나와야 한다 — 상수 하나면 세 이름이 장식이다.
+    assert 'if [ -z "$self_repo" ]' in lib, "self_repo 를 안 보고 판정한다"
+    assert '"$self_repo" != "$repo"' in lib, "두 관측값을 비교하지 않는다"
+
+
+@pytest.mark.xfail(
+    reason="★도달 불가 — `repo-missing` 은 «$REPO 가 없다»와 «self_repo == $REPO»를 동시에 "
+    "요구하는데, 이 스크립트는 $REPO 안에 있으므로 둘이 동시에 참일 수 없다(삭제와 실행이 "
+    "겹치는 경합 외). **안 태웠다는 사실을 초록 안에 남긴다** — 커밋 메시지에만 적으면 "
+    "다음 사람이 「검증됐다」고 읽는다. 재현기를 만들면 이 xfail 이 깨지고 그때 갚는다.",
+    strict=True,
+)
+def test_repo_missing_branch_is_burned() -> None:
+    raise AssertionError("repo-missing 분기를 실제로 태우는 재현기가 없다")
