@@ -1943,11 +1943,16 @@ def test_time_keys_are_shared_so_both_extractors_read_the_same_period() -> None:
 @pytest.mark.asyncio
 async def test_default_source_says_why_it_fell_back(monkeypatch) -> None:
     """★R9 LOW-1 — 거부 사유가 `기본` 한 글자로 뭉개지지 않는다."""
+    # ★★두 모집단을 **올바른 축**으로 가른다(독립 리뷰 R10 · 2026-09-12).
+    #   종전엔 `_patch_statbl` 이 `_statbl` 을 **항상 truthy** 로 만들어, 「미설정」 모집단이
+    #   실제로는 「설정됨」이었다 — 축을 통계표 단위로 내리자 그 픽스처 결함이 드러났다.
+    #   ⇒ 미설정은 `_statbl` 이 **빈 문자열**을 주는 상태로 만든다.
+    import app.services.land_intelligence.reb_statistics_service as _rs
     from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
 
-    # R-ONE 자체가 없는 경우 ↔ 조회는 됐는데 값을 못 쓴 경우를 가른다.
     _patch_rone(monkeypatch, [])
     _patch_statbl(monkeypatch, [])
+    monkeypatch.setattr(_rs, "_statbl", lambda key: "")      # ← 통계표 **미설정**
     down = await desk_appraisal(address="서울특별시 강남구 1", area_sqm=500.0,
                                 official_price_per_sqm=1_000_000.0,
                                 monthly_rent_won=5_000_000, deposit_won=100_000_000)
@@ -1958,11 +1963,92 @@ async def test_default_source_says_why_it_fell_back(monkeypatch) -> None:
     assert "R-ONE 미설정" in str(inc_d.get("cap_rate_source") or ""), inc_d.get("cap_rate_source")
     assert "R-ONE 미설정" in str(inc_d.get("deposit_conv_source") or ""), inc_d.get("deposit_conv_source")
 
+    # ★반대 모집단 — 통계표는 **설정돼 있는데** 값을 못 쓴 경우.
     _patch_rone(monkeypatch, _many_months("서울", rate=0.5))
-    _patch_statbl(monkeypatch, _many_months("서울", rate=0.5))
+    _patch_statbl(monkeypatch, [])                            # 조회는 되는데 행이 없다
+    monkeypatch.setattr(_rs, "_statbl", lambda key: "DUMMY_ID")
     up = await desk_appraisal(address="서울특별시 강남구 1", area_sqm=500.0,
                               official_price_per_sqm=1_000_000.0,
                               monthly_rent_won=5_000_000, deposit_won=100_000_000)
     inc_u = up.get("income") or {}
-    assert "R-ONE 미설정" not in str(inc_u.get("cap_rate_source") or ""), inc_u.get("cap_rate_source")
-    assert "R-ONE 미설정" not in str(inc_u.get("deposit_conv_source") or ""), inc_u.get("deposit_conv_source")
+    # ★양성 단언 — 「아니다」만 보면 값이 `"기본"` 으로 되돌아가도 통과한다(R10 지적).
+    assert "값 채택 불가" in str(inc_u.get("cap_rate_source") or ""), inc_u.get("cap_rate_source")
+    assert "값 채택 불가" in str(inc_u.get("deposit_conv_source") or ""), inc_u.get("deposit_conv_source")
+
+
+# ─────────────────────────────────────────────────────────────
+# ★R10 HIGH — 집계행이 **있는데 값이 결측**이면 좁히기가 «성공» 하고 거짓 값을 낸다
+#   R-ONE 은 결측을 `'-'`·`''`·`None` 로 준다(이 저장소가 «흔한 형태» 라고 적어 둔 관측).
+#   그 한 셀 때문에 값 있는 규모 행이 지워져 **한 달 묵은 값**이 「R-ONE 실측」으로 나갔고,
+#   시계열에서는 그 시점이 통째로 사라져 **24개월 계수가 None** 이 됐다.
+#   ★계획서 §347 의 «좁히기가 실패하면 거부로 되돌아가므로 거짓 값은 아니다» 가 반증된 자리다.
+# ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("missing", ["-", "", None, "N/A"])
+def test_valueless_aggregate_row_does_not_displace_rows_that_have_values(missing) -> None:
+    """★결측 집계행은 **좁히기의 주체가 되지 못한다**(값 있는 행이 산다)."""
+    from app.services.external_api.reb_client import latest_value_from_rows
+
+    rows = [
+        {"REGION_NM": "서울", "CLS_NM": "전체", "ITM_NM": "전월세전환율",
+         "DTA_VAL": 5.4, "WRTTIME_IDTFR_ID": "202606"},
+        {"REGION_NM": "서울", "CLS_NM": "전체", "ITM_NM": "전월세전환율",
+         "DTA_VAL": missing, "WRTTIME_IDTFR_ID": "202607"},
+        {"REGION_NM": "서울", "CLS_NM": "40㎡이하", "ITM_NM": "전월세전환율",
+         "DTA_VAL": 5.9, "WRTTIME_IDTFR_ID": "202607"},
+    ]
+    assert latest_value_from_rows(rows, "서울") == (5.9, "202607"), (
+        f"결측 집계행({missing!r})이 값 있는 행을 지워 구값이 나왔다"
+    )
+
+
+def test_one_missing_cell_does_not_kill_the_whole_series() -> None:
+    """★24개월 중 한 달의 결측 셀이 **계수를 통째로 죽이지 않는다**."""
+    from app.services.external_api.reb_client import (
+        cumulative_factor_from_rows,
+        rate_series_from_rows,
+    )
+
+    rows: list[dict] = []
+    for yr in ("2024", "2025"):
+        for m in range(1, 13):
+            t = f"{yr}{m:02d}"
+            rows.append({"REGION_NM": "서울", "CLS_NM": "전체", "ITM_NM": "변동률",
+                         "DTA_VAL": ("-" if t == "202406" else 0.1), "WRTTIME_IDTFR_ID": t})
+            rows.append({"REGION_NM": "서울", "CLS_NM": "40㎡이하", "ITM_NM": "변동률",
+                         "DTA_VAL": 0.1, "WRTTIME_IDTFR_ID": t})
+    series = rate_series_from_rows(rows, "서울", _no_fallback=True)
+    assert len(series) == 24, f"결측 셀 하나로 시점이 사라졌다: {len(series)}"
+    assert cumulative_factor_from_rows(rows, "서울", 24) == 1.0243
+
+
+def test_descriptive_time_key_never_outranks_a_sortable_one() -> None:
+    """★R10 MEDIUM — 설명형 시점 키(`WRTTIME_DESC`)가 정렬가능 키를 **이기면 안 된다**.
+
+    설명형은 `"2024년 10월"` 처럼 사전식 정렬이 깨지고, `YYYY` 로 시작하지 않으면
+    연도별 통계가 **통째로 사라진다**. 통합하며 그것을 2순위로 넣었던 것을 맨 뒤로 돌렸다.
+    """
+    from app.services.external_api.reb_client import rate_series_from_rows, trend_from_rows
+
+    rows = [
+        {"REGION_NM": "서울", "CLS_NM": "전체", "ITM_NM": "변동률", "DTA_VAL": 0.1,
+         "WRTTIME_DESC": f"'24년 {m}월", "PRD_DE": f"2024{m:02d}"}
+        for m in range(1, 13)
+    ]
+    periods = [t for t, _ in rate_series_from_rows(rows, "서울", _no_fallback=True)]
+    assert periods == [f"2024{m:02d}" for m in range(1, 13)], periods
+    yearly = trend_from_rows(rows, "서울", 24).get("yearly") or []
+    assert yearly and yearly[0]["year"] == "2024", yearly
+
+
+def test_trend_returns_an_empty_mapping_not_a_shell_when_nothing_is_countable() -> None:
+    """★R10 — `{}` 와 `{"yearly": []}` 는 다르다(소비처의 `if not t` 게이트가 갈린다)."""
+    from app.services.external_api.reb_client import trend_from_rows
+
+    rows = [
+        {"REGION_NM": "서울", "CLS_NM": f"규모{i}", "ITM_NM": "변동률",
+         "DTA_VAL": v, "WRTTIME_IDTFR_ID": "202607"}
+        for i, v in enumerate((0.5, 0.9))
+    ]
+    assert trend_from_rows(rows, "서울", 24) == {}, "빈 매핑이 아니라 껍데기를 돌려줬다"

@@ -502,11 +502,17 @@ async def desk_appraisal(
         #   카디널리티 거부 · sane 범위 이탈)이 사용자·조사자 양쪽에서 **구별 불가**였다.
         #   사유는 `logger.info` 로 서버에만 남아 화면·제출본 어디에도 없었다.
         #   ⇒ 반환 타입을 바꾸지 않고 **가를 수 있는 만큼** 가른다(모름을 한 값으로 뭉개지 않는다).
-        _rone_up = bool(market_stats.get("rone_available"))
+        # ★★축 교정(독립 리뷰 R10 · 2026-09-12): 종전엔 `rone_available` 로 갈랐는데 그것은
+        #   **다섯 통계의 OR** 이다. 전월세전환율 통계표가 **미설정**이어도 지가변동률만 살아
+        #   있으면 사유가 «값 채택 불가»(= 조회해서 거부했다)로 찍혔다 — **거짓 사유**다.
+        #   ⇒ 축을 **그 통계표 단위**로 내린다.
+        from app.services.land_intelligence.reb_statistics_service import _statbl
         if cap_source == "기본":
-            cap_source = "기본(R-ONE 값 채택 불가)" if _rone_up else "기본(R-ONE 미설정)"
+            cap_source = ("기본(R-ONE 값 채택 불가)" if _statbl("commercial_yield")
+                          else "기본(R-ONE 미설정)")
         if conv_source == "기본":
-            conv_source = "기본(R-ONE 값 채택 불가)" if _rone_up else "기본(R-ONE 미설정)"
+            conv_source = ("기본(R-ONE 값 채택 불가)" if _statbl("jeonse_conv")
+                           else "기본(R-ONE 미설정)")
     except Exception:  # noqa: BLE001
         market_stats = {}
 

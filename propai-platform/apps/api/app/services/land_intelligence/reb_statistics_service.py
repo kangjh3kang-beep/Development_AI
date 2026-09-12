@@ -87,7 +87,15 @@ async def housing_time_adjust(address: str = "") -> dict[str, Any] | None:
 
 
 async def commercial_cap_rate(address: str = "") -> dict[str, Any] | None:
-    """상업용부동산 투자수익률(소득수익률) 최신값 → 자본환원율(cap rate). 비정상 시 None."""
+    """상업용부동산 투자수익률 최신값 → 자본환원율(cap rate). 비정상 시 None.
+
+    ★★«(소득수익률)» 표기를 뺐다(독립 리뷰 R10 · 2026-09-12). **어떤 코드도 `ITM_NM` 을 고르지
+      않는다** — `latest_value_from_rows` 에 항목 필터가 한 줄도 없고, 레지스트리 키워드도
+      «상업용부동산 투자수익률» 이며, 테스트 픽스처도 `ITM_NM="투자수익률"` 이다.
+      투자수익률 = 소득수익률 + 자본수익률이라 **cap rate 로 쓰면 산식이 틀린다.**
+      이 PR 이 «지어낸 «실측» 라벨 금지» 를 선언하며 형제를 스윕했는데 이 라벨이 그 클래스였다.
+    ★실제로 소득수익률을 쓰려면 항목을 **선택**해야 한다 — 선택 전에는 그렇게 말하지 않는다.
+    """
     statbl = _statbl("commercial_yield")
     if not statbl:
         return None
@@ -107,7 +115,7 @@ async def commercial_cap_rate(address: str = "") -> dict[str, Any] | None:
         if lo <= val <= hi:
             return {"cap_rate": round(val / 100.0, 4), "pct": val,
                     "wrttime": wrttime, "source": "R-ONE",
-                    "basis": "상업용부동산 투자수익률(소득수익률) 실측"}
+                    "basis": "상업용부동산 투자수익률 실측"}
     except Exception as e:  # noqa: BLE001
         logger.warning("REB 조회 실패: %s", str(e)[:160])
     return None

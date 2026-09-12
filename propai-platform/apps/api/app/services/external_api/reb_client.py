@@ -175,7 +175,12 @@ _AGGREGATE_CLS_NM = "전체"
 #   ★어느 라이브 표가 `WRTTIME_DESC` 전용인지는 **미측정**이다 — 그래서 «무해하니 둔다» 가
 #     아니라 **키를 합쳐 비대칭 자체를 없앤다**(드리프트할 자리를 남기지 않는다).
 _VAL_KEYS = ("DTA_VAL", "VALUE", "DATA_VALUE", "dtaVal")
-_TIME_KEYS = ("WRTTIME_IDTFR_ID", "WRTTIME_DESC", "WRTTIME", "PRD_DE")
+# ★★순서 교정(독립 리뷰 R10 MEDIUM · 2026-09-12): 통합하면서 `WRTTIME_DESC` 를 **2순위**로
+#   넣었는데, 그것은 **설명형**(`"2024년 10월"`·`"'24년 7월"`)이라 정렬가능 키보다 앞에 두면
+#   시계열이 **사전식으로 뒤섞이고**(10월이 1월보다 앞) `YYYY` 로 시작하지 않는 표기에선
+#   **연도별 통계가 통째로 사라진다**(실측). 미측정 키를 정렬가능 키 앞에 두는 것은
+#   «비대칭 제거» 가 아니라 위험 전파다. ⇒ **맨 뒤**로.
+_TIME_KEYS = ("WRTTIME_IDTFR_ID", "WRTTIME", "PRD_DE", "WRTTIME_DESC")
 
 
 
@@ -184,8 +189,19 @@ def _period_of(row: dict[str, Any], time_keys: tuple[str, ...]) -> str:
     return str(next((row.get(k) for k in time_keys if row.get(k) not in (None, "")), ""))
 
 
+def _has_usable_value(row: dict[str, Any], val_keys: tuple[str, ...]) -> bool:
+    """그 행이 **쓸 수 있는 수치**를 담았는가(R-ONE 은 결측을 `'-'`·`''`·`None` 로 준다)."""
+    raw = next((row.get(k) for k in val_keys if row.get(k) not in (None, "")), None)
+    try:
+        float(raw)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def narrow_to_period_aggregate(
-    rows: list[dict[str, Any]], time_keys: tuple[str, ...]
+    rows: list[dict[str, Any]], time_keys: tuple[str, ...],
+    val_keys: tuple[str, ...] = _VAL_KEYS,
 ) -> list[dict[str, Any]]:
     """(시점)별로 집계행(`CLS_NM == "전체"`)이 있으면 **그 시점은 집계행만** 남긴다.
 
@@ -241,7 +257,24 @@ def narrow_to_period_aggregate(
         by_period.setdefault(_period_of(row, time_keys), []).append(row)
     out: list[dict[str, Any]] = []
     for group in by_period.values():
-        agg = [r for r in group if str(r.get("CLS_NM") or "").strip() == _AGGREGATE_CLS_NM]
+        # ★★독립 리뷰 R10 HIGH(2026-09-12): 종전엔 집계행이 **존재하기만 하면** 규모 행을
+        #   통째로 버렸다. 그런데 R-ONE 은 결측을 `'-'`·`''`·`None` 로 준다 — 이 파일의
+        #   `rate_series_scope` 독스트링이 *"결측을 `'-'` 로 주는 **흔한 형태**"* 라고
+        #   **내가 직접 적어 둔 관측**이다. 그 한 셀 때문에:
+        #     · `latest_value_from_rows` → 값 있는 규모 행이 지워져 **한 달 묵은 값**이
+        #       「R-ONE 실측」으로 나갔다(실측: 집계행 값 `'-'` → `(5.4, '202606')`).
+        #       ★내 테스트 이름이 못박은 계약(«구값을 최신인 척 내보내지 않는다»)을 **다시** 깼다.
+        #     · `rate_series_from_rows` → 24개월 중 **한 달**만 결측이어도 그 시점이 통째로
+        #       사라져 고유기간 23 → 누적계수 **None**(실측).
+        #   ★계획서 §347 의 «좁히기가 실패하면 종전 거부로 되돌아가므로 거짓 값은 아니다» 가
+        #     **반증됐다** — 좁히기가 «성공» 하고 거짓 값이 나온다.
+        #   ⇒ **쓸 수 있는 값을 담은 집계행일 때만** 좁힌다. 아니면 그 시점은 원래 행을 유지하고
+        #     호출부의 거부·건너뛰기가 받아 낸다(값을 지어내지 않는다).
+        agg = [
+            r for r in group
+            if str(r.get("CLS_NM") or "").strip() == _AGGREGATE_CLS_NM
+            and _has_usable_value(r, val_keys)
+        ]
         out.extend(agg or group)
     return out
 
