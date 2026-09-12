@@ -95,6 +95,12 @@ fi
 # 디스크 여유(85% 미만)
 USEPCT=$(df -P / | awk 'NR==2{gsub("%","",$5); print $5}')
 if [ "${USEPCT:-0}" -ge 90 ]; then status "ABORT 디스크부족 ${USEPCT}%"; exit 7; fi
+# ★★배포 대상 저장소 프리플라이트 — **두 사건을 가른다**(2026-09-12 신설 · 공용 함수)
+#   근거와 실증은 scripts/lib/assert-a1-host.sh 주석에 있다. ★경로 상수는 **옳다 — 건드리지 마라.**
+# shellcheck source=lib/assert-a1-host.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/assert-a1-host.sh"
+assert_a1_host "$REPO" status
+
 # git clean(런타임 qdrant 제외)
 cd "$REPO" || { status "FAIL cd-repo"; exit 1; }
 if [ -n "$(git status --porcelain | grep -v qdrant_storage)" ]; then

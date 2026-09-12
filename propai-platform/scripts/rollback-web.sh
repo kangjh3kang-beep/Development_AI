@@ -88,6 +88,12 @@ if ! mkdir "$LOCKDIR" 2>/dev/null; then
 fi
 trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT
 
+# ★형제 스윕(2026-09-12) — safe-deploy.sh 와 **같은 모호한 실패**가 여기 있었다.
+#   여긴 더 위험하다: **장애 중에 집는 스크립트**라, 틀린 진단이 붙으면 복구가 늦어진다.
+#   그리고 이 파일 헤더에는 「A1」 언급이 **0건**이라 실행자가 기계를 오인하기 더 쉽다.
+# shellcheck source=lib/assert-a1-host.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/assert-a1-host.sh"
+assert_a1_host "$REPO" ""
 cd "$COMPOSE_DIR" || { echo "!! cd 실패: $COMPOSE_DIR"; exit 1; }
 report_assets || exit 1
 
