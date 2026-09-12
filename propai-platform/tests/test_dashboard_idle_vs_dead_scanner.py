@@ -78,7 +78,7 @@ def _classify(alltime: int, h24: int, probe_line: str = "") -> str:
 
 #: 분석기가 «돌았고 표본이 없다» 고 말하는 프로브 줄(라이브 실측 형태 2026-09-12).
 _G_STARVED = ("PROBE now=2026-09-12 10:05 ctrl_type_total=0 ctrl_type_alltime=2408 "
-              "astate=starved aat=2026-09-12T10:05:00Z aaxes=fal_0/0_lat_0/0 ains=0 "
+              "astate=starved aat=2026-09-12T10:05:00Z aaxes=lat_0/19_pay_0/1 ains=0 "
               "alast=2026-09-12T10:02:57Z")
 #: 설정 행 자체가 없다 = TTL 산수상 **3회 연속 미실행**.
 _G_ABSENT = _G_STARVED.replace("astate=starved", "astate=(행없음)")
@@ -102,7 +102,7 @@ def test_the_three_populations_give_three_different_answers():
 
     # ★세 답이 **서로 다른 문구**여야 한다 — 같으면 읽는 사람이 못 가른다.
     assert "전 역사에서 아무것도 못 집었다" in dead
-    assert "표본 하한 미달" in idle and "고장이 아니다" in idle
+    assert "하한 미달" in idle
     assert "판정진행" in judging
     assert dead != idle != judging, "두 모집단이 같은 출력을 낸다"
 
@@ -159,7 +159,7 @@ def test_idle_is_not_reported_as_all_clear_either():
     #   유휴 칸은 ①분석기 상태와 ②그 판정 사유를 **둘 다** 실어야 한다.
     assert "분석기 상태:" in idle, "무엇을 근거로 유휴라 하는지 안 적는다"
     assert "state=" in idle and "워터마크" in idle, "근거 값이 빠졌다"
-    assert "표본 하한 미달" in idle, "판정 사유를 말하지 않는다"
+    assert "하한 미달" in idle, "판정 사유를 말하지 않는다"
     # ★구조: 유휴는 어떤 플래그도 세우지 않는다(사망도 위반도 아니다)
     assert "DEAD=0" in idle and "VIOL=1" not in idle
 

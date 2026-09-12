@@ -83,7 +83,38 @@ def analysis_fields(arow, watermark):
     return astate, aat, aaxes, ains, alast
 
 
-def analysis_verdict(astate, insights_24h):
+def parse_axes(aaxes):
+    """`"fal 0/0 lat 0/19"`(또는 `_` 로 이어 붙인 형태) → `[(이름, judged, total), …]`.
+
+    ★계기판은 공백 경계로 뽑으므로 `analysis_fields` 가 공백을 `_` 로 바꾼다.
+      **두 표기를 다 받는다** — 생산자 원본과 프로브 출력이 같은 함수로 읽혀야 한다.
+    ★해석 못 한 조각은 **버리지 않고 무시하되**, 하나도 못 읽으면 **빈 목록**을 돌려준다
+      (호출부가 「모른다」로 갈 수 있게 — 0 으로 뭉치지 않는다).
+    """
+    toks = str(aaxes or "").replace("_", " ").split()
+    out = []
+    i = 0
+    while i < len(toks) - 1:
+        name, pair = toks[i], toks[i + 1]
+        if "/" in pair:
+            a, _, b = pair.partition("/")
+            try:
+                out.append((name, int(a), int(b)))
+                i += 2
+                continue
+            except ValueError:
+                pass
+        i += 1
+    return out
+
+
+#: 판정한 축이 없을 때, **입력이 아예 없는 것**과 **표본이 하한에 못 미친 것**은 다른 사실이다.
+#: ★그래서 상태를 하나 더 만든다 — 생산자(`analyzer.py`)는 `judged_total` 만 보므로
+#:   이 구분을 **하지 않는다**. 그 값(`total`)은 `axes` 에 **이미 실려 있다**.
+ASTATE_NO_INPUT = "(입력없음)"
+
+
+def analysis_verdict(astate, insights_24h, aaxes=None):
     """계기판 ③ 이 인사이트 24h 창 **0** 을 만났을 때 무엇이라 불러야 하는가.
 
     ★**순수 함수다** — DB 없이 태울 수 있고, 셸이 규칙을 다시 구현하지 않는다
@@ -109,7 +140,31 @@ def analysis_verdict(astate, insights_24h):
         # ★행 부재를 「유휴」로 읽지 않는다. TTL 산수상 부재는 **3회 연속 미실행**이다.
         return "obs", "분석상태 행이 없다 — TTL(180분) > 주기(60분) 이므로 **3회 연속 미실행**"
     if astate == "starved":
-        return "ok", "배치는 돌았고 **모든 축이 표본 하한 미달**이다 — 유휴이지 고장이 아니다"
+        # ★★`starved` 는 **두 사실을 덮는다**(독립 리뷰 2026-09-12 · 라이브 실측이 그 증거):
+        #     axes = "fal 0/0 lat 0/0 pay 0/1 qua 0/0"
+        #       `0/1` → 표본이 쌓이는데 하한 미달  → **기다리면 된다**
+        #       `0/0` → **입력이 아예 없다**        → **고쳐야 나온다**(수집 경로)
+        #   생산자 판정식은 `judged_total > 0` 만 보므로 둘을 **같은 `starved`** 로 낸다.
+        #   그런데 가르는 값(`total`)은 **이미 payload 에 실려 있다** — 안 읽었을 뿐이다.
+        #   ***이 파일이 고치려던 결함(답이 이미 있는데 판정이 안 읽는다)이 한 층 안쪽에 있었다.***
+        axes = parse_axes(aaxes)
+        if not axes:
+            # 축을 하나도 못 읽었다 = 이 스냅샷으로는 가를 수 없다. 0 으로 뭉치지 않는다.
+            return "unknown", "판정한 축이 없는데 축 요약을 읽지 못했다 — 유휴인지 입력 0인지 가를 수 없다"
+        with_input = [a for a in axes if a[2] > 0]
+        if not with_input:
+            # ★모든 축이 `total == 0` — 「표본 부족」이 아니라 **입력이 안 들어온다**.
+            return "obs", (
+                "판정한 축이 없고 **모든 축의 입력이 0**이다(%s) — 표본 부족이 아니라 수집 경로를 보라"
+                % " ".join("%s %d/%d" % a for a in axes)
+            )
+        # ★사유에서 **원인 단정을 뺀다.** 종전 문구 「모든 축이 표본 하한 미달 — 고장이 아니다」는
+        #   `0/0` 축이 있는 순간 **거짓**이고, 「고장이 아니다」는 재지 않은 진단이다.
+        return "ok", (
+            "판정한 축 0 — 입력이 있는 축 %d개는 하한 미달, 입력이 0인 축 %d개(%s)"
+            % (len(with_input), len(axes) - len(with_input),
+               " ".join("%s %d/%d" % a for a in axes))
+        )
     if astate == "idle":
         return "obs", "커버리지 축 자체가 없다 — 분석기가 축을 하나도 못 돌렸다"
     if astate == "judged":

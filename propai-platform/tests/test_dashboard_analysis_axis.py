@@ -35,6 +35,12 @@ MON = REPO / "propai-platform" / "scripts" / "monitor"
 SCRIPT = MON / "integrator_dashboard.sh"
 PROBE = MON / "growth_stale_producer_probe.py"
 
+#: ★`starved` 는 이제 **축 요약 없이는 판정 불가**다(입력 0 과 하한 미달을 가르기 때문).
+#:   「입력이 있는 축이 하나라도 있다」 = 정상 유휴.
+_AX_IDLE = "lat 0/19 pay 0/1"
+#: 모든 축의 입력이 0 = 수집 경로 의심.
+_AX_NO_INPUT = "fal 0/0 lat 0/0 qua 0/0"
+
 
 def _probe_mod():
     """★임포트만으로 DB 에 붙지 않는다 — 순수 함수를 직접 태운다(사본 금지)."""
@@ -44,11 +50,11 @@ def _probe_mod():
     return mod
 
 
-def _shell(astate: str, ins: str) -> str:
+def _shell(astate: str, ins: str, axes: str = _AX_IDLE) -> str:
     """★**실물 셸 함수**를 태운다 — 파이프라인을 테스트에 복사하지 않는다."""
     out = subprocess.run(
         ["bash", "-c",
-         f". '{SCRIPT}' --verdict-lib; analysis_verdict_of '{astate}' '{ins}'"],
+         f". '{SCRIPT}' --verdict-lib; analysis_verdict_of '{astate}' '{ins}' '{axes}'"],
         cwd=REPO, capture_output=True, text=True,
     )
     return out.stdout.strip()
@@ -65,7 +71,7 @@ def _shell(astate: str, ins: str) -> str:
     ],
 )
 def test_four_populations_each_map_to_their_kind(astate, ins, expected):
-    kind, why = _probe_mod().analysis_verdict(astate, ins)
+    kind, why = _probe_mod().analysis_verdict(astate, ins, _AX_IDLE)
     assert kind == expected, (astate, kind, why)
     assert why, "사유가 비면 다음 사람이 무엇을 볼지 모른다"
 
@@ -73,7 +79,7 @@ def test_four_populations_each_map_to_their_kind(astate, ins, expected):
 def test_the_four_are_not_collapsed_into_one():
     """★하나로 접으면 이 함수는 장식이다 — **서로 다른 사유**까지 요구한다."""
     m = _probe_mod()
-    reasons = [m.analysis_verdict(s, "0")[1]
+    reasons = [m.analysis_verdict(s, "0", _AX_IDLE)[1]
                for s in ("starved", "idle", "(행없음)", "(필드없음)")]
     assert len(set(reasons)) == 4, reasons
 
@@ -81,29 +87,29 @@ def test_the_four_are_not_collapsed_into_one():
 def test_absent_row_is_not_read_as_idle_normality():
     """★행 부재를 «유휴」로 읽으면 3회 연속 미실행이 「정상」이 된다."""
     m = _probe_mod()
-    assert m.analysis_verdict(m.ASTATE_ABSENT, "0")[0] == "obs"
-    assert m.analysis_verdict("starved", "0")[0] == "ok"
+    assert m.analysis_verdict(m.ASTATE_ABSENT, "0", _AX_IDLE)[0] == "obs"
+    assert m.analysis_verdict("starved", "0", _AX_IDLE)[0] == "ok"
     # ★두 모집단 대조 — 「부재」와 「굶음」이 같은 답을 내면 이 락은 공허하다.
-    assert (m.analysis_verdict(m.ASTATE_ABSENT, "0")[0]
-            != m.analysis_verdict("starved", "0")[0])
+    assert (m.analysis_verdict(m.ASTATE_ABSENT, "0", _AX_IDLE)[0]
+            != m.analysis_verdict("starved", "0", _AX_IDLE)[0])
 
 
 def test_missing_field_is_unknown_not_zero():
     """★옛 프로브 사본이 돌면 **안 재 봤다**여야 한다 — 0(정상)이 아니다."""
     m = _probe_mod()
-    assert m.analysis_verdict(m.ASTATE_MISSING, "0")[0] == "unknown"
+    assert m.analysis_verdict(m.ASTATE_MISSING, "0", _AX_IDLE)[0] == "unknown"
 
 
 def test_judged_with_empty_window_is_a_contradiction():
     """★«판정했다»면서 창이 비면 두 관측이 모순이다. 침묵으로 두지 않는다."""
     m = _probe_mod()
-    assert m.analysis_verdict("judged", "0")[0] == "obs"
-    assert m.analysis_verdict("judged", "3")[0] == "ok"
+    assert m.analysis_verdict("judged", "0", _AX_IDLE)[0] == "obs"
+    assert m.analysis_verdict("judged", "3", _AX_IDLE)[0] == "ok"
 
 
 def test_unrecognized_state_is_unknown_not_ok():
     """★새 상태 어휘가 생기면 **모른다**고 말해야 한다 — 조용히 초록이 되면 안 된다."""
-    assert _probe_mod().analysis_verdict("brand_new_state", "0")[0] == "unknown"
+    assert _probe_mod().analysis_verdict("brand_new_state", "0", _AX_IDLE)[0] == "unknown"
 
 
 # ── ② 계기판이 그 함수를 **실제로** 태운다(배선 축) ──────────────────────────
@@ -160,7 +166,7 @@ def test_probe_state_vocabulary_matches_the_producer():
     m = _probe_mod()
     for token in ("idle", "judged", "starved"):
         assert f'"{token}"' in line[0], token
-        assert m.analysis_verdict(token, "0")[0] != "unknown", token
+        assert m.analysis_verdict(token, "0", _AX_IDLE)[0] != "unknown", token
 
 
 # ── ④ 변이 감사가 드러낸 **안 태워지던 층** ─────────────────────────────────
@@ -219,7 +225,7 @@ def test_five_populations_give_five_distinct_reasons():
     """
     m = _probe_mod()
     inputs = ["starved", "idle", m.ASTATE_ABSENT, m.ASTATE_MISSING, "brand_new_state"]
-    reasons = [m.analysis_verdict(s, "0")[1] for s in inputs]
+    reasons = [m.analysis_verdict(s, "0", _AX_IDLE)[1] for s in inputs]
     assert len(set(reasons)) == 5, list(zip(inputs, reasons))
 
 
@@ -289,12 +295,12 @@ def test_missing_field_has_a_dedicated_reason_not_the_generic_template():
       **폴백 템플릿에 값만 끼운 것이어서는 안 된다.**
     """
     m = _probe_mod()
-    dedicated = m.analysis_verdict(m.ASTATE_MISSING, "0")[1]
-    generic = m.analysis_verdict("zzz_probe_control", "0")[1]
+    dedicated = m.analysis_verdict(m.ASTATE_MISSING, "0", _AX_IDLE)[1]
+    generic = m.analysis_verdict("zzz_probe_control", "0", _AX_IDLE)[1]
     # 폴백 템플릿을 «값만 바꾼」 형태로 재구성했을 때 전용 사유와 같으면 = 분기가 죽었다.
     faked = generic.replace("zzz_probe_control", m.ASTATE_MISSING)
     assert dedicated != faked, "★필드없음 분기가 폴백으로 떨어졌다(전용 설명이 없다)"
-    assert m.analysis_verdict(m.ASTATE_MISSING, "0")[0] == "unknown"
+    assert m.analysis_verdict(m.ASTATE_MISSING, "0", _AX_IDLE)[0] == "unknown"
 
 
 def test_status_query_filters_expired_rows():
@@ -315,3 +321,95 @@ def test_status_query_filters_expired_rows():
     # ★대조군 — 워터마크 질의는 **의도적으로** TTL 필터가 없다(그 키는 TTL 이 없다).
     m2 = _re.search(r"wm = \(await s\.execute\(text\(\s*(.*?)\)\s*,\s*\n", src, _re.DOTALL)
     assert m2 and "ttl_expires_at" not in m2.group(1), "★두 질의가 같아졌다(축이 뭉개졌다)"
+
+
+# ── ⑥ `starved` 가 **두 사실을 덮고 있었다**(독립 리뷰 2026-09-12 · MAJOR-1) ──────────
+#    생산자 판정식은 `judged_total > 0` 만 본다 → `0/0`(입력 없음)과 `0/19`(하한 미달)이
+#    **같은 `starved`** 로 나온다. 가르는 값(`total`)은 **이미 payload 에 실려 있다.**
+#    ★이 파일이 고치려던 결함(답이 이미 있는데 판정이 안 읽는다)이 **한 층 안쪽**에 있었다.
+def test_parse_axes_reads_both_spacings():
+    """★생산자 원본(공백)과 프로브 출력(`_`)을 **같은 함수**로 읽는다."""
+    m = _probe_mod()
+    a = m.parse_axes("fal 0/0 lat 0/19")
+    b = m.parse_axes("fal_0/0_lat_0/19")
+    assert a == b == [("fal", 0, 0), ("lat", 0, 19)], (a, b)
+
+
+def test_parse_axes_returns_empty_when_nothing_parses():
+    """★못 읽으면 **빈 목록** — 0 으로 뭉치지 않는다(호출부가 「모른다」로 갈 수 있게)."""
+    m = _probe_mod()
+    assert m.parse_axes("") == []
+    assert m.parse_axes("-") == []
+    assert m.parse_axes("쓰레기 값") == []
+    # ★대조군 — 정상 입력은 비면 안 된다(위 단언이 공허하지 않다).
+    assert m.parse_axes("fal 1/2") == [("fal", 1, 2)]
+
+
+def test_all_axes_zero_input_is_not_ok():
+    """★★**모든 축의 입력이 0** 이면 「표본 부족」이 아니라 **수집 경로**다 — 기다려서 안 풀린다.
+
+    ***사건 미발생이면 기다리면 되고, 장치 정지면 고쳐야 나온다*** — 겉보기엔 둘 다
+    「데이터 없음」인데 **다음 행동이 다르다**(이 저장소가 2026-09-12 에 값을 치른 자리).
+    """
+    m = _probe_mod()
+    kind, why = m.analysis_verdict("starved", "0", "fal 0/0 lat 0/0 qua 0/0")
+    assert kind == "obs", (kind, why)
+    assert "수집" in why, why
+    # ★두 모집단 대조 — 입력이 있는 축이 하나라도 있으면 **다른 답**이어야 한다.
+    other = m.analysis_verdict("starved", "0", "fal 0/0 lat 0/19 qua 0/0")
+    assert other[0] == "ok", other
+    assert other[1] != why, "두 모집단이 같은 사유를 낸다"
+
+
+def test_starved_reason_no_longer_asserts_a_cause():
+    """★★사유가 **관측보다 많이 말하지 않는다**.
+
+    종전 문구: 「배치는 돌았고 **모든 축이 표본 하한 미달**이다 — 유휴이지 **고장이 아니다**」
+    · 라이브 실측 `fal 0/0 lat 0/0 pay 0/1 qua 0/0` 에서 **전반부가 거짓**이다
+      (`0/0` 축은 하한 미달이 아니라 입력이 없다)
+    · 후반부(「고장이 아니다」)는 **재지 않은 진단**이다
+    ***진단을 못 하는 자리에서 진단을 적으면 그게 다음 사람을 틀린 곳으로 보낸다.***
+    """
+    m = _probe_mod()
+    _, why = m.analysis_verdict("starved", "0", "fal 0/0 lat 0/19")
+    assert "고장이 아니다" not in why, why
+    assert "모든 축이 표본 하한 미달" not in why, why
+    # ★그리고 **관측은 실려야 한다** — 부정만 단언하면 사유를 통째로 지워도 통과한다.
+    assert "0/0" in why and "0/19" in why, why
+
+
+def test_unreadable_axes_under_starved_is_unknown_not_ok():
+    """★축 요약을 못 읽으면 **가를 수 없다** — 「유휴」라고 부르지 않는다."""
+    m = _probe_mod()
+    assert m.analysis_verdict("starved", "0", "-")[0] == "unknown"
+    assert m.analysis_verdict("starved", "0", None)[0] == "unknown"
+    # ★대조군 — 읽히는 값에서는 unknown 이 아니어야 한다.
+    assert m.analysis_verdict("starved", "0", "lat 0/19")[0] == "ok"
+
+
+def test_dashboard_passes_axes_into_the_judge():
+    """★배선 — 계기판이 `aaxes` 를 **실제로 넘긴다**(안 넘기면 위 판별이 전부 죽는다)."""
+    out = subprocess.run(
+        ["bash", "-c",
+         f". '{SCRIPT}' --verdict-lib; analysis_verdict_of 'starved' '0' 'fal_0/0_lat_0/0'"],
+        cwd=REPO, capture_output=True, text=True,
+    ).stdout.strip()
+    assert out.startswith("obs|"), out
+    out2 = subprocess.run(
+        ["bash", "-c",
+         f". '{SCRIPT}' --verdict-lib; analysis_verdict_of 'starved' '0' 'fal_0/0_lat_0/19'"],
+        cwd=REPO, capture_output=True, text=True,
+    ).stdout.strip()
+    assert out2.startswith("ok|"), out2
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "★부채: **일부 축만 입력 0** 인 상태를 판정하지 않는다. "
+    "라이브가 정확히 그 상태다(fal 0/0 lat 0/0 pay 0/1 qua 0/0 — 넷 중 셋이 0). "
+    "판정하려면 **시간 축**이 필요한데(하루 0 은 정상, 30일 0 은 아니다) "
+    "`analysis_verdict` 는 지속 시간을 받지 않는다. "
+    "★임계를 지어내면 굿하트가 그대로 재현된다 — 그래서 **판정하지 않고 사유에 싣기만** 한다. "
+    "상환 조건: 스냅샷에 축별 마지막 입력 시각이 실리면 이 xfail 을 깬다."))
+def test_partial_zero_input_is_judged():
+    m = _probe_mod()
+    assert m.analysis_verdict("starved", "0", "fal 0/0 lat 0/19")[0] == "obs"

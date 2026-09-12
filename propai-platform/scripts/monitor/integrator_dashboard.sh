@@ -132,16 +132,16 @@ delta_verdict() {
 #     다르게 구현해 **없는 결함을 신고**했다 — 산문은 여러 구현을 허용한다.
 #     여기서 `case "$ASTATE" in starved) …` 를 쓰면 정확히 그 재발이다.
 #   ★락이 이 함수를 태울 수 있도록 `--verdict-lib` 게이트 **위**에 둔다(형제 `delta_verdict` 와 같은 이유).
-analysis_verdict_of() {   # $1=astate  $2=insights_24h  → stdout "kind|사유"
+analysis_verdict_of() {   # $1=astate  $2=insights_24h  $3=aaxes  → stdout "kind|사유"
   local d
   d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   python3 -c '
 import sys
 sys.path.insert(0, sys.argv[1])
 from growth_stale_producer_probe import analysis_verdict
-kind, why = analysis_verdict(sys.argv[2], sys.argv[3])
+kind, why = analysis_verdict(sys.argv[2], sys.argv[3], sys.argv[4] or None)
 print(kind + "|" + why)
-' "$d" "$1" "$2" 2>/dev/null || echo "unknown|판정 함수를 태우지 못했다(python3 또는 프로브 경로 확인)"
+' "$d" "$1" "$2" "${3:-}" 2>/dev/null || echo "unknown|판정 함수를 태우지 못했다(python3 또는 프로브 경로 확인)"
 }
 
 if [ "${1:-}" = "--verdict-lib" ]; then return 0 2>/dev/null || exit 0; fi
@@ -256,7 +256,7 @@ else
     # ★필드가 비면 «(필드없음)» 으로 **명시**한다 — 빈 문자열을 그냥 넘기면
     #   «옛 프로브 사본» 이 «축이 없다(idle)» 로 조용히 둔갑한다(형제 `overlap` 과 같은 규율).
     [ -z "$ASTATE" ] && ASTATE="(필드없음)"
-    AV=$(analysis_verdict_of "$ASTATE" "${ctrl:-0}" 2>/dev/null)
+    AV=$(analysis_verdict_of "$ASTATE" "${ctrl:-0}" "${AAXES:-}" 2>/dev/null)
     AK=${AV%%|*}; AR=${AV#*|}
     # ★★판정기 자체가 없으면(함수 미정의·python3 부재) `AV` 가 **빈 문자열**이고
     #   그러면 사유 칸이 통째로 **비어서 출력된다** — 이 파일이 금지하는 바로 그 침묵이다.
