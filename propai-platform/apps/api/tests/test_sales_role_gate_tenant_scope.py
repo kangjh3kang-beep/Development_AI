@@ -219,8 +219,15 @@ def test_the_exclusion_is_alive_in_every_environment() -> None:
         (root / "src").mkdir()
         (root / "src" / "signup.py").write_text(
             'def make():\n    return User(role="admin")\n', encoding="utf-8")
-        for bad in (".venv/lib/site-packages", "node_modules/x", "tests"):
-            d = root / bad
+        # ★★**제외 항목마다 「그것만 걸리는」 파일**을 둔다 — 겹치면 하나를 지워도 다른 하나가
+        #   덮어 **그 제외는 개별적으로 무잠금**이 된다(실측: 처음엔 악성 파일을 모두
+        #   `.venv/lib/site-packages/` 에 뒀더니 `/.venv/` 만 빼는 변이가 **SURVIVED** 했다).
+        #   ***차가 0인 픽스처는 잠금이 아니다.***
+        only_venv = root / ".venv" / "bin"            # `/.venv/` 에만 걸린다
+        only_site = root / "vendor" / "site-packages"  # `/site-packages/` 에만 걸린다
+        only_node = root / "node_modules" / "x"        # `/node_modules/` 에만 걸린다
+        only_test = root / "tests"                     # `/tests/` 에만 걸린다
+        for d in (only_venv, only_site, only_node, only_test):
             d.mkdir(parents=True)
             (d / "evil.py").write_text(
                 'def x():\n    return User(role="superadmin")\n', encoding="utf-8")
@@ -231,6 +238,16 @@ def test_the_exclusion_is_alive_in_every_environment() -> None:
         assert set(found) == {"src/signup.py"}, (
             f"제외가 죽었다 — 제3자/산출물/테스트가 생산자로 세어진다: {sorted(found)}"
         )
+        # ★★제외 **항목별**로 각각 살아 있는지(하나를 지우면 그 항목이 새어 나온다).
+        for frag, path in (
+            ("/.venv/", ".venv/bin/evil.py"),
+            ("/site-packages/", "vendor/site-packages/evil.py"),
+            ("/node_modules/", "node_modules/x/evil.py"),
+            ("/tests/", "tests/evil.py"),
+        ):
+            assert frag in _SCAN_EXCLUDED, f"제외 항목 {frag} 이 사라졌다"
+            assert path not in found, f"{frag} 제외가 죽었다 — {path} 가 모집단에 있다"
+
         # ★대조군 — 스캐너가 살아 있다(전부 비면 「제외됨」과 「조회기 사망」이 같은 모양이다).
         assert found["src/signup.py"] == {"admin"}, f"스캐너가 진짜 생산자를 못 읽는다: {found}"
 
