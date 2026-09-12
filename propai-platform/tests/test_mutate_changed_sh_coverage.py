@@ -538,20 +538,28 @@ def test_shell_string_rule_has_two_populations(line, should_fire):
 
 # ── ⑬ 계수와 rc — **순수 함수로 잠근다**(산수는 잠글 수 있어야 한다) ──────────
 @pytest.mark.parametrize(
-    ("gen", "surv", "und", "skip", "trunc", "want_judged", "want_caught"),
+    ("gen", "surv", "und", "skip", "trunc", "scoped", "only", "want_judged", "want_caught"),
     [
-        (10, 0, 0, 0, 0, 10, 10),
-        (10, 3, 0, 0, 0, 10, 7),
-        (10, 0, 4, 0, 0, 6, 6),     # ★판정 불가는 분모에서 빠진다
-        (10, 0, 0, 2, 0, 8, 8),     # ★★건너뜀도 분모에서 빠진다(종전엔 안 뺐다 — 거짓 수)
-        (10, 0, 0, 0, 7, 3, 3),     # ★★★`--max` 절단도 — 기본 60 인데 셸 전수는 2,441건이다
-        (10, 1, 4, 2, 1, 3, 2),
+        (10, 0, 0, 0, 0, 0, 0, 10, 10),
+        (10, 3, 0, 0, 0, 0, 0, 10, 7),
+        (10, 0, 4, 0, 0, 0, 0, 6, 6),     # ★판정 불가는 분모에서 빠진다
+        (10, 0, 0, 2, 0, 0, 0, 8, 8),     # ★★건너뜀도(종전엔 안 뺐다 — 거짓 수)
+        (10, 0, 0, 0, 7, 0, 0, 3, 3),     # ★★★`--max` 절단도
+        # ★★★★**단위가 다른 것은 섞이면 안 된다** — `*_files` 는 **파일 수**라
+        #   `judged`(변이 수)에서 빼면 분모가 **두 단위의 뺄셈**이 되어 거짓이 된다.
+        #   ★코드 주석이 이것을 **금지한다고 선언**해 놓고 **잠그는 단언이 없었다**:
+        #     두 방향 첨가형 변이(`- scoped_out_files` · `- only_out_files`)가 **둘 다 SURVIVED**
+        #     였다(독립 검증 R4). 종전 표는 이 둘을 **항상 0 으로** 넘겨 차이를 못 만들었다
+        #     — *차가 0인 픽스처는 잠금이 아니다*.
+        (10, 0, 0, 0, 0, 3, 0, 10, 10),   # 범위배제 3파일 → **judged 불변**
+        (10, 0, 0, 0, 0, 0, 5, 10, 10),   # `--only` 5파일 → **judged 불변**
+        (10, 1, 4, 2, 1, 9, 9, 3, 2),     # 둘 다 커도 변이 수 산수는 그대로
     ],
 )
 def test_audit_counts_removes_unaudited_from_the_denominator(
-    gen, surv, und, skip, trunc, want_judged, want_caught,
+    gen, surv, und, skip, trunc, scoped, only, want_judged, want_caught,
 ):
-    c = mc._audit_counts(gen, surv, und, skip, trunc)
+    c = mc._audit_counts(gen, surv, und, skip, trunc, scoped, only)
     assert c["judged"] == want_judged, c
     assert c["caught"] == want_caught, c
     # ★항등식 — 분자들의 합이 분모를 넘지 않는다(계수가 서로 모순되지 않는다).
@@ -560,7 +568,8 @@ def test_audit_counts_removes_unaudited_from_the_denominator(
         c["judged"] + c["undecided"] + c["skipped"] + c["truncated"] == c["generated"]
     ), c
     # ★`*_files` 는 **단위가 다르다**(파일 수) — 위 항등식(변이 수)에 섞이면 안 된다.
-    assert "scoped_out_files" in c and "only_out_files" in c, c
+    #   섞였다면 `scoped`/`only` 가 0 이 아닌 행에서 `judged` 가 위 기대값과 어긋난다.
+    assert c["scoped_out_files"] == scoped and c["only_out_files"] == only, c
 
 
 @pytest.mark.parametrize(
@@ -844,3 +853,51 @@ def test_files_dropped_by_test_scope_are_not_silently_green(tmp_path):
     a2 = re.search(r"^::AUDIT=(.+)$", out2, re.MULTILINE)
     assert a2 and "scoped_out_files=0" in a2.group(1), out2
     assert r2.returncode == 0, f"배제가 없는데 rc={r2.returncode}\n{out2}"
+
+
+# ── ⑳ ★다섯 번째 얼굴(부채) — **변이를 하나도 못 만든 파일**은 어디에도 안 잡힌다 ────
+@pytest.mark.xfail(
+    strict=True,
+    reason="★부채(독립 검증 R4 실측): 스코프는 통과했는데 **추가된 줄이 어떤 변이 규칙에도 "
+           "안 걸려 변이 0건**인 파일은 `scoped_out_files`·`truncated` 어디에도 안 잡히고 "
+           "`rc=0` 이 나간다. 이 PR 이 고친 결함과 **같은 클래스**지만 **한 층 아래**다"
+           "(파일 스코프가 아니라 **줄 패턴 커버리지**). 이 PR 의 선언 범위(파일 단위 감사의 "
+           "네 얼굴) 밖이라 고치지 않고 **초록 안에 세워 둔다** — 산문으로만 두면 재발 저수지에 "
+           "들어간다. ★다섯 번째 얼굴이 생겼다는 것 자체가 «목록이 아니라 자리를 만들라»의 근거다.",
+)
+def test_files_that_produced_no_mutation_are_surfaced(tmp_path):
+    """★«대상 파일 2개»라고 찍으면서 그중 하나는 **한 번도 변이되지 않았다**."""
+    repo = tmp_path / "zeromut"
+    (repo / "tests").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
+    _git("config", "user.email", "t@t", cwd=repo)
+    _git("config", "user.name", "t", cwd=repo)
+    (repo / "tests" / "test_g.py").write_text(
+        "import pathlib\n"
+        "def test_g():\n"
+        "    assert 'exit 7' in pathlib.Path('g.sh').read_text(encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    _git("add", "-A", cwd=repo)
+    _git("commit", "-qm", "base", cwd=repo)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    (repo / "g.sh").write_text("#!/usr/bin/env bash\nexit 7\n", encoding="utf-8")
+    # ★어떤 규칙에도 안 걸리는 줄만 넣는다(대입도 조건도 긴 문자열도 아니다).
+    (repo / "mod.py").write_text(
+        "def gen():\n    for i in range(3):\n        yield i\n", encoding="utf-8"
+    )
+    _git("add", "g.sh", "mod.py", cwd=repo)
+
+    r = _run_tool(repo, base, "--max", "50")
+    out = r.stdout + r.stderr
+    audit = re.search(r"^::AUDIT=(.+)$", out, re.MULTILINE)
+    assert audit, out
+    # ★공허 방지 — g.sh 쪽은 실제로 변이돼야 이 락이 «한쪽만 0» 을 보는 것이 된다.
+    assert "generated=0" not in audit.group(1), audit.group(1)
+    # ★본판정 — 변이 0건인 파일이 있으면 **조용한 초록이면 안 된다**.
+    assert r.returncode != 0, (
+        f"mod.py 가 한 번도 변이되지 않았는데 rc=0 이다:\n{out}"
+    )
