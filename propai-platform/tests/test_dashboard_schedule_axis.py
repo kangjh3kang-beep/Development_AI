@@ -296,3 +296,39 @@ def test_unknown_is_printed_but_does_not_raise_observation():
     out = _run_schedule_block(_probe_line("unknown", "스케줄_스냅샷이_없다"))
     assert "OBS=0" in out, f"unknown 을 관측으로 올렸다 — 배포 전 상시 빨강이 된다:\n{out}"
     assert "unknown" in out, f"unknown 을 화면에 안 찍었다 — 조용한 초록이다:\n{out}"
+
+
+def test_probe_emits_the_reason_as_the_last_field():
+    """★**생산자 끝**을 잠근다 — 소비처만 잠그면 「사유를 아예 안 찍는」 변이가 산다.
+
+    실측(2026-09-12): `swhy=%s` 를 출력 형식에서 지우는 변이가 **SURVIVED** 였다.
+    내 픽스처가 프로브 줄을 **손으로 만들어** 실제 출력 형식을 태우지 않았기 때문이다 —
+    독립 리뷰가 «양 끝 모두 무잠금» 이라 부른 그 자리의 나머지 절반이다.
+
+    ★그리고 **마지막 필드**여야 한다: 사유에는 공백이 들어가므로 중간에 두면
+    그 뒤 필드가 전부 `[^ ]+` 파싱에서 밀린다.
+    """
+    tree = ast.parse(_PROBE.read_text(encoding="utf-8"))
+    docs = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            d = ast.get_docstring(n, clean=False)
+            if d:
+                docs.add(d)
+    live = [
+        n.value for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value not in docs
+    ]
+    # 공허 방지 대조군 — 출력 형식 조각을 실제로 읽고 있는가
+    assert any("skind=%s" in s for s in live), (
+        "대조군 실패 — 출력 형식 문자열을 하나도 못 읽었다(파서가 죽었다)"
+    )
+    tail = [s for s in live if "swhy=%s" in s]
+    assert tail, "프로브가 사유를 찍지 않는다 — 계기판은 경보만 내고 «어디를 보라»가 없다"
+    for s in tail:
+        assert s.rstrip().endswith("swhy=%s"), (
+            f"사유가 마지막 필드가 아니다 — 뒤 필드가 공백에서 밀린다: {s!r}"
+        )
+    # 인자에도 실제로 실리는가(형식만 있고 값이 안 가면 `swhy=%s` 가 그대로 찍힌다)
+    src = _PROBE.read_text(encoding="utf-8")
+    assert _re.search(r"skind,\s*swhy\)\)", src), "출력 인자 튜플에 swhy 가 없다"
