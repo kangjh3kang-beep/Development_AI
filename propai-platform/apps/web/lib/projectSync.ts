@@ -33,6 +33,7 @@ import { useRegistryAnalysisStore } from "@/store/useRegistryAnalysisStore";
 import { currentUserId, decodeTokenUser } from "@/lib/account-scope";
 import { withWritesSuspended } from "@/lib/account-scoped-storage";
 import {
+  SATONG_BUILDING_OVERVIEW_KEY,
   SATONG_DOMINANT_CONSTRAINT_KEY,
   SATONG_MAP_SELECTION_KEY,
   SATONG_PARCEL_SLOPE_KEY,
@@ -157,6 +158,8 @@ export function clearAllProjectData(): void {
         k.startsWith("propai_site_token:") ||
         k === "propai_precheck_handoff" ||
         k === SATONG_MAP_SELECTION_KEY ||
+        // ★사용자가 손으로 친 건축개요 — 계정이 바뀌면 남의 입력이 보이면 안 된다.
+        k === SATONG_BUILDING_OVERVIEW_KEY ||
         // ★W1 지배 제약 뷰 캐시 — 규제 정보라도 "이전 계정이 보던 필지"를 노출하면 계정 격리
         //   위반이다. 정본 상수를 재사용(하드코딩 금지 — 위 SATONG_MAP_SELECTION_KEY 선례).
         k === SATONG_DOMINANT_CONSTRAINT_KEY ||
