@@ -309,3 +309,105 @@ async def test_my_sites_does_not_show_other_tenants_sites_to_a_registered_user()
         f"플랫폼 총괄이 전체를 못 본다 — 과잉 차단: {[r['site_code'] for r in rows2]}"
     )
     assert [r for r in rows2 if r.get("membership") == "admin"], "관리자 분기가 아예 안 돈다"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# D. **과잉 차단이 0 이라는 근거**를 잠근다 (2026-09-12 · 내가 스스로 때린 축)
+#
+# 이 PR 의 안전 논거는 «`owns_site` 폴백이 남으니 자기 테넌트 현장은 계속 열린다» 다.
+# 그런데 그 폴백이 주는 역할은 **`DEVELOPER`** 이고, 종전 가입 기본값이 받던 것은
+# **`SUPERADMIN`**(= `require_role` 을 **무조건 통과**시키는 값)이었다.
+# ⇒ 그러므로 안전 논거가 성립하려면 **분양 표면의 모든 `require_role` 이 DEVELOPER 를 받아야** 한다.
+#
+# ★실측(2026-09-12): 58건 중 **0건**이 DEVELOPER 를 빠뜨렸다 — 논거는 지금 참이다.
+#   그러나 **미래의 `require_role("SUPERADMIN")` 한 줄이 이 논거를 조용히 깬다**
+#   (테넌트 소유자가 자기 현장에서 403 을 받는데, 그 원인이 이 PR 로 되짚어지지 않는다).
+#   그래서 **논거를 락으로** 바꾼다.
+#
+# ★조회기 교정 이력: 첫 판은 `ast.Constant` 인자만 봐서 `require_role("MEMBER", *_DRAW_MGR)` 를
+#   **「MEMBER 전용」으로 오보**했다(별표 언패킹을 못 봄). 상수를 해석하도록 고쳤고,
+#   **해석 못 한 호출은 조용히 넘기지 않고 드러낸다**(아래 `unresolved`).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sales_require_role_calls() -> tuple[list[tuple[str, int, set[str]]], list[str]]:
+    """분양 표면의 `deps_sales.require_role(...)` 호출을 **파생**한다 → (해석됨, 해석불가)."""
+    import ast
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    resolved: list[tuple[str, int, set[str]]] = []
+    unresolved: list[str] = []
+
+    for path in sorted(root.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        src = ast.unparse(tree)
+        # ★**같은 이름의 다른 헬퍼를 세지 않는다** — `app.core.rbac.require_role` 은 다른 함수다
+        #   (실측: `cost.py`·`mass_templates.py` 가 그쪽을 쓰고 `Role.ADMIN` 을 넘긴다).
+        if "from app.api.deps_sales import" not in src or "require_role" not in src:
+            continue
+        consts: dict[str, set[str]] = {}
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Assign) and isinstance(n.value, ast.Tuple | ast.Set | ast.List):
+                vals = {e.value for e in n.value.elts
+                        if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+                for t in n.targets:
+                    if isinstance(t, ast.Name) and vals:
+                        consts[t.id] = vals
+        rel = str(path.relative_to(root.parent))
+        for n in ast.walk(tree):
+            if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                    and n.func.id == "require_role"):
+                continue
+            args: set[str] = set()
+            ok = True
+            for a in n.args:
+                if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                    args.add(a.value)
+                elif isinstance(a, ast.Starred) and isinstance(a.value, ast.Name) \
+                        and a.value.id in consts:
+                    args |= consts[a.value.id]       # ★별표 언패킹을 해석한다
+                else:
+                    ok = False
+            if ok:
+                resolved.append((rel, n.lineno, args))
+            else:
+                unresolved.append(f"{rel}:{n.lineno}")
+    return resolved, unresolved
+
+
+def test_every_sales_gate_admits_developer_so_tenant_owners_keep_their_sites() -> None:
+    """★★이 PR 의 **안전 논거**를 락으로 — 자기 테넌트 소유자가 조용히 잃지 않는다."""
+    resolved, unresolved = _sales_require_role_calls()
+
+    # 공허 방지 — 모집단이 붕괴하면 「0건」이 공짜다.
+    assert len(resolved) >= 40, f"수집 {len(resolved)}건 — 조회기가 죽었다"
+    assert not unresolved, (
+        "인자를 해석 못 한 `require_role` 호출이 있다 — **조용히 넘기지 않는다**. "
+        f"상수를 해석하도록 이 조회기를 고치거나 호출을 단순화하라: {unresolved}"
+    )
+
+    missing = [f"{f}:{ln} {sorted(a)}" for f, ln, a in resolved if "DEVELOPER" not in a]
+    assert not missing, (
+        "분양 게이트가 **DEVELOPER 를 안 받는다** — 그러면 자기 테넌트 현장을 소유한 사용자가 "
+        "403 을 받고, 그 원인이 이 PR(가입 기본값 제거)로 되짚어지지 않는다. "
+        f"그 엔드포인트에 DEVELOPER 를 넣거나, 왜 제외인지 적어라: {missing}"
+    )
+
+
+def test_the_fallback_that_keeps_owners_in_is_still_developer() -> None:
+    """★위 락이 지키는 **전제**가 그대로인지 — 폴백이 주는 역할이 바뀌면 위 락은 엉뚱한 것을 본다."""
+    import ast
+    import inspect
+
+    src = inspect.getsource(deps_sales.resolve_site_membership)
+    returns = {
+        ast.unparse(n.value)
+        for n in ast.walk(ast.parse(src.lstrip()))
+        if isinstance(n, ast.Return) and n.value is not None
+    }
+    assert any("'DEVELOPER'" in r or '"DEVELOPER"' in r for r in returns), (
+        f"소유자 폴백이 더 이상 DEVELOPER 를 주지 않는다 — 위 락의 축이 바뀌었다: {returns}"
+    )
