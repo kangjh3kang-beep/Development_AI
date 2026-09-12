@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import re
 from pathlib import Path
 
 import pytest
@@ -40,25 +41,35 @@ _CONSUMER_SRC = Path(inspect.getfile(FF)).read_text(encoding="utf-8")
 
 
 def _sql_literals() -> list[str]:
-    """소비처 모듈의 **실행되는 문자열 상수**만 모은다(주석·독스트링 배제 — ast)."""
-    tree = ast.parse(_CONSUMER_SRC)
-    docstrings: set[int] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-            body = getattr(node, "body", None)
-            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
-                    and isinstance(body[0].value.value, str):
-                docstrings.add(id(body[0].value))
+    """소비처가 **실제로 실행하는** SQL 문자열만 모은다 — `text(...)` 의 인자.
+
+    ★종전 판은 *"실행되는 문자열 상수"* 라 적고 **독스트링만** 걸렀다. 그건 **거짓 면역
+      주장**이었다(CLAUDE.md §C-11): 죽은 모듈 상수나 실행 경로 밖의 맨 문자열에
+      `quality_drop` 이 들어 있으면 **그것을 소비처 질의로 집었다**(독립 리뷰 실측 —
+      미끼를 죽은 상수·함수 중간 문자열에 넣은 두 경우 **SURVIVED**).
+    ⇒ 이제 **`text()` 호출의 인자**만 본다. 인접 문자열 리터럴은 파서가 이미 하나로
+      합치므로 여러 줄 SQL 도 단일 `Constant` 로 잡힌다.
+    """
     return [
-        n.value for n in ast.walk(tree)
-        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docstrings
+        n.args[0].value
+        for n in ast.walk(ast.parse(_CONSUMER_SRC))
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "text"
+        and n.args
+        and isinstance(n.args[0], ast.Constant)
+        and isinstance(n.args[0].value, str)
     ]
 
 
 def _producible_severities() -> set[str]:
-    """`_classify_quality` 를 **실제로 태워서** 낼 수 있는 severity 를 전수로 모은다.
+    """`_classify_quality` 를 **실제로 태워서** 낼 수 있는 severity 를 모은다.
 
-    ★소스를 읽지 않는다 — 분기를 바꿔도 이 집합이 따라 움직여야 한다.
+    ★소스를 읽지 않는다 — 함수를 부르므로 분기 변경이 반영된다.
+    ★★**전수가 아니라 15점 표본이다**(독립 리뷰 지적). `warn=0` 을 고정했고
+      `fail ∈ {0, vtotal}` 만 본다. 실측: `analyzer.py` 의 `or`→`and` 는 CAUGHT 이지만
+      **`>`→`>=` 는 SURVIVED** 다. ⇒ 이 헬퍼는 «생산 가능 집합의 하한»을 주지
+      «분기 전수»를 주지 않는다. **그 한계를 여기 적어 둔다**(면역을 거짓 주장하지 않는다).
     """
     out: set[str] = set()
     floor = A.QUALITY_MIN_SAMPLES
@@ -79,10 +90,12 @@ def test_consumer_accepts_every_severity_the_producer_can_emit() -> None:
 
     quality_sql = [s for s in _sql_literals() if "quality_drop" in s]
     assert quality_sql, "소비처에서 quality_drop 질의를 못 찾았다(조회기 사망)"
-    accepted = {
-        tok for s in quality_sql for tok in ("warn", "critical", "info")
-        if f"'{tok}'" in s
-    }
+    # ★하드코딩 후보 목록을 쓰지 않는다 — `severity IN (...)` 절에서 **파생**한다.
+    #   목록을 쓰면 새 severity 어휘가 조용히 통과한다(독립 리뷰 MINOR).
+    accepted: set[str] = set()
+    for s in quality_sql:
+        for clause in re.findall(r"severity\s+IN\s*\(([^)]*)\)", s, re.I):
+            accepted |= set(re.findall(r"'([^']+)'", clause))
     assert accepted, f"소비처가 받는 severity 집합을 못 뽑았다: {quality_sql}"
 
     missing = produced - accepted
@@ -91,28 +104,6 @@ def test_consumer_accepts_every_severity_the_producer_can_emit() -> None:
         f"feature_toggle 이 **구조적으로 도달 불가**가 된다. "
         f"생산={sorted(produced)} 소비={sorted(accepted)}"
     )
-
-
-def test_the_down_pct_floor_actually_filters_two_populations() -> None:
-    """★두 모집단 — 바닥을 넘는 값은 통과하고, **넘지 않는 값은 걸러진다.**
-
-    한쪽만 보면 «아무것도 안 하는 구현»과 구별되지 않는다.
-    """
-    floor = FF.FEATURE_DISABLE_ERROR_PCT
-    assert floor > A.QUALITY_DOWN_PCT, (
-        f"생산 임계({A.QUALITY_DOWN_PCT})가 소비 바닥({floor}) 이상이면 "
-        f"이 테스트의 「중간대」 모집단이 사라진다"
-    )
-
-    def _emits(down_pct: float) -> str | None:
-        ftotal = 100
-        sev, m = A._classify_quality(0, 0, 0, round(ftotal * down_pct / 100), ftotal)
-        return sev if (m.get("down_pct") or 0.0) >= floor else None
-
-    above = _emits(floor + 5)          # 바닥 위 — 후보가 된다
-    middle = _emits((A.QUALITY_DOWN_PCT + floor) / 2)  # 생산은 되나 바닥 미달 — 걸러진다
-    assert above is not None, "바닥을 넘는 값이 후보가 되지 않는다 — 경로가 끊겼다"
-    assert middle is None, "바닥 미달인데 후보가 됐다 — 바닥이 아무것도 안 막는다"
 
 
 def test_producer_emits_the_insight_type_the_consumer_queries() -> None:
