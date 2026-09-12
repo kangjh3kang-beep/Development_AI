@@ -29,6 +29,7 @@ CRITICAL 봉합 · `"광주시"` 모호성은 판정하지 않음). 그 모듈�
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 
 import pytest
@@ -1777,6 +1778,17 @@ def test_rejection_is_not_silent(monkeypatch) -> None:
     assert "allow" in kw and "dropped" in kw, kw
     assert kw["dropped"] >= 1, kw
 
+    # ★구값 거부 로그도 **진단 인자**를 싣는다 — 「어느 시점이 지워졌나」를 말하지 않으면
+    #   조사자는 다시 「기본」 한 단어로 돌아간다(변이 `줄삭제 :461` 이 이 자리를 짚었다).
+    seen.clear()
+    stale = [{"CLS_NM": "서울", "CLS_FULLNM": "서울", "ITM_NM": "소득수익률",
+              "DTA_VAL": 4.2, "WRTTIME_IDTFR_ID": "2005"},
+             {"CLS_NM": "서울", "CLS_FULLNM": "서울", "ITM_NM": "투자수익률",
+              "DTA_VAL": 6.96, "WRTTIME_IDTFR_ID": "2012"}]
+    assert RC.latest_value_from_rows(stale, "서울", itm_allow=_CAP_RATE_ITM) is None
+    kw2 = {k: v for d in seen for k, v in d.items()}
+    assert kw2.get("latest") == "2012", f"어느 시점을 거부했는지 말하지 않는다: {kw2}"
+
     # ★대조군 — 아무것도 안 지울 때는 **조용하다**(로그가 항상 나면 진단이 안 된다).
     seen.clear()
     ok = [dict(rows[0], ITM_NM="소득수익률")]
@@ -1784,7 +1796,7 @@ def test_rejection_is_not_silent(monkeypatch) -> None:
     assert not any("dropped" in d for d in seen), f"지운 것이 없는데 제외 로그가 났다: {seen}"
 
 
-def test_cap_rate_basis_string_is_pinned_across_the_boundary() -> None:
+def test_cap_rate_basis_string_is_pinned_across_the_boundary(monkeypatch) -> None:
     """★**계약인 문자열은 리터럴로 못 박는다** — 파생만으로는 값이 안 잠긴다.
 
     기계 변이가 `basis` f-string 의 **문자열 변경을 생존**시켰다: 파생 단언
@@ -1795,12 +1807,29 @@ def test_cap_rate_basis_string_is_pinned_across_the_boundary() -> None:
                  가 **정규식으로 이 문자열을 매칭**한다(프론트가 값으로 분기한다)
     ⇒ 소비처가 **문자열로 분기하면 계약**이다(2026-09-12 에 형제 PR 에서 도출한 규칙).
       ★그 규칙을 여기 적용하지 않아 **같은 클래스를 옆 파일에서 재발**시켰다.
+
+    ★★**이 락은 두 번 틀렸다.** 초판은 소스 문자열 검사였고, 2판은 **테스트가 스스로 조립한
+      문자열을 자기가 비교**했다(`f"...{_CAP_RATE_ITM}..." == "..."`) — 소스의 f-string 을 바꿔도
+      **양쪽이 안 물려** 변이가 **또 생존**했다. ***파생도, 리터럴 핀도, 「그 값을 만든 코드」를
+      태우지 않으면 자기 비교다.***
+    ⇒ 3판은 **함수를 실제로 태워 반환값의 `basis` 를 본다.**
     """
+    import app.services.external_api.reb_client as RC
     import app.services.land_intelligence.reb_statistics_service as S
 
-    basis = f"상업용부동산 {'·'.join(S._CAP_RATE_ITM)} 실측"
-    assert basis == "상업용부동산 소득수익률 실측", (
-        f"제출본·화면이 매칭하는 문자열이 바뀌었다: {basis!r} — "
+    async def _fake_fetch(statbl, cycle, size=0):  # noqa: ANN001, ANN202
+        return [{"CLS_NM": "서울", "CLS_FULLNM": "서울", "ITM_NM": "소득수익률",
+                 "DTA_VAL": 4.2, "WRTTIME_IDTFR_ID": "2012"}]
+
+    monkeypatch.setattr(RC, "fetch_statbl_rows", _fake_fetch)
+    monkeypatch.setenv("RONE_COMMYIELD_STATBL_ID", "TEST_TABLE")
+
+    out = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+        S.commercial_cap_rate("서울특별시 강남구 1"))
+    # ★공허 방지 — 성공 경로가 실제로 값을 냈는가(None 이면 아래 단언이 공허하다).
+    assert out and out["pct"] == 4.2, f"성공 경로가 값을 내지 못했다: {out}"
+    assert out["basis"] == "상업용부동산 소득수익률 실측", (
+        f"제출본·화면이 매칭하는 문자열이 바뀌었다: {out['basis']!r} — "
         "프론트 미러(DeskAppraisalReport.render.test.tsx)도 함께 고쳐야 한다"
     )
 
