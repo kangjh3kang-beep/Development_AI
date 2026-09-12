@@ -34,7 +34,10 @@ _STAT_REGISTRY = {
     },
     "commercial_yield": {
         "env": "RONE_COMMYIELD_STATBL_ID", "cycle": "QQ",
-        "keyword": "상업용부동산 투자수익률", "kind": "level",  # 최신 수익률(%)
+        # ★MINOR-2(독립 리뷰): 이 `keyword` 는 **프로덕션 소비처가 0**인데(레지스트리에서 읽는
+        #   코드 없음 · `/rone-status` 는 인자를 받는다) 다음 사람이 «이 표를 찾으라» 로 읽는다.
+        #   `_CAP_RATE_ITM`(소득수익률)과 어긋나므로 함께 고친다.
+        "keyword": "상업용부동산 소득수익률", "kind": "level",  # 최신 수익률(%)
         "sane": (1.0, 12.0),
     },
     "jeonse_conv": {
@@ -47,9 +50,15 @@ _STAT_REGISTRY = {
 # ★자본환원율(cap rate)인 항목 — **하나의 자리**에 둔다(소비처가 이 이름을 복사하지 않게).
 #   자본환원율 = 순영업소득 / 가치 = **소득수익률**이다. `투자수익률`(= 소득수익률 + 자본수익률)은
 #   자본이득을 포함하므로 **cap rate 가 아니다** — 같은 파일 `commercial_cap_rate` 독스트링 참조.
-#   ★재측정 명령(휘발성 — 값이 아니라 이것이 정본):
-#       GET /api/v1/land-price/rone-test?statbl_id=<RONE_COMMYIELD_STATBL_ID>&cycle=YY
-#       → 응답 `distinct_ITM_NM` 에 아래 항목이 있으면 이 경로가 값을 낼 수 있다.
+#   ★재측정 명령(휘발성 — 값이 아니라 이것이 정본). ★★**프로덕션이 태우는 주기로 잰다**:
+#       GET /api/v1/land-price/rone-test?statbl_id=<RONE_COMMYIELD_STATBL_ID>&cycle=QQ
+#       ★독립 적대 리뷰 MEDIUM-3 — 초판은 `cycle=YY` 를 적었는데 **프로덕션은 `"QQ"` 리터럴**을
+#         쓴다(아래 `fetch_statbl_rows(statbl, "QQ", …)`). YY 로 재면 «항목이 있으니 값을 낼 수
+#         있다» 가 나오지만 **프로덕션 경로는 여전히 0행**이다 — 「내가 방금 잰 것이 사용자가
+#         실제로 쓰는 그것인가」에 걸린다.
+#       ⇒ 판정은 **두 조건의 곱**이다: ①그 주기에 행이 있는가 ②`distinct_ITM_NM` 에 아래 항목이 있는가.
+#       ★그리고 `/rone-test` 의 `latest_value_(레벨형)` 은 **항목 필터 없이** 계산하므로
+#         그 값이 보인다고 프로덕션이 채택한다는 뜻이 아니다(진단 ≠ 산출).
 _CAP_RATE_ITM: tuple[str, ...] = ("소득수익률",)
 
 
@@ -95,14 +104,16 @@ async def housing_time_adjust(address: str = "") -> dict[str, Any] | None:
 
 
 async def commercial_cap_rate(address: str = "") -> dict[str, Any] | None:
-    """상업용부동산 투자수익률 최신값 → 자본환원율(cap rate). 비정상 시 None.
+    """상업용부동산 **소득수익률** 최신값 → 자본환원율(cap rate). 비정상 시 None.
 
-    ★★«(소득수익률)» 표기를 뺐다(독립 리뷰 R10 · 2026-09-12). **어떤 코드도 `ITM_NM` 을 고르지
-      않는다** — `latest_value_from_rows` 에 항목 필터가 한 줄도 없고, 레지스트리 키워드도
-      «상업용부동산 투자수익률» 이며, 테스트 픽스처도 `ITM_NM="투자수익률"` 이다.
+    ★★2026-09-12 — R10 이 «(소득수익률)» 표기를 **뺀** 근거는 *"어떤 코드도 `ITM_NM` 을 고르지
+      않는다"* 였다. **이 PR 이 그 전제를 뒤집었다**(`_CAP_RATE_ITM` 으로 고른다) — 그러므로
+      표기를 **되돌린다.** 전제가 바뀌었는데 그 위에 선 문장을 그대로 두면 거짓이 된다.
       투자수익률 = 소득수익률 + 자본수익률이라 **cap rate 로 쓰면 산식이 틀린다.**
-      이 PR 이 «지어낸 «실측» 라벨 금지» 를 선언하며 형제를 스윕했는데 이 라벨이 그 클래스였다.
-    ★실제로 소득수익률을 쓰려면 항목을 **선택**해야 한다 — 선택 전에는 그렇게 말하지 않는다.
+    ★★독립 적대 리뷰 MAJOR-2 — 초판은 **성공 경로에서도 라벨이 거짓**이었다: 값은 소득수익률인데
+      `basis` 가 «상업용부동산 **투자수익률** 실측» 이라고 말했고, 그 문자열이 제출 PDF
+      (`report/render/appraisal_adapter.py:200`)와 화면에 그대로 인쇄됐다.
+      ⇒ `basis` 를 **`_CAP_RATE_ITM` 에서 파생**시킨다(손으로 적은 문자열은 다음번에 또 갈린다).
     """
     statbl = _statbl("commercial_yield")
     if not statbl:
@@ -129,7 +140,8 @@ async def commercial_cap_rate(address: str = "") -> dict[str, Any] | None:
         if lo <= val <= hi:
             return {"cap_rate": round(val / 100.0, 4), "pct": val,
                     "wrttime": wrttime, "source": "R-ONE",
-                    "basis": "상업용부동산 투자수익률 실측"}
+                    # ★손으로 적지 않는다 — 선언한 항목에서 **파생**한다(MAJOR-2).
+                    "basis": f"상업용부동산 {'·'.join(_CAP_RATE_ITM)} 실측"}
     except Exception as e:  # noqa: BLE001
         logger.warning("REB 조회 실패: %s", str(e)[:160])
     return None

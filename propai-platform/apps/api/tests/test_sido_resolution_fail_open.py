@@ -29,6 +29,8 @@ CRITICAL 봉합 · `"광주시"` 모호성은 판정하지 않음). 그 모듈�
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from app.services.external_api import reb_client as rc
@@ -1611,9 +1613,14 @@ def test_itm_identity_guard_passes_rows_that_carry_no_item_label() -> None:
     `rate_series_from_rows` 의 «itm 이 비면 통과»). 그래서 항목 식별 가드도 **표기가 없으면
     통과**시킨다 — 거부로 바꾸면 **정상 경로를 막는다**(위양성).
 
-    ★실측(2026-09-12): 처음엔 거부로 짰다가 기존 회귀 2건이 빨개졌고
-      (`test_cap_rate_refuses_for_unknown_region` · `test_market_stats_carries_every_rone_backed_statistic`)
-      **그 테스트들이 옳았다.** 빨간 기존 테스트를 «낡았다» 로 처리하지 않는다.
+    ★실측(2026-09-12): 처음엔 거부로 짰다가 기존 회귀 2건이 빨개졌다.
+    ★★**독립 적대 리뷰 MINOR-1 이 그 근거를 반증했다** — 둘 중 하나는 **내가 직접 무효화**했다:
+      `test_market_stats_carries_every_rone_backed_statistic` 은 내가 그 픽스처에
+      `ITM_NM="소득수익률"` 을 달아 고쳤으므로 **더 이상 이 면제의 증거가 아니다**(변이 실측에서
+      빨개지지 않는다). 남은 증거는 `test_cap_rate_refuses_for_unknown_region` 하나이고,
+      그 픽스처는 **`ITM_NM` 을 아예 안 쓴다**(주제는 지역 해석이다).
+      ⇒ **근거는 「구형 표(ITM 필드가 없는 표)가 실재한다」는 것 하나**로 좁힌다.
+        형제 `rate_series_from_rows` 가 그 표를 명시적으로 전제한다(`«itm 이 비면 통과»`).
     ★★그러므로 이것은 **부채이기도 하다**: 항목을 표기하지 않는 표에서는 이 가드가 무동작이다.
       그 한계를 **초록 안에** 적어 둔다(주석에만 적으면 다음 사람이 못 본다).
     """
@@ -1662,6 +1669,111 @@ def test_declared_item_is_readable_even_when_the_period_is_mixed() -> None:
     assert latest_value_from_rows(mixed, "서울") is None, "선언 없는 혼재는 종전대로 거부해야 한다"
 
 
+def test_exemption_does_not_let_an_unlabeled_row_win_over_labeled_ones() -> None:
+    """★★독립 적대 리뷰 **MAJOR-1** — 면제가 **행 단위**면 「모르는 값」이 이긴다.
+
+    초판 실측(그 락의 픽스처 그대로):
+
+        rows = [ITM_NM="" 7.5, ITM_NM="전월세전환율" 5.4]   (같은 지역·같은 시점)
+          선언 없음                 → None          (혼재 거부 · 옳다)
+          itm_allow=("소득수익률",) → **(7.5, …)**   ★표에 **없는** 항목을 선언했는데 값이 나온다
+
+    필터가 표기된 행을 지우고 표기 없는 행만 남겨 **혼재가 해소**됐다. 그 7.5 는 **무엇의
+    값인지 아무도 모른다** — 이 함수가 선언한 계약의 정반대이고, **선언을 함으로써** 생긴다.
+    ⇒ 면제를 **표(그룹) 단위**로 좁혔다. 저장소가 적어 둔 축이 원래 그것이다(«표 **전체**에
+      ITM 필드가 없으면»). ★이 자리가 면제가 담요가 되는 **교차점**이고, 초판 락은
+      «표기 없음 단독»·«표기된 오항목 단독» 만 보고 **둘이 섞인 모집단을 한 번도 안 태웠다.**
+    """
+    from app.services.external_api.reb_client import latest_value_from_rows
+    from app.services.land_intelligence.reb_statistics_service import _CAP_RATE_ITM
+
+    mixed = [
+        {"REGION_NM": "서울", "CLS_NM": "전체", "ITM_NM": "",
+         "DTA_VAL": 7.5, "WRTTIME_IDTFR_ID": "202607"},
+        {"REGION_NM": "서울", "CLS_NM": "40㎡이하", "ITM_NM": "전월세전환율",
+         "DTA_VAL": 5.4, "WRTTIME_IDTFR_ID": "202607"},
+    ]
+    # ★공허 방지 — 이 픽스처가 정말 «표기 없음 + 표기 있음» 교차인가.
+    labels = {str(r.get("ITM_NM") or "") for r in mixed}
+    assert "" in labels and len(labels) == 2, labels
+
+    assert latest_value_from_rows(mixed, "서울", itm_allow=_CAP_RATE_ITM) is None, (
+        "표에 없는 항목을 선언했는데 표기 없는 행의 값이 자본환원율로 채택됐다"
+    )
+    # ★대조군 — **표 전체에 표기가 없으면** 종전대로 통과한다(면제가 죽지 않았는가).
+    bare = [{"REGION_NM": "서울", "CLS_NM": "전체",
+             "DTA_VAL": 7.5, "WRTTIME_IDTFR_ID": "202607"}]
+    assert latest_value_from_rows(bare, "서울", itm_allow=_CAP_RATE_ITM) == (7.5, "202607")
+
+
+def test_declaration_never_promotes_a_stale_value_to_latest() -> None:
+    """★★독립 적대 리뷰 **MEDIUM-1** — 구값을 「최신」인 척 내보내지 않는다.
+
+    초판 실측: `[소득수익률 4.2 @2005, 투자수익률 6.96 @2012]` + 선언 → **(4.2, '2005')**.
+    7년 묵은 값이 «최신» 으로 나갔다. 이 파일은 같은 속성을 **두 번** 이름으로 못 박았는데
+    (`test_missing_aggregate_at_the_latest_period_rejects_not_returns_stale` · R9 HIGH-1),
+    **세 번째 원인**(선언 항목이 최신 시점에 없음)만 반대로 처리하고 있었다.
+    ★`wrttime` 은 화면·PDF 어디에도 렌더되지 않으므로 사용자가 알 방법이 없다.
+    """
+    from app.services.external_api.reb_client import latest_value_from_rows
+    from app.services.land_intelligence.reb_statistics_service import _CAP_RATE_ITM
+
+    rows = [
+        {"CLS_NM": "서울", "CLS_FULLNM": "서울", "ITM_NM": "소득수익률",
+         "DTA_VAL": 4.2, "WRTTIME_IDTFR_ID": "2005"},
+        {"CLS_NM": "서울", "CLS_FULLNM": "서울", "ITM_NM": "투자수익률",
+         "DTA_VAL": 6.96, "WRTTIME_IDTFR_ID": "2012"},
+    ]
+    # ★공허 방지 — 선언 항목이 정말 **최신이 아닌** 시점에만 있는가.
+    assert max(r["WRTTIME_IDTFR_ID"] for r in rows) == "2012"
+    assert latest_value_from_rows(rows, "서울") == (6.96, "2012"), "대조군(선언 없음)이 깨졌다"
+
+    assert latest_value_from_rows(rows, "서울", itm_allow=_CAP_RATE_ITM) is None, (
+        "선언 항목이 최신 시점에 없는데 구값이 반환됐다 — 형제 계약과 반대"
+    )
+    # ★특이도 — 선언 항목이 **최신 시점에 있으면** 정상 반환한다(항상 거부도 결함이다).
+    ok = [dict(rows[0], WRTTIME_IDTFR_ID="2012")]
+    assert latest_value_from_rows(ok, "서울", itm_allow=_CAP_RATE_ITM) == (4.2, "2012")
+
+
+def test_cap_rate_basis_is_derived_from_the_declared_item() -> None:
+    """★★독립 적대 리뷰 **MAJOR-2** — 성공 경로에서도 라벨이 거짓이었다.
+
+    값은 소득수익률인데 `basis` 가 «상업용부동산 **투자수익률** 실측» 이라고 말했고, 그 문자열이
+    제출 PDF(`appraisal_adapter.py:200`)와 화면에 인쇄됐다. **이 PR 이 고친다고 선언한 그 클래스다.**
+    ⇒ 손으로 적지 않고 `_CAP_RATE_ITM` 에서 **파생**한다.
+    """
+    import app.services.land_intelligence.reb_statistics_service as S
+
+    src = inspect.getsource(S.commercial_cap_rate)
+    assert '"상업용부동산 투자수익률 실측"' not in src, "거짓 라벨이 되살아났다"
+    assert "_CAP_RATE_ITM" in src, "basis 가 선언에서 파생되지 않는다"
+    # ★행위로 — 선언을 바꾸면 라벨이 따라오는가(리터럴이면 안 따라온다).
+    assert f"상업용부동산 {'·'.join(S._CAP_RATE_ITM)} 실측" == "상업용부동산 소득수익률 실측"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="★부채(독립 적대 리뷰 MAJOR-3): 형제 축 `jeonse_conversion_rate` 는 항목을 선언하지 "
+           "않아 **단일 오항목이 그대로 채택된다**(실측: ITM_NM='지수' 7.5 → rate 0.075 · "
+           "basis '전월세전환율 실측'). 이 PR 이 고친 것과 글자 그대로 같은 결함이고 "
+           "**라이브에서 살아 있다**. 선언하지 않은 이유는 「측정 실패」다 — `/rone-test` 의 MM "
+           "분기는 `fetch_recent_monthly_rows`, 프로덕션은 `fetch_statbl_rows` 라 같은 행 집합이 "
+           "아니어서 그 표의 ITM 구성을 못 봤다. **살아 있는 경로를 추측으로 좁히지 않는다.**",
+)
+def test_jeonse_conversion_also_declares_its_item() -> None:
+    """전월세전환율도 항목을 선언해야 한다(미해결 — strict xfail).
+
+    ★**부채를 초록 안에 세운다**(전역 §B-13). 같은 PR 이 다른 자리에서 «가시성 순감 금지»를
+      근거로 삼았는데 이 부채는 계획서 **산문에만** 있었다 — 독립 리뷰가 그 비대칭을 짚었다.
+    ★상환 조건: 그 표의 ITM 구성을 **프로덕션과 같은 경로로** 측정한 뒤 선언한다.
+    """
+    import app.services.land_intelligence.reb_statistics_service as S
+
+    src = inspect.getsource(S.jeonse_conversion_rate)
+    assert "itm_allow=" in src, "전월세전환율 축이 항목을 선언하지 않는다"
+
+
 @pytest.mark.asyncio
 async def test_cap_rate_path_refuses_a_total_return_end_to_end(monkeypatch) -> None:
     """★**경로**를 잠근다 — 함수 둘을 각각 잠그는 것과 경로를 잠그는 것은 다르다.
@@ -1688,7 +1800,7 @@ async def test_cap_rate_path_refuses_a_total_return_end_to_end(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
-async def test_commercial_cap_rate_actually_passes_the_declaration() -> None:
+async def test_commercial_cap_rate_actually_passes_the_declaration(monkeypatch) -> None:
     """★배선 락 — 이름이 존재하는 것과 **그 값이 넘어가는 것**은 다르다.
 
     `commercial_cap_rate` 가 `itm_allow` 를 **실제로 넘기는지**를 호출 인자로 태운다.
@@ -1705,23 +1817,14 @@ async def test_commercial_cap_rate_actually_passes_the_declaration() -> None:
         seen["itm_allow"] = itm_allow
         return None
 
+    # ★MINOR-3(독립 리뷰): 형제들이 전부 `monkeypatch` 를 쓴다 — 전역/`os.environ` 직접 조작은
+    #   수집 순서·중단 시 오염이 형제와 **다른 축**으로 남는다. 같은 도구를 쓴다.
     import app.services.external_api.reb_client as RC
-    monkey = [(RC, "fetch_statbl_rows", RC.fetch_statbl_rows),
-              (RC, "latest_value_from_rows", RC.latest_value_from_rows)]
-    RC.fetch_statbl_rows = _fake_fetch          # type: ignore[assignment]
-    RC.latest_value_from_rows = _fake_latest    # type: ignore[assignment]
-    import os
-    prev = os.environ.get("RONE_COMMYIELD_STATBL_ID")
-    os.environ["RONE_COMMYIELD_STATBL_ID"] = "TEST_TABLE"
-    try:
-        await S.commercial_cap_rate("서울특별시 강남구 역삼동 737")
-    finally:
-        for mod, name, orig in monkey:
-            setattr(mod, name, orig)
-        if prev is None:
-            os.environ.pop("RONE_COMMYIELD_STATBL_ID", None)
-        else:
-            os.environ["RONE_COMMYIELD_STATBL_ID"] = prev
+
+    monkeypatch.setattr(RC, "fetch_statbl_rows", _fake_fetch)
+    monkeypatch.setattr(RC, "latest_value_from_rows", _fake_latest)
+    monkeypatch.setenv("RONE_COMMYIELD_STATBL_ID", "TEST_TABLE")
+    await S.commercial_cap_rate("서울특별시 강남구 역삼동 737")
 
     assert seen.get("itm_allow") == S._CAP_RATE_ITM, (
         f"선언이 조회에 전달되지 않았다(받은 값 {seen.get('itm_allow')!r}) — "
