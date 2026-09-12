@@ -69,7 +69,10 @@ function result(overrides: Record<string, unknown> = {}) {
     market_stats: {
       region: "서울",
       rone_available: true,
-      cap_rate: { source: "R-ONE", pct: 4.5, basis: "상업용부동산 투자수익률 실측" },
+      // ★독립 적대 리뷰 MAJOR-2(2026-09-12): 이 픽스처가 **거짓 라벨을 초록으로 고정**하고 있었다.
+      //   백엔드는 자본환원율로 **소득수익률**만 채택하는데(`_CAP_RATE_ITM`) `basis` 는
+      //   «투자수익률 실측» 이라고 말했다 — 값은 소득, 근거는 투자. 미러가 그것을 잠갔다.
+      cap_rate: { source: "R-ONE", pct: 4.5, basis: "상업용부동산 소득수익률 실측" },
       jeonse_conversion_rate: { source: "R-ONE", pct: 5.4, basis: "전월세전환율 실측" },
       housing_time_adjust: { source: "R-ONE", factor: 1.0243, basis: "주택매매가격지수 누적 변동(서울)" },
       land_price_trend: {
@@ -102,7 +105,9 @@ describe("탁상감정 §Ⅵ 렌더 락", () => {
       expect(screen.getByText(/시점수정: R-ONE 지가변동률 서울 실데이터/)).toBeTruthy();
     });
     // 세 형제가 모두 basis 를 달고 그려진다 — 비대칭이 화면에서 확인된다.
-    expect(screen.getByText(/자본환원율\(R-ONE 실측\).*상업용부동산 투자수익률 실측/)).toBeTruthy();
+    expect(screen.getByText(/자본환원율\(R-ONE 실측\).*상업용부동산 소득수익률 실측/)).toBeTruthy();
+    // ★반대 방향 — 옛 거짓 라벨이 되살아나면 빨개진다(죽은 단언이 되지 않게).
+    expect(screen.queryByText(/상업용부동산 투자수익률 실측/)).toBeNull();
     expect(screen.getByText(/전월세전환율\(R-ONE 실측\).*전월세전환율 실측/)).toBeTruthy();
     expect(screen.getByText(/주택가격지수 누적변동.*주택매매가격지수 누적 변동\(서울\)/)).toBeTruthy();
   });
