@@ -272,6 +272,15 @@ def test_the_real_scan_stays_within_our_sources() -> None:
     ★역할 분담: 이 락은 **「venv 가 있는 환경」** 담당이고(CI 엔 없어 공허),
       반대편은 `test_the_exclusion_is_alive_in_every_environment` 의 **합성 트리**가 맡는다.
       **그때 비로소 축이 둘이 된다.**
+
+    ★★**단일점 고지 — `/tests/` 는 이 락이 보지 않는다**(2026-09-12 실측 · 독립 리뷰 잔여 관측).
+      아래 독립 리터럴은 `.venv`·`site-packages`·`node_modules` **셋만** 본다.
+      즉 `_SCAN_EXCLUDED` 에서 **`/tests/` 만 죽으면 이 락은 초록**이고
+      (실측: 이 락 단독 → `::VERDICT=SURVIVED` · 합성 락 단독 → `CAUGHT`),
+      잡는 것은 **합성 락의 항목별 루프 하나뿐**이다.
+      ⇒ 지금 커버리지에 **구멍은 없다.** 그러나 그 루프가 **`/tests/` 의 유일한 잠금**이다 —
+        나중에 누가 합성 락을 「중복」이라 여겨 줄이면 **`/tests/` 가 두 축 모두에서 빠진다.**
+      ***락을 더 만들 이유는 아니고, 무엇이 단일점인지 적어 둘 이유는 된다.***
     """
     root = pathlib.Path(__file__).resolve().parents[1]
     producers = _scan_role_producers(root)
