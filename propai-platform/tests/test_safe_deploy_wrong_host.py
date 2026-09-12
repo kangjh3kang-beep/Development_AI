@@ -489,3 +489,55 @@ def test_repo_missing_message_states_observation_not_diagnosis() -> None:
     # 후보를 **복수로** 제시해야 한다 — 하나만 적으면 그것이 곧 단정이다.
     for cand in ["권한", "심링크", "경합"]:
         assert cand in lib, f"원인 후보 {cand!r} 가 안 적혀 있다"
+
+
+
+def test_guard_self_location_constants_match_the_real_tree() -> None:
+    """★★가드의 **두 하드코딩**이 실제 트리와 어긋나면 여기서 빨개진다(자기 지목 ① · 리뷰 확인).
+
+    판정이 **서로 독립인 두 리터럴**에 걸려 있다::
+
+        lib:62  cd "$(dirname "${BASH_SOURCE[0]}")/../../.."      ← 깊이
+        lib:86  [ ! -d "$self_repo/propai-platform/scripts" ]      ← 표식
+
+    어긋나면 **안전 속성은 살지만 진단 능력이 죽는다** — 항상 `unknown-checkout` 이 된다.
+    실측 재현 2종::
+
+        propai-platform/ → platform/ 개명            → 항상 unknown-checkout
+        lib 이 한 단계 깊어짐(.../scripts/lib/host/)  → 항상 unknown-checkout
+
+    ★**두 번째가 더 위험하다** — 파일이 **트리 안에 그대로** 있어서, 테스트의 경로 리터럴만
+    갱신하면 **전 락이 초록인 채 판별력만 사라진다.** (첫 번째는 테스트가
+    ``FileNotFoundError`` 로 **우연히** 빨개진다 — ***단언이 아니라 사고다.***)
+
+    ⇒ 런타임은 건드리지 않고, **락이 파일 구조에서 파생**해 대조한다.
+    """
+    # ★유일성을 **먼저** 확인한다 — `rglob(basename)` 이 엉뚱한 파일을 집으면
+    #   그 뒤 모든 단언이 **다른 대상**을 보게 된다(동료가 그 사고를 겪었다).
+    libs = sorted(REPO_ROOT.rglob("assert-a1-host.sh"))
+    # ★이 줄을 지우는 변이는 **SURVIVED 한다(M20)** — 그리고 그것은 **구멍이 아니다**:
+    #   지금 그 파일은 **정확히 하나**라 유일성이 깨진 모집단을 만들 수 없다(도달 불가 방어).
+    #   ★그래도 **먼저** 둔다. 사본이 생기는 날 `rglob` 은 **엉뚱한 것을 집고**, 그 뒤 모든
+    #   단언이 **다른 대상**을 보게 된다 — 동료가 `rglob(basename)` 으로 8개 중 엉뚱한 것을
+    #   집어 **가드가 정상 사유를 거짓으로 찍은** 사고를 겪었다.
+    #   ***점수를 위해 이 줄에 억지 단언을 붙이지 않는다. 왜 생존이 구멍이 아닌지를 적는다.***
+    assert len(libs) == 1, f"가드 라이브러리가 {len(libs)}개다 — 대상을 특정할 수 없다: {libs}"
+
+    rel = libs[0].relative_to(REPO_ROOT)
+    parts = rel.parent.parts                      # ('propai-platform', 'scripts', 'lib')
+    depth = len(parts)
+    src = libs[0].read_text(encoding="utf-8")
+
+    # ① 깊이 — lib 에서 저장소 루트까지 올라가는 `..` 개수가 실제 깊이와 같아야 한다.
+    up = "/".join([".."] * depth)
+    assert f'/{up}"' in src, (
+        f"루트로 올라가는 깊이가 실제({depth}단계, {rel.parent})와 다르다 — "
+        "self_repo 가 엉뚱한 곳을 가리키고 판정이 항상 unknown 으로 퇴화한다"
+    )
+
+    # ② 표식 — 저장소 루트임을 확인하는 경로가 실제 트리에 존재해야 한다.
+    marker = "/".join(parts[:2])                  # 'propai-platform/scripts'
+    assert f'-d "$self_repo/{marker}"' in src, (
+        f"루트 표식이 실제 트리({marker})와 다르다 — 판정이 항상 unknown 으로 퇴화한다"
+    )
+    assert (REPO_ROOT / marker).is_dir(), f"표식 경로 {marker} 가 트리에 없다 — 파생이 낡았다"
