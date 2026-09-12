@@ -43,7 +43,8 @@ _EXEMPT: dict[str, str] = {
     "app/services/sales/org/service.py::assign_user_to_node:131":
         "★필터를 걸면 **더 나빠진다**(2026-09-12 실측). 이 조회는 "
         "`select(SalesSite.organization_id)` 이고 바로 다음 줄이 "
-        "`if org_id and u[2] and str(u[2]) != str(org_id)`(org/service.py:133) 다 — "
+        "`if org_id and u[2] and str(u[2]) != str(org_id)`"
+        "(app/services/sales/org/service.py:133) 다 — "
         "삭제된 현장이면 `org_id` 가 `None` 이 되어 **테넌트 검사가 건너뛰어진다**(fail-open). "
         "즉 여기서 막을 것은 「삭제된 현장의 값을 읽는 것」이 아니라 「삭제된 현장에 배정하는 "
         "것」이고, 그 판정은 **호출부**가 해야 한다. 봉합이 새 결함을 만드는 자리라 "
@@ -219,10 +220,26 @@ def test_exemptions_carry_a_reason_whose_coordinates_exist() -> None:
         coords = re.findall(r"([A-Za-z0-9_/.]+\.py):(\d+)", reason)
         assert coords, f"{key} 의 면제 사유에 **좌표(파일:줄)** 가 없다"
         for rel, lineno in coords:
-            # 사유는 `app/...` 또는 `org/service.py` 처럼 짧게 적힐 수 있다 — 둘 다 찾는다.
-            cands = [root / rel] + list(root.rglob(rel.split("/")[-1]))
-            found = next((c for c in cands if c.is_file()), None)
-            assert found is not None, f"{key}: 사유가 없는 파일을 가리킨다 — {rel}"
+            # ★★**해석기가 엉뚱한 파일을 집었다**(2026-09-12 CI 실측 · 내 가드의 위양성).
+            #   종전엔 `rglob(basename)` 로 폴백했는데 이 저장소에 `service.py` 가 **8개** 있어
+            #   19줄짜리 `guarantee/service.py` 를 집고 «좌표가 파일 밖이다» 로 신고했다.
+            #   실제 대상은 `app/services/sales/org/service.py`(303줄)이고 133줄은 실재한다.
+            #   ★**가드의 위양성도 결함이다** — 정상 사유를 거짓으로 찍으면 다음 사람이
+            #     사유를 고치려 들거나 이 락을 끈다.
+            #   ⇒ ①정확 경로 우선 ②없으면 **전체 상대경로의 접미 일치**로 찾고
+            #     ③후보가 둘 이상이면 **모호하다고 실패**시킨다(짧게 쓴 사람에게 전체 경로를 요구).
+            exact = root / rel
+            if exact.is_file():
+                found = exact
+            else:
+                cands = [c for c in root.rglob("*.py")
+                         if str(c.relative_to(root)).endswith(rel)]
+                assert cands, f"{key}: 사유가 없는 파일을 가리킨다 — {rel}"
+                assert len(cands) == 1, (
+                    f"{key}: 사유의 경로가 **모호하다**({len(cands)}개 일치) — 전체 경로를 적어라: "
+                    f"{rel} → {sorted(str(c.relative_to(root)) for c in cands)[:4]}"
+                )
+                found = cands[0]
             lines = found.read_text(encoding="utf-8").splitlines()
             n = int(lineno)
             assert 1 <= n <= len(lines), (
