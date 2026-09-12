@@ -23,6 +23,14 @@ diff 에서 **기계적으로 뽑아** 그 구멍을 드러낸다.
     python3 scripts/mutate_changed.py --max 40           # 변이 개수 상한
 
 기본 테스트 명령은 변경된 파일에서 추론한다(같은 이름의 `tests/test_*.py`).
+
+★**종료코드 계약**(기계는 rc 만 본다 — 산문은 안 읽는다):
+    0  판정된 변이가 **전부** 걸렸고 **감사되지 않은 변이가 0건**
+    1  ★생존 있음
+    2  아무것도 감사하지 못함(변경 없음 · 테스트 못 찾음 · 기준선 실패 …)
+    3  ★생존은 없으나 **판정 불가/건너뜀이 있다** — 이 실행은 **전수가 아니다**
+★기계 판독은 stdout 의 **`::AUDIT=` 줄**을 보라(안내문에 안 쓰이는 형태).
+  `generated / judged / caught / survived / undecided / skipped` 를 싣는다.
 찾지 못하면 `--tests` 로 직접 준다.
 
 ## 읽는 법 — 생존이 곧 결함은 아니다
@@ -85,10 +93,20 @@ _TS_TYPE_DECL = re.compile(
 
 # ── 셸(.sh) 규칙 ───────────────────────────────────────────────────────────
 # ★이 저장소의 배포·롤백·감시·조율 스크립트가 전부 셸이고, 그중 **14개는 이미 pytest 락을
-#   갖고 있다**(2026-09-12 파생 실측). 그런데 이 도구가 확장자로 걸러 온 탓에 그 락들은
+#   갖고 있다**(2026-09-12 파생 · ★**base `cd942c6ec` 의 트리에서** 잰 값 — 17/39).
+#   ★수를 인용할 때 **기준 sha 를 같이** 적는다: 처음 이 줄에 «14/35» 라 적었는데, 그것은
+#     **45커밋 뒤처진 공유 워크트리**에서 잰 값이었다(독립 리뷰 MAJOR-4). 파생식은 옳았고
+#     **모집단이 틀렸다** — «파생으로 쟀다»는 트리가 맞을 때만 의미가 있다.
+#   그런데 이 도구가 확장자로 걸러 온 탓에 그 락들은
 #   **한 번도 기계 감사를 받지 못했다** — "도구를 돌렸다"가 그 축에서는 보증이 아니었다.
-_SH_IF = re.compile(r'^(\s*)(el)?if\s+(?!false\b)(.+?);\s*then\s*$')
-_SH_EXIT = re.compile(r'^(\s*)exit\s+([1-9][0-9]*)\s*$')
+# ★줄 끝 앵커(`then\s*$`)로는 이 저장소의 **한 줄 가드**를 통째로 못 본다(실측: 조건 줄
+#   272건 중 44건 · 16%). 그래서 `then` **뒤를 통째로 보존**하고 조건만 죽인다 —
+#   꼬리를 버리면 `fi` 가 사라져 **구문이 깨진다**(그건 변이가 아니라 파손이다).
+_SH_IF = re.compile(r'^(\s*)(el)?if\s+(?!false\b)(.+?);(\s*then\b.*)$')
+# ★`exit N` 도 줄 단독일 때만 보면 **게이트 계약의 대부분을 놓친다** — 이 저장소의 배포
+#   가드는 `if …; then …; exit 1; fi` 한 줄 관용구를 쓴다. **토큰 경계**로 바꾼다.
+#   ★`exit 0` 은 첫 자리 `[1-9]` 때문에 원리적으로 안 걸린다(성공 경로 불가침).
+_SH_EXIT = re.compile(r'\bexit\s+[1-9][0-9]*\b')
 _SH_ASSIGN = re.compile(
     r'^(\s*)(?:export\s+|local\s+|declare\s+(?:-[A-Za-z]+\s+)?)?'
     r'[A-Za-z_][A-Za-z0-9_]*=.*$'
@@ -109,16 +127,16 @@ def _shell_mutations_for_line(path: Path, line: str, line_no: int) -> list[Mutat
     #      (정규식의 `(?!false\b)`). 그런 변이는 항상 생존해 신호를 더럽힌다.
     m = _SH_IF.match(line)
     if m:
-        indent, el = m.group(1), m.group(2) or ""
-        out.append(Mutation("조건무력화", path, line, f"{indent}{el}if false; then", line_no))
+        indent, el, _cond, tail = m.group(1), m.group(2) or "", m.group(3), m.group(4)
+        out.append(Mutation("조건무력화", path, line, f"{indent}{el}if false;{tail}", line_no))
 
     # ② 종료코드무력화 — **게이트 스크립트의 핵심 계약**이다.
     #    ★이 저장소의 셸 락 상당수가 "위반이면 0 이 아닌 코드로 죽는다"를 계약으로 삼는다.
     #      rc 를 안 보는 테스트는 이 변이에서 **생존**하고, 그것이 정확히 구멍이다.
     #    ★`exit 0` 은 대상이 아니다(성공 경로를 실패로 만드는 것은 계약 위반이 아니라 파손).
-    m = _SH_EXIT.match(line)
-    if m:
-        out.append(Mutation("종료코드무력화", path, line, f"{m.group(1)}exit 0", line_no))
+    killed_exit = _SH_EXIT.sub("exit 0", line)
+    if killed_exit != line:
+        out.append(Mutation("종료코드무력화", path, line, killed_exit, line_no))
 
     # ③ 줄삭제 — "정의만 하고 소비처 0" 이 여기서 드러난다.
     if _SH_ASSIGN.match(line):
@@ -325,6 +343,26 @@ def _is_front(test: str) -> bool:
     return test.endswith((".ts", ".tsx"))
 
 
+def _apply_at_line(original: str, m: "Mutation") -> str | None:
+    """변이를 **그 줄 번호에** 적용한다. 줄이 기대와 다르면 `None`(건너뜀).
+
+    ★`str.replace(old, new, 1)` 은 **첫 번째** 일치를 바꾸므로, 같은 줄이 파일에 여러 번
+      나오면 **엉뚱한 자리**를 바꾼다. 종전 판은 그래서 «유일하지 않으면 버린다» 로 피했는데,
+      그러면 셸에서 손실이 크다 — `exit 1` 은 배포 게이트의 **표준 실패코드**라 한 파일에
+      여러 번 나온다(실측: 종료코드 규칙 생성 55건 중 **22건(40%)** 이 그렇게 버려졌다).
+    """
+    lines = original.splitlines(keepends=True)
+    idx = m.line_no - 1
+    if not (0 <= idx < len(lines)):
+        return None
+    raw = lines[idx]
+    body = raw.rstrip("\n").rstrip("\r")
+    if body != m.old:
+        return None
+    lines[idx] = m.new + raw[len(body):]
+    return "".join(lines)
+
+
 def _mutant_broke_syntax(path: Path) -> str:
     """변이가 **대상 파일의 구문을 깼는가**. 깼으면 사유, 아니면 빈 문자열.
 
@@ -335,8 +373,8 @@ def _mutant_broke_syntax(path: Path) -> str:
       가른다 — 이 도구에는 그 개념이 **없었다**(2026-09-12 원문 통독으로 확인).
 
     ★`.sh` 는 `bash -n` 이다 — **`sh -n` 이 아니다.**
-      이 저장소의 `.sh` 35개 중 **6개**가 bash 확장을 써서 `sh -n` 으로는 **변이가 없어도**
-      실패한다(2026-09-12 전수 실측 · 대조군 `bash -n` 실패 **0/35**).
+      이 저장소의 `.sh` **39개 중 6개**가 bash 확장을 써서 `sh -n` 으로는 **변이가 없어도**
+      실패한다(2026-09-12 전수 실측 · base `cd942c6ec` · 대조군 `bash -n` 실패 **0/39**).
       `sh -n` 으로 짰으면 그 6개의 모든 변이가 **거짓 「판정 불가」**가 됐을 것이다.
 
     ★★**이 축은 `.ts/.tsx` 에서 닫히지 않는다** — 값싼 구문검사가 없다(`tsc` 는 프로젝트
@@ -593,26 +631,42 @@ def main() -> int:
     # ★「판정 불가」를 생존·사망과 **다른 통**에 담는다. 한 통에 섞으면 그 수가 두 사건을
     #   덮어(형제 도구가 `::VERDICT=UNDECIDED` 로 가르는 바로 그 자리) 사람을 틀린 곳으로 보낸다.
     undecided: list[tuple[Mutation, str]] = []
+    # ★`skipped` 를 **세 번째 통**으로 둔다. 종전엔 건너뛴 변이가 어느 통에도 안 들어가
+    #   "판정된 N건" 이 **거짓 수**였다(독립 리뷰 MAJOR-2).
+    skipped: list[Mutation] = []
     for i, m in enumerate(muts, 1):
         original = m.path.read_text(encoding="utf-8")
-        if original.count(m.old) != 1:
-            print(f"  [{i:3}/{len(muts)}] skip(유일하지 않음)  {m.label()}")
+        # ★★**줄 번호로 치환한다** — 종전의 `original.count(m.old) != 1` 은 **같은 줄이
+        #   두 번 나오면 그 변이를 통째로 버렸다.** 셸에서 그 손실이 크다(실측: 종료코드
+        #   규칙의 **40%** 가 `exit 1` 중복으로 버려졌다 — 배포 게이트의 표준 실패코드다).
+        #   변이 줄 번호는 `_added_lines` 가 **원본 기준**으로 준 값이고, 우리는 매번
+        #   `original` 에서 새로 쓰므로 밀릴 수 없다. 그래도 **일치를 확인**하고,
+        #   안 맞으면 조용히 넘기지 않고 `skipped` 로 **따로 센다**.
+        mutated = _apply_at_line(original, m)
+        if mutated is None:
+            skipped.append(m)
+            print(f"  [{i:3}/{len(muts)}] skip(줄 불일치)  {m.label()}")
             continue
         # ★`try/finally` — 중간에 예외(KeyboardInterrupt 포함)가 나도 **변이가 남지 않는다**.
         #   종전엔 원복이 정상 경로에만 있어, 끊기면 오염된 소스가 그대로 남았다.
         broke, alive = "", False
         try:
-            m.path.write_text(original.replace(m.old, m.new, 1), encoding="utf-8")
+            m.path.write_text(mutated, encoding="utf-8")
             # ★★구문 게이트 — **변이 자신이 원인**인 실패를 「잡혔다」로 세지 않는다.
             #   깨진 변이는 테스트를 실패시키지만 그것은 «락이 잡은 것»이 아니라
             #   «코드가 아예 안 돈 것»이다. 세면 변이 점수가 거짓으로 부푼다.
             broke = _mutant_broke_syntax(m.path)
-            if not broke:
-                alive = _run(rel_tests, cwd)
+            # ★★**구문이 깨져도 테스트는 돌린다.** 깨진 변이에서 테스트가 **통과**하면
+            #   정보가 하나도 안 줄었다 — «그 파일을 아무도 태우지 않는다»는 뜻이라
+            #   **「생존」이 옳은 판정**이다. 여기서 판정을 접으면 이 도구는 *거짓 CAUGHT* 만이
+            #   아니라 **진짜 SURVIVED 신호까지** 같은 통에 넣어 초록으로 만든다
+            #   (독립 리뷰 MAJOR-3 · base 판이 `★생존`+EXIT=1 로 내던 신호였다).
+            #   ⇒ 「판정 불가」는 **깨졌고 그래서 실패한** 경우로 좁힌다.
+            alive = _run(rel_tests, cwd)
         finally:
             m.path.write_text(original, encoding="utf-8")
         assert m.path.read_text(encoding="utf-8") == original, f"원복 실패: {m.path}"
-        if broke:
+        if broke and not alive:
             undecided.append((m, broke))
             print(f"  [{i:3}/{len(muts)}] 판정불가  {m.label()}\n"
                   f"{'':>21}← 변이가 구문을 깼다: {broke}")
@@ -622,6 +676,15 @@ def main() -> int:
             survived.append(m)
 
     print(f"\n{'=' * 70}")
+    judged = len(muts) - len(undecided) - len(skipped)
+    caught = judged - len(survived)
+    # ★★**기계 판독 줄** — 사람이 읽는 산문과 분리한다. 형제 `scripts/mutate_manual.sh` 가
+    #   `::VERDICT=` 로 이미 그렇게 한다(안내문에 절대 안 쓰이는 형태).
+    #   종전엔 이 도구의 판정이 **산문에만** 있어, 호출자는 rc 밖에 볼 것이 없었다.
+    print(
+        f"::AUDIT=generated={len(muts)} judged={judged} caught={caught} "
+        f"survived={len(survived)} undecided={len(undecided)} skipped={len(skipped)}"
+    )
     if undecided:
         # ★조용히 넘기지 않는다 — 「판정 불가」를 안 알리면 분모가 작아진 채
         #   "생존 0" 이 **전수 결과로** 읽힌다(이 도구가 잡으려는 공허한 초록).
@@ -630,9 +693,18 @@ def main() -> int:
         for m, why in undecided:
             print(f"  {m.label()}  ← {why}")
         print()
+    if skipped:
+        print(f"★건너뛴 변이 {len(skipped)}건 — 줄이 기대와 달라 **주입하지 못했다**. "
+              "이 수만큼도 분모가 작다(도구 결함일 수 있으니 조용히 넘기지 마라).")
     if not survived:
-        print(f"생존 0 — 판정된 {len(muts) - len(undecided)}건이 전부 테스트에 걸린다."
-              + ("" if not undecided else " ★단 위 판정 불가 건은 **감사되지 않았다**."))
+        if undecided or skipped:
+            # ★★**rc 에 싣는다.** 「판정 불가」를 신설해 놓고 `EXIT=0` 으로 내보내면
+            #   호출자·CI·`&&` 체인에는 **「전수 CAUGHT」와 완전히 같은 신호**가 간다
+            #   (독립 리뷰 MAJOR-1 — *«기계는 rc 만 본다»*).
+            print(f"★판정 {judged}건은 전부 걸렸으나 **감사되지 않은 변이가 "
+                  f"{len(undecided) + len(skipped)}건** 있다 — 이 실행은 전수가 아니다.")
+            return 3
+        print(f"생존 0 — 판정된 {judged}건이 전부 테스트에 걸린다.")
         return 0
     print(f"★생존 {len(survived)}건 — 각각 **설명하거나 락을 추가**하라:\n")
     for m in survived:

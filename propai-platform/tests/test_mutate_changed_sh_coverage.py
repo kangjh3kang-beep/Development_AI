@@ -1,7 +1,9 @@
 """`scripts/mutate_changed.py` 가 **`.sh` 를 기계 변이 모집단에 넣는다**.
 
 ★왜 이 락이 있나 (2026-09-12 파생 실측):
-  이 저장소의 배포·롤백·감시·조율이 전부 셸이고 **그중 14개는 이미 pytest 락을 갖고 있다**.
+  이 저장소의 배포·롤백·감시·조율이 전부 셸이고 **여럿이 이미 pytest 락을 갖고 있다**
+  (base `cd942c6ec` 에서 17/39 — ★**수를 인용할 때 기준 sha 를 같이 적는다.** 처음엔
+   «14/35» 라 적었는데 **45커밋 뒤처진 워크트리**에서 잰 값이었다).
   그런데 변이 도구가 확장자(`.py/.ts/.tsx`)로 걸러 온 탓에 그 락들은 **한 번도 기계 감사를
   받지 못했다** — 즉 *"도구를 돌렸다"* 가 그 축에서는 **보증이 아니었다**.
 
@@ -14,6 +16,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 import subprocess
 import sys
 import uuid
@@ -210,10 +213,10 @@ def test_rel_test_promotes_only_unresolvable_paths():
 # ── ⑦ ★부채를 초록 안에 드러낸다 (커밋 메시지에만 적으면 안 드러난다) ────────
 @pytest.mark.xfail(
     strict=True,
-    reason="★부채: 저장소 루트 `scripts/` 5건(coord.sh · mutate_manual.sh 등)은 여전히 "
-           "모집단 밖이다. 그 게이트의 사유(«도구 자신은 이 테스트들의 대상이 아니다»)가 "
-           "지금도 참인지 **미측정**이다 — 이유는 「장치 부재」가 아니라 「안 쟀음」. "
-           "재서 참이 아니면 이 xfail 이 **초록으로 뒤집히며** 알려 준다.",
+    reason="★부채: 저장소 루트 `scripts/` 의 셸은 여전히 모집단 밖이다(개수는 테스트가 "
+           "`git ls-files` 로 파생해 메시지에 싣는다 — 손으로 세지 않는다). 그 게이트의 "
+           "사유(«도구 자신은 이 테스트들의 대상이 아니다»)가 지금도 참인지 **미측정**이며 "
+           "이유는 「장치 부재」가 아니라 「안 쟀음」. 재서 참이 아니면 초록으로 뒤집힌다.",
 )
 def test_root_scripts_shell_also_enters_the_population(tmp_path, monkeypatch):
     (tmp_path / "scripts").mkdir()
@@ -246,12 +249,28 @@ def _git(*args: str, cwd: pathlib.Path) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
 
 
+def _verdicts(out: str) -> dict[str, str]:
+    """출력에서 **변이 인덱스별 판정**을 파싱한다 — `{"1": "판정불가", ...}`.
+
+    ★산문을 줄 단위로 훑지 않는다. 종전 락은 «판정불가 줄 안에 kill 이 없다» 만 봤는데
+      `kill` 은 **다음 줄**에 찍히므로, 같은 변이가 **두 통에 동시에** 들어가도 초록이었다
+      (독립 리뷰 MEDIUM-3 — `continue` 한 줄을 지우면 거짓 CAUGHT 가 그대로 부활했다).
+    """
+    out_map: dict[str, list[str]] = {}
+    for mm in re.finditer(r"^\s*\[\s*(\d+)/\s*\d+\]\s*(판정불가|kill|★생존|skip\S*)", out, re.M):
+        out_map.setdefault(mm.group(1), []).append(mm.group(2))
+    dupes = {k: v for k, v in out_map.items() if len(v) != 1}
+    assert not dupes, f"★같은 변이가 **여러 번 판정**됐다(두 통 동시 계수): {dupes}"
+    return {k: v[0] for k, v in out_map.items()}
+
+
 def test_end_to_end_reports_syntax_broken_mutant_as_undecided(tmp_path):
-    """★구문을 깨는 변이를 **CAUGHT 로 세지 않는다**.
+    """★구문을 깼고 **그래서 실패한** 변이는 CAUGHT 도 SURVIVED 도 아니다.
 
     합성 셸: `then` 블록의 유일한 문장이 대입이라, 그 줄을 지우면 `if …; then / fi` 가
     남아 **bash 구문이 깨진다**. 종전 도구라면 테스트가 실패해 `kill`(=CAUGHT)로 세어져
     **변이 점수가 거짓으로 부풀었다.**
+    ★그리고 그 사실이 **rc 에 실려야** 한다 — 기계는 rc 만 본다(독립 리뷰 MAJOR-1).
     """
     repo = tmp_path / "synthrepo"
     (repo / "tests").mkdir(parents=True)
@@ -260,10 +279,17 @@ def test_end_to_end_reports_syntax_broken_mutant_as_undecided(tmp_path):
     _git("config", "user.name", "t", cwd=repo)
 
     # base 커밋 — 아직 대상 셸이 없다(그래야 이후 줄이 전부 "추가된 줄"이 된다).
+    # ★이 테스트는 g.sh 를 **실제로 태운다**(내용 단언). 그래야 변이가 실패를 만들고,
+    #   «깨졌고 그래서 실패한» 경우 = 판정 불가가 성립한다.
+    #   ★조건 변이도 **잡히게** 해 둔다 — 그래야 이 락이 재는 것이 「판정 불가 하나」로
+    #     좁혀진다. 안 그러면 생존이 섞여 rc 가 1 이 되고, 이 테스트가 보려는 축이 흐려진다
+    #     (두 사건을 한 픽스처에 섞지 않는다).
     (repo / "tests" / "test_g.py").write_text(
-        "def test_mentions_g_sh():\n"
-        "    # g.sh 를 언급하지만 **행위를 태우지 않는다** — 그래서 변이는 원래 생존한다.\n"
-        "    assert True\n",
+        "import pathlib\n"
+        "def test_body_and_condition_are_present():\n"
+        "    src = pathlib.Path('g.sh').read_text(encoding='utf-8')\n"
+        "    assert 'Y=1' in src\n"
+        "    assert '-z \"$X\"' in src\n",
         encoding="utf-8",
     )
     _git("add", "-A", cwd=repo)
@@ -288,14 +314,24 @@ def test_end_to_end_reports_syntax_broken_mutant_as_undecided(tmp_path):
 
     # ★공허 방지 선단언 — 변이가 0건이면 아래 판정이 전부 공짜다.
     assert "변이 " in out and "변이 0건" not in out, f"변이를 만들지 못했다:\n{out}"
-    assert "판정불가" in out or "판정 불가" in out, (
-        "★구문을 깨는 변이가 **판정 불가로 갈라지지 않았다** — 루프 배선이 없거나 끊겼다.\n"
-        f"{out}"
+
+    verdicts = _verdicts(out)          # ★인덱스별로 **정확히 한 번**임을 그 안에서 단언한다
+    assert "판정불가" in verdicts.values(), (
+        f"★구문을 깬 변이가 판정 불가로 갈라지지 않았다 — 루프 배선이 끊겼다.\n{out}"
     )
-    # ★그리고 그것이 `kill` 로 세어지지 않았음을 같이 본다(같은 줄이 두 통에 들어가면 안 된다).
-    broken_lines = [ln for ln in out.splitlines() if "판정불가" in ln]
-    assert broken_lines, out
-    assert not any("kill" in ln for ln in broken_lines), broken_lines
+
+    # ★요약 블록이 **실제로 찍히는가**(개별 줄과 다른 문자열이라 판별력이 있다).
+    #   이것이 없으면 «분모가 작아졌다»를 아무도 못 본다.
+    assert "★판정 불가" in out, f"판정 불가 **요약 경고**가 통째로 사라졌다:\n{out}"
+
+    # ★★기계 판독 줄 — 산문이 아니라 이 줄이 계약이다.
+    audit = re.search(r"^::AUDIT=(.+)$", out, re.M)
+    assert audit, f"::AUDIT= 기계 줄이 없다:\n{out}"
+    assert "undecided=0" not in audit.group(1), audit.group(1)
+
+    # ★★rc 축 — 「판정 불가만 있고 생존 0」이 EXIT=0 이면 호출자에겐 «전수 CAUGHT» 와
+    #   완전히 같은 신호다. 그래서 3 이어야 한다(모듈 독스트링의 종료코드 계약).
+    assert r.returncode == 3, f"rc={r.returncode} · 기대 3\n{out}"
 
 
 def test_end_to_end_still_reports_ordinary_verdicts(tmp_path):
@@ -331,5 +367,161 @@ def test_end_to_end_still_reports_ordinary_verdicts(tmp_path):
         cwd=repo, capture_output=True, text=True, check=False,
     )
     out = r.stdout + r.stderr
-    assert "kill" in out, f"★정상 변이가 판정되지 않았다 — 전부 판정 불가로 도망갔나:\n{out}"
-    assert "판정불가" not in out, f"정상 변이를 판정 불가로 신고한다(위양성):\n{out}"
+    verdicts = _verdicts(out)
+    assert "kill" in verdicts.values(), (
+        f"★정상 변이가 판정되지 않았다 — 전부 판정 불가로 도망갔나:\n{out}"
+    )
+    assert "판정불가" not in verdicts.values(), f"정상 변이를 판정 불가로 신고한다:\n{out}"
+    assert "★판정 불가" not in out, f"판정 불가가 0건인데 요약을 찍는다:\n{out}"
+    assert r.returncode == 0, f"전부 걸렸는데 rc={r.returncode}\n{out}"
+
+
+# ── ⑨ MAJOR-3 — **깨졌는데 테스트가 통과하면 그건 진짜 「생존」이다** ────────────
+def test_syntax_broken_mutant_that_still_passes_is_survival_not_undecided(tmp_path):
+    """★판정 불가는 **«깨졌고 그래서 실패한»** 경우로 좁힌다.
+
+    깨진 변이에서 테스트가 **통과**했다면 정보가 하나도 안 줄었다 — «그 파일을 아무도
+    태우지 않는다»는 뜻이고, 그것이 정확히 **잠기지 않았다는 신호**다.
+    여기서 판정을 접으면 이 도구는 *거짓 CAUGHT* 뿐 아니라 **진짜 SURVIVED 까지** 같은
+    통에 넣어 초록으로 만든다(독립 리뷰 MAJOR-3 — base 판이 `★생존`+rc=1 로 내던 신호).
+    """
+    repo = tmp_path / "synthrepo3"
+    (repo / "tests").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
+    _git("config", "user.email", "t@t", cwd=repo)
+    _git("config", "user.name", "t", cwd=repo)
+    # ★g.sh 를 **전혀 태우지 않는** 테스트 — 그래서 무엇을 하든 통과한다.
+    (repo / "tests" / "test_g.py").write_text(
+        "def test_unrelated():\n    assert 1 + 1 == 2\n", encoding="utf-8"
+    )
+    _git("add", "-A", cwd=repo)
+    _git("commit", "-qm", "base", cwd=repo)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    (repo / "g.sh").write_text(
+        '#!/usr/bin/env bash\nif [ -z "$X" ]; then\n  Y=1\nfi\n', encoding="utf-8"
+    )
+    _git("add", "g.sh", cwd=repo)
+
+    r = subprocess.run(
+        [sys.executable, str(_TOOL), "--base", base,
+         "--tests", "tests/test_g.py", "--cwd", ".", "--max", "50"],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    out = r.stdout + r.stderr
+    verdicts = _verdicts(out)
+    assert "★생존" in verdicts.values(), (
+        "★깨진 변이에서 테스트가 통과했는데 **생존으로 안 세었다** — 진짜 신호를 숨긴다.\n"
+        f"{out}"
+    )
+    assert "판정불가" not in verdicts.values(), f"통과했는데 판정 불가로 접었다:\n{out}"
+    assert r.returncode == 1, f"생존이 있는데 rc={r.returncode}\n{out}"
+
+
+# ── ⑩ MAJOR-2 — 같은 줄이 여러 번 나와도 **버리지 않는다**(줄번호 치환) ────────
+def test_duplicate_lines_are_mutated_at_their_own_line_not_dropped():
+    """★종전엔 `original.count(old) != 1` 이면 통째로 버렸다.
+
+    셸에서 그 손실이 크다 — `exit 1` 은 배포 게이트의 **표준 실패코드**라 한 파일에 여러 번
+    나온다(실측: 종료코드 규칙 생성분의 **40%** 가 그렇게 버려졌다).
+    """
+    src = "a() {\n  exit 1\n}\nb() {\n  exit 1\n}\n"
+    m2 = mc.Mutation("종료코드무력화", pathlib.Path("g.sh"), "  exit 1", "  exit 0", 2)
+    m5 = mc.Mutation("종료코드무력화", pathlib.Path("g.sh"), "  exit 1", "  exit 0", 5)
+
+    got2 = mc._apply_at_line(src, m2)
+    got5 = mc._apply_at_line(src, m5)
+    assert got2 is not None and got5 is not None, "중복 줄이라고 버렸다"
+    # ★두 모집단 — **서로 다른 줄**이 바뀌어야 한다(같으면 줄번호를 안 쓰는 것이다).
+    assert got2 != got5, "줄 번호를 무시하고 같은 자리를 바꿨다"
+    assert got2.splitlines()[1].strip() == "exit 0" and got2.splitlines()[4].strip() == "exit 1"
+    assert got5.splitlines()[4].strip() == "exit 0" and got5.splitlines()[1].strip() == "exit 1"
+
+    # ★대조군 — 줄이 기대와 다르면 **조용히 엉뚱한 데를 바꾸지 않고** None 을 준다.
+    bad = mc.Mutation("종료코드무력화", pathlib.Path("g.sh"), "  exit 1", "  exit 0", 3)
+    assert mc._apply_at_line(src, bad) is None, "줄이 안 맞는데 주입했다"
+
+
+# ── ⑪ MEDIUM-1 — **한 줄 가드**를 본다. 그리고 꼬리를 안 버린다 ────────────────
+def test_one_line_guard_is_reachable_and_keeps_its_tail():
+    """이 저장소의 배포 가드는 `if …; then …; exit N; fi` 한 줄 관용구를 쓴다.
+
+    ★꼬리(`fi`)를 버리면 **구문이 깨진다** — 그건 변이가 아니라 파손이다.
+    """
+    line = '  if [ "$ok" != "1" ]; then echo bad; exit 1; fi'
+    kinds = {m.kind: m.new for m in mc._mutations_for_line(pathlib.Path("d.sh"), line, 4)}
+    assert "조건무력화" in kinds, f"한 줄 가드의 조건이 안 잡힌다: {kinds}"
+    assert "종료코드무력화" in kinds, f"한 줄 가드의 exit 이 안 잡힌다: {kinds}"
+    assert kinds["조건무력화"].rstrip().endswith("fi"), (
+        f"꼬리를 버렸다 — fi 가 사라져 구문이 깨진다: {kinds['조건무력화']!r}"
+    )
+    assert "exit 0" in kinds["종료코드무력화"] and "echo bad" in kinds["종료코드무력화"]
+
+
+def test_shell_condition_and_exit_mutations_do_not_break_syntax_across_the_repo(tmp_path):
+    """★위양성도 결함이다 — 넓힌 규칙이 **정상 셸의 구문을 깨면** 안 된다.
+
+    목록이 아니라 **저장소 전수**에서 파생시킨다.
+    """
+    tracked = subprocess.run(
+        ["git", "ls-files", "*.sh"], cwd=_REPO_ROOT,
+        capture_output=True, text=True, check=True,
+    ).stdout.split()
+    checked = broken = 0
+    for rel in tracked:
+        f = _REPO_ROOT / rel
+        if not f.exists():
+            continue
+        src = f.read_text(encoding="utf-8", errors="replace")
+        if subprocess.run(["bash", "-n", str(f)], capture_output=True, check=False).returncode:
+            continue                      # 기준선이 이미 깨진 파일은 모집단 밖
+        for i, ln in enumerate(src.splitlines(), 1):
+            for m in mc._mutations_for_line(f, ln, i):
+                if m.kind not in ("조건무력화", "종료코드무력화"):
+                    continue
+                mutated = mc._apply_at_line(src, m)
+                assert mutated is not None, f"{rel}:{i} 주입 실패"
+                checked += 1
+                tmp = tmp_path / "probe.sh"
+                tmp.write_text(mutated, encoding="utf-8")
+                if subprocess.run(["bash", "-n", str(tmp)],
+                                  capture_output=True, check=False).returncode:
+                    broken += 1
+    # ★공허 방지 — 0건이면 아래 «파손 0» 이 공짜다.
+    assert checked > 50, f"검사한 변이가 너무 적다({checked}) — 규칙이 죽었나"
+    assert broken == 0, f"조건·종료코드 변이가 정상 셸의 구문을 깬다: {broken}/{checked}"
+
+
+# ── ⑫ MEDIUM-2 — 나머지 두 규칙도 **두 모집단**으로 잠근다 ────────────────────
+@pytest.mark.parametrize(
+    ("line", "should_fire"),
+    [
+        ("VAR=1", True),
+        ("export TOKEN=abc", True),
+        ("  local x=2", True),
+        ('if [ "$a" = "$b" ]; then', False),      # ★비교는 대입이 아니다
+        ("echo hi", False),
+    ],
+)
+def test_shell_assignment_rule_has_two_populations(line, should_fire):
+    got = [m for m in mc._mutations_for_line(pathlib.Path("x.sh"), line, 1) if m.kind == "줄삭제"]
+    assert bool(got) is should_fire, f"{line!r} → {[m.kind for m in got]}"
+
+
+@pytest.mark.parametrize(
+    ("line", "should_fire"),
+    [
+        ('echo "가드 라이브러리를 읽지 못했습니다"', True),
+        ('echo "ab"', False),                      # ★8자 미만 리터럴은 대상이 아니다
+    ],
+)
+def test_shell_string_rule_has_two_populations(line, should_fire):
+    got = [
+        m for m in mc._mutations_for_line(pathlib.Path("x.sh"), line, 1)
+        if m.kind == "문자열변경"
+    ]
+    assert bool(got) is should_fire, f"{line!r} → {[(m.kind, m.new) for m in got]}"
+    if should_fire:
+        assert "__MUTATED__" in got[0].new
