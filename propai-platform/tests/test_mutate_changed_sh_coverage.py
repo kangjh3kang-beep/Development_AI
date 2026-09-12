@@ -49,7 +49,7 @@ def test_changed_files_admits_shell_and_still_excludes_non_source(tmp_path, monk
         (tmp_path / name).write_text("x\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
-    def _fake_run(cmd, *a, **kw):  # noqa: ARG001
+    def _fake_run(cmd, *a, **kw):
         assert cmd[:3] == ["git", "diff", "--name-only"], f"호출 형태가 바뀌었다: {cmd}"
         return subprocess.CompletedProcess(
             cmd, 0, stdout="deploy.sh svc.py notes.md app.tsx\n", stderr="",
@@ -266,7 +266,7 @@ def _verdicts(out: str) -> dict[str, str]:
       (독립 리뷰 MEDIUM-3 — `continue` 한 줄을 지우면 거짓 CAUGHT 가 그대로 부활했다).
     """
     out_map: dict[str, list[str]] = {}
-    for mm in re.finditer(r"^\s*\[\s*(\d+)/\s*\d+\]\s*(판정불가|kill|★생존|skip\S*)", out, re.M):
+    for mm in re.finditer(r"^\s*\[\s*(\d+)/\s*\d+\]\s*(판정불가|kill|★생존|skip\S*)", out, re.MULTILINE):
         out_map.setdefault(mm.group(1), []).append(mm.group(2))
     dupes = {k: v for k, v in out_map.items() if len(v) != 1}
     assert not dupes, f"★같은 변이가 **여러 번 판정**됐다(두 통 동시 계수): {dupes}"
@@ -334,7 +334,7 @@ def test_end_to_end_reports_syntax_broken_mutant_as_undecided(tmp_path):
     assert "★판정 불가" in out, f"판정 불가 **요약 경고**가 통째로 사라졌다:\n{out}"
 
     # ★★기계 판독 줄 — 산문이 아니라 이 줄이 계약이다.
-    audit = re.search(r"^::AUDIT=(.+)$", out, re.M)
+    audit = re.search(r"^::AUDIT=(.+)$", out, re.MULTILINE)
     assert audit, f"::AUDIT= 기계 줄이 없다:\n{out}"
     assert "undecided=0" not in audit.group(1), audit.group(1)
 
@@ -656,7 +656,7 @@ def test_max_truncation_is_counted_and_lands_on_the_return_code(tmp_path):
 
     cut = _run_tool(repo, base, "--max", "2")
     out = cut.stdout + cut.stderr
-    audit = re.search(r"^::AUDIT=(.+)$", out, re.M)
+    audit = re.search(r"^::AUDIT=(.+)$", out, re.MULTILINE)
     assert audit, f"::AUDIT= 가 없다:\n{out}"
     fields = dict(kv.split("=", 1) for kv in audit.group(1).split())
     # ★분모는 **자르기 전 수**여야 한다 — 잘린 리스트를 세면 기계 줄이 거짓말을 한다.
@@ -667,7 +667,7 @@ def test_max_truncation_is_counted_and_lands_on_the_return_code(tmp_path):
     # ★대조군 — **같은 저장소·같은 변이**인데 절단만 없애면 `rc=0`. 차가 0인 픽스처가 아니다.
     full = _run_tool(repo, base, "--max", "50")
     fout = full.stdout + full.stderr
-    faudit = re.search(r"^::AUDIT=(.+)$", fout, re.M)
+    faudit = re.search(r"^::AUDIT=(.+)$", fout, re.MULTILINE)
     assert faudit and "truncated=0" in faudit.group(1), fout
     assert full.returncode == 0, f"절단이 없는데 rc={full.returncode}\n{fout}"
 

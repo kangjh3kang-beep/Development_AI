@@ -395,7 +395,7 @@ def _audit_exit(counts: dict[str, int]) -> int:
     return 0
 
 
-def _apply_at_line(original: str, m: "Mutation") -> str | None:
+def _apply_at_line(original: str, m: Mutation) -> str | None:
     """변이를 **그 줄 번호에** 적용한다. 줄이 기대와 다르면 `None`(건너뜀).
 
     ★`str.replace(old, new, 1)` 은 **첫 번째** 일치를 바꾸므로, 같은 줄이 파일에 여러 번
