@@ -19,7 +19,7 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { useSalesStore, type Unit } from "@/store/useSalesStore";
+import { selectSelected, selectUnits, useSalesStore, type Unit } from "@/store/useSalesStore";
 
 const SITE_A = "site-a";
 const SITE_B = "site-b";
@@ -101,4 +101,30 @@ describe("부채 — 초록 안에 보이게 둔다", () => {
   // ★볼트 Stage 3 사양의 나머지 절반. `SiteWorkspaceClient` 는 PR #1022 가 편집 중이라
   //   그 PR 이 머지된 뒤에 붙인다(같은 파일을 두 브랜치에서 만지지 않는다).
   it.todo("워크스페이스가 key={siteId} 로 remount 된다 — 컴포넌트 지역 상태까지 갈린다");
+});
+
+describe("소비되는 셀렉터 — 순수하고, 실제로 그것이 쓰인다(리뷰 MINOR 7)", () => {
+  /**
+   * ★종전 이 파일은 `unitsOf`/`selectedOf`(스토어 **액션**)만 태웠다. 그런데 컴포넌트가
+   * 실제로 쓰는 것은 `selectUnits`/`selectSelected`(순수 셀렉터)다 —
+   * **소비층과 검증층이 갈려 있었다.**
+   */
+  it("★순수 셀렉터가 **인자 `s` 를 실제로 읽는다**(get() 이 아니라)", () => {
+    useSalesStore.getState().setUnits(SITE_A, unitsA);
+    // 스토어와 **다른** 스냅샷을 넘긴다 — `get()` 을 읽는 구현이면 이 단언이 깨진다.
+    const snapshot = { unitsBySite: { [SITE_B]: unitsB }, selectedBySite: {} } as never;
+    expect(selectUnits(SITE_B)(snapshot).map((u) => u.id)).toEqual(["b1"]);
+    expect(selectUnits(SITE_A)(snapshot)).toEqual([]);
+  });
+
+  it("★미조회 현장은 **같은 참조**를 준다(React #185 방지가 셀렉터에도 산다)", () => {
+    const snapshot = { unitsBySite: {}, selectedBySite: {} } as never;
+    expect(selectUnits("x")(snapshot)).toBe(selectUnits("y")(snapshot));
+  });
+
+  it("★선택 셀렉터도 현장별이다", () => {
+    const snapshot = { unitsBySite: {}, selectedBySite: { [SITE_A]: unitsA[0] } } as never;
+    expect(selectSelected(SITE_A)(snapshot)?.id).toBe("a1");
+    expect(selectSelected(SITE_B)(snapshot)).toBeUndefined();
+  });
 });

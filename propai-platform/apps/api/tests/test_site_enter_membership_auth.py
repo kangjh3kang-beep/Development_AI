@@ -1024,3 +1024,56 @@ async def test_platform_fallback_is_distinguishable_from_approved_membership() -
         "승인 없는 플랫폼 폴백이 승인된 멤버십과 같은 값으로 기록된다 — 감사에서 구별 불가"
     )
     assert approved["auth"] != fallback["auth"]
+
+
+@_NEEDS_311
+@pytest.mark.asyncio
+async def test_password_set_query_failure_does_not_500_the_list(monkeypatch) -> None:
+    """★★장식 필드 하나가 **목록 전체를 죽이지 않는다** — 그리고 실오류는 **전파**한다.
+
+    ★두 모집단을 같은 파일에서 본다(리뷰 MINOR 4):
+      ① 테이블 미존재(42P01) → 흡수하고 `password_set=None`(**모름**, `False` 아님)
+      ② 그 외 DB 오류        → **전파**(은폐하면 진짜 결함이 조용해진다)
+    ★`None` 과 `False` 를 가르는 이유: 「비번 없음」과 「아직 못 알아봤다」를 뭉개면
+      프론트 게이팅이 거짓 확신을 갖는다(모름이면 시도해야 한다).
+    """
+    from app.api.endpoints.sales import site_auth as mod
+
+    tenant = uuid.uuid4()
+    site = type("S", (), {
+        "id": uuid.uuid4(), "site_code": "s", "site_name": "s",
+        "development_type": "APT", "status": "ACTIVE", "organization_id": tenant,
+    })()
+
+    class _BoomError(Exception):
+        def __init__(self, code):
+            super().__init__("boom")
+            self.orig = type("O", (), {"sqlstate": code})()
+
+    class _DBFail(_MySitesDB):
+        def __init__(self, code):
+            super().__init__(nodes=[], owned=[site], allsites=[], with_pw=set())
+            self._code = code
+
+        async def execute(self, stmt, params=None):
+            if "sales_site_passwords" in " ".join(str(stmt).split()):
+                raise _BoomError(self._code)
+            return await super().execute(stmt, params)
+
+    async def _ensure(_db):
+        pass
+
+    monkeypatch.setattr(mod, "_ensure", _ensure, raising=True)
+    user = type("U", (), {"id": uuid.uuid4(), "tenant_id": tenant, "role": ""})()
+
+    # ① 42P01 — 흡수. 목록은 나오고 값은 **모름**이다.
+    rows = await mod.my_sites(db=_DBFail("42P01"), user=user)
+    assert rows, "테이블 미존재로 목록 전체가 비었다 — 장식 필드가 본문을 죽였다"
+    assert rows[0]["password_set"] is None, (
+        f"모름을 유효값으로 표현했다: {rows[0]['password_set']!r} — `False` 는 「비번 없음」이다"
+    )
+
+    # ② 다른 SQLSTATE — 전파. 은폐하면 권한·구문 오류가 「비번 없음」으로 읽힌다.
+    with pytest.raises(Exception) as ei:
+        await mod.my_sites(db=_DBFail("42501"), user=user)
+    assert "boom" in str(ei.value), f"실오류를 삼켰다: {ei.value!r}"

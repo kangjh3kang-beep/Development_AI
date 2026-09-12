@@ -320,14 +320,33 @@ async def my_sites(db: AsyncSession = Depends(get_db), user=Depends(get_current_
     #     **애초에 두드리지 않는 것**이 옳다 — 그 판정에 이 필드가 쓰인다.
     #   ★N+1 이 되지 않게 `IN` 한 번으로 받는다. 목록이 비면 쿼리 자체를 건너뛴다.
     if out:
-        await _ensure(db)
-        pw_rows = (await db.execute(
-            text("SELECT site_id::text FROM sales_site_passwords WHERE site_id = ANY(:ids)"),
-            {"ids": list(out.keys())},
-        )).all()
-        with_pw = {r[0] for r in pw_rows}
+        # ★★**장식 필드 하나가 목록 전체를 500 으로 만들지 않게** 한다(2026-09-12 · 리뷰 MINOR 4).
+        #   초판은 여기서 `_ensure(db)`(멱등 DDL 2건 + **commit**)를 불렀다. 그러면
+        #   ①GET 경로가 **CREATE 권한에 의존**하게 되고(종전엔 아니었다)
+        #   ②`_ENSURED` 가 프로세스 전역이라 **실행 순서에 의존**하는 실패가 생겼다
+        #     (실제로 CI 에서 선재 테스트 2건이 `commit` 없는 스텁으로 깨졌다).
+        #   ⇒ DDL 을 부르지 않고, **형제 패턴**(`services/sales/org/overview.py:137-148`)처럼
+        #     「테이블 미존재(42P01)」만 흡수하고 나머지 DB 오류는 **전파**한다(은폐 금지).
+        #   ★흡수했을 때 값은 `False` 가 아니라 **`None`(모름)** 이다 — 「비번 없음」과
+        #     「아직 못 알아봤다」를 같은 값으로 뭉개면 프론트 게이팅이 거짓 확신을 갖는다.
+        with_pw: set[str] | None = None
+        try:
+            pw_rows = (await db.execute(
+                text("SELECT site_id::text FROM sales_site_passwords WHERE site_id = ANY(:ids)"),
+                {"ids": list(out.keys())},
+            )).all()
+            with_pw = {r[0] for r in pw_rows}
+        except Exception as e:  # noqa: BLE001 — 분류 후 「정상 0」만 흡수, 실오류는 전파
+            # ★사본을 **더 만들지 않는다** — 이 판정자는 저장소에 이미 6곳에 복제돼 있다
+            #   (SSOT 부채는 별건). 선례대로 형제에서 가져온다(`lifecycle_p5.py:349` 와 같은 형태).
+            from app.services.sales.org.overview import _missing_object_sqlstate
+            if _missing_object_sqlstate(e):
+                logger.info("my_sites: sales_site_passwords 미존재(42P01) — password_set=모름")
+            else:
+                logger.exception("my_sites: 비번 설정 조회 실패(테이블부재 외 오류 — 전파)")
+                raise
         for sid, item in out.items():
-            item["password_set"] = sid in with_pw
+            item["password_set"] = (sid in with_pw) if with_pw is not None else None
 
     return list(out.values())
 

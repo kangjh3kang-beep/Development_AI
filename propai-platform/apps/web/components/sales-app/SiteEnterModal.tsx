@@ -108,17 +108,32 @@ export default function SiteEnterModal({ locale, siteId, siteName, open, onClose
 
   const submit = () => enter(password);
 
+  // ★★**초기화 effect 는 의존을 안정하게 둔다**(2026-09-12 · 리뷰 M5 — 내가 만든 회귀).
+  //   한 effect 에 «입력 초기화» 와 «자동 시도» 를 같이 두고 의존에 `enter` 를 넣었더니,
+  //   `enter` 가 `onEntered` 를 닫고 있고 두 호출부 모두 **인라인 화살표**를 넘기므로
+  //   (`SiteListClient.tsx` · `SiteWorkspaceClient.tsx`) **부모가 재렌더될 때마다**
+  //   effect 가 재실행돼 `setPassword("")` — **사용자가 입력한 비번이 지워졌다.**
+  //   도달 경로: `SiteWorkspaceClient` 의 `online`/`offline` 리스너가 부모를 재렌더한다.
+  //   ⇒ 두 관심사를 **분리**한다. 초기화는 `[open, siteId]` 로만 돈다.
+  //   ★포커스 타이머도 정리한다 — 종전엔 재실행마다 새 타이머가 포커스를 다시 빼앗았다.
   useEffect(() => {
     if (!open) return;
     setPassword("");
     setErr("");
-    setTimeout(() => inputRef.current?.focus(), 50);
-    // ★비번이 **설정된 것으로 알려진** 현장에는 노크하지 않는다(리뷰 C1).
-    //   `undefined`(모름)와 `false` 는 시도한다 — 시도해야 알 수 있는 경우다.
-    if (passwordSet !== true && autoTried.current !== siteId) {
-      autoTried.current = siteId;
-      void enter("", { silent: true });
-    }
+    const t = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [open, siteId]);
+
+  // ★자동 시도 — `autoTried` ref 가 **멱등**을 보장하므로 `enter` 참조가 바뀌어도 무해하다
+  //   (재실행되어도 같은 `siteId` 면 즉시 빠진다). 여기엔 상태를 **쓰지 않는다**.
+  //   ★비번이 **설정된 것으로 알려진** 현장에는 노크하지 않는다(리뷰 C1).
+  //     `undefined`(모름)와 `false` 는 시도한다 — 시도해야 알 수 있는 경우다.
+  useEffect(() => {
+    if (!open) return;
+    if (passwordSet === true) return;
+    if (autoTried.current === siteId) return;
+    autoTried.current = siteId;
+    void enter("", { silent: true });
   }, [open, siteId, passwordSet, enter]);
 
   if (!open) return null;
@@ -217,8 +232,12 @@ function friendlyError(e: unknown): string {
       case 401:
         return typeof detail === "string" && detail ? detail : "비밀번호가 일치하지 않습니다.";
       case 409:
-        // ★도달 불가(2026-09-09) — 서버가 더는 409 를 내지 않는다. 옛 배포가 살아 있는
-        //   동안의 안전망으로만 남긴다. 이 분기가 보이면 **백엔드가 옛 판**이라는 뜻이다.
+        // ★**조건부 도달 불가**(2026-09-12 정정 · 리뷰 MINOR 5). 종전엔 «도달 불가» 라고
+        //   조건 없이 단정했는데, 그것은 «이 프론트와 같은 판의 API» 에서만 참이다.
+        //   프론트가 먼저 배포되는 동안(web↔api 스큐) 옛 API 는 여전히 409 를 낸다 —
+        //   즉 **살아 있는 안전망**이다. 조건 없는 단정은 참일 때도 검증 불가라,
+        //   다음 사람이 «죽은 코드» 로 읽고 지운다.
+        //   ★이 분기가 보이면 «백엔드가 옛 판» 이라는 진단 정보다.
         return "현장 비밀번호가 아직 설정되지 않았습니다. 현장 관리자(시행/대행 본부장↑)에게 설정을 요청하세요.";
       case 429:
         return typeof detail === "string" && detail

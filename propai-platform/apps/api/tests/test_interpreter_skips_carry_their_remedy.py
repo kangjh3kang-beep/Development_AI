@@ -12,6 +12,12 @@ PR #1027 에서 그 대가를 실측했다 — 기계 변이 55건 중 **생존 
 (`tuple` 로 흉내 낸 SQLAlchemy Row · 호출-횟수로 라우팅하는 스텁).
 **skip 은 「통과」가 아니라 「아직 모른다」다.**
 
+★**축의 범위를 정직하게 적는다**(2026-09-12 · 리뷰 MINOR 2): 이 락이 보는 것은
+「인터프리터 스킵」 전부가 아니라 **`sys.version_info` 로 가르는 스킵**이다.
+`pytest.importorskip`(실측 **35파일**)은 원리적으로 밖이다 — 그것은 «의존성 부재» 라는
+**다른 사건**이고 처방도 다르다(venv 가 아니라 패키지 설치). 넓히지 않는 이유를
+적어 두지 않으면 다음 사람이 **전수라고 오독한다**.
+
 【이 락이 하는 일】산문으로 적으면 재발 저수지에 들어간다. 그래서 **다음 인터프리터 스킵도
 자동으로** 이 규율에 걸리게, 모집단을 파생시켜 검사한다 — 새 스킵을 만드는 사람은
 해법을 함께 적어야 한다.
@@ -80,7 +86,7 @@ def test_scanner_is_alive() -> None:
     )
 
 
-def test_every_interpreter_skip_names_how_to_run_it_locally() -> None:
+def test_every_version_info_skip_names_how_to_run_it_locally() -> None:
     """★스킵을 보는 사람이 **곧 고치는 법**을 보게 한다.
 
     ★단언하는 것은 **문구가 아니라 좌표**다 — 실행 가능한 환경 이름 하나(`REMEDY_TOKEN`).

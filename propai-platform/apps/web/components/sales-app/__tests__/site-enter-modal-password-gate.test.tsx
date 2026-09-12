@@ -15,7 +15,7 @@
  * 그리고 **두 모집단**을 같은 파일에서 본다 — 모르면(`undefined`) 시도해야 하고,
  * 안다면(`true`) 시도하지 않아야 한다. 한쪽만 보면 «아무것도 안 하는 구현» 도 통과한다.
  */
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const post = vi.fn();
@@ -24,7 +24,12 @@ vi.mock("@/lib/api-client", () => ({
   apiClient: { post: (...a: unknown[]) => post(...a) },
   ApiClientError: class extends Error { status = 0; payload: unknown = null; },
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+// ★★목이 **안정**해야 한다(2026-09-12 · 리뷰 M5). 종전 `useRouter: () => ({ push: vi.fn() })`
+//   는 매 렌더 **새 객체**를 돌려줘, `enter` 의 `useCallback` 의존이 항상 바뀌는 상태를 만든다.
+//   그러면 이 파일의 테스트는 «부모 재렌더로 의존이 바뀌는가» 를 **원리적으로 구별하지 못한다**
+//   (리뷰어가 자기 프로브에서 같은 함정을 먼저 밟고 정정했다 — 도구 출력도 증거가 아니다).
+const STABLE_ROUTER = { push: vi.fn() };
+vi.mock("next/navigation", () => ({ useRouter: () => STABLE_ROUTER }));
 vi.mock("@/lib/salesApi", () => ({ storeSiteToken: vi.fn() }));
 
 import SiteEnterModal from "@/components/sales-app/SiteEnterModal";
@@ -63,5 +68,63 @@ describe("진입 모달 — 자동 시도의 게이팅", () => {
     render(<SiteEnterModal {...base} siteId="s-closed" open={false} onClose={vi.fn()} onEntered={vi.fn()} />);
     await new Promise((r) => setTimeout(r, 60));
     expect(post).not.toHaveBeenCalled();
+  });
+});
+
+describe("부모 재렌더 — 입력한 비번이 살아남는가(리뷰 M5 · 이 PR 이 만든 회귀)", () => {
+  /**
+   * ★두 호출부(`SiteListClient` · `SiteWorkspaceClient`)가 `onEntered` 를 **인라인 화살표**로
+   * 넘긴다. 그래서 부모가 재렌더되면 prop 참조가 바뀌고, 종전처럼 초기화 effect 의존에
+   * `enter` 가 들어 있으면 **`setPassword("")` 가 다시 돌아 입력이 지워진다.**
+   *
+   * 도달 경로: `SiteWorkspaceClient` 의 `online`/`offline` 리스너 → `setOffline(...)` →
+   * 부모 재렌더. 비번을 아는 사용자가 네트워크가 흔들리는 현장에서 입력 중 겪는다.
+   *
+   * ★축은 «effect 의존이 무엇인가» 가 아니라 **«입력값이 남는가»** 다.
+   */
+  function Parent({ tick }: { tick: number }) {
+    return (
+      <SiteEnterModal
+        {...base}
+        siteId="s-reRender"
+        passwordSet
+        open
+        // ★인라인 화살표 — 실제 호출부와 같은 형태다(참조가 매번 바뀐다).
+        onEntered={() => { void tick; }}
+      />
+    );
+  }
+
+  it("★★부모가 재렌더돼도 **입력한 비번이 남는다**", async () => {
+    const { rerender } = render(<Parent tick={0} />);
+    const input = document.querySelector('input[type="password"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "mySecret" } });
+    expect(input.value).toBe("mySecret");
+
+    rerender(<Parent tick={1} />);
+    rerender(<Parent tick={2} />);
+
+    const after = document.querySelector('input[type="password"]') as HTMLInputElement;
+    expect(after.value).toBe("mySecret");
+  });
+
+  it("★대조군 — 현장을 **바꾸면** 초기화된다(초기화가 죽지 않았다)", () => {
+    const { rerender } = render(<SiteEnterModal {...base} siteId="s-a" passwordSet open onEntered={vi.fn()} />);
+    const input = document.querySelector('input[type="password"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "typed" } });
+    expect(input.value).toBe("typed");
+
+    rerender(<SiteEnterModal {...base} siteId="s-b" passwordSet open onEntered={vi.fn()} />);
+    const after = document.querySelector('input[type="password"]') as HTMLInputElement;
+    expect(after.value).toBe("");
+  });
+
+  it("★자동 시도는 부모 재렌더로 **반복되지 않는다**(멱등 ref)", async () => {
+    const { rerender } = render(<SiteEnterModal {...base} siteId="s-once" open onEntered={vi.fn()} />);
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    rerender(<SiteEnterModal {...base} siteId="s-once" open onEntered={vi.fn()} />);
+    rerender(<SiteEnterModal {...base} siteId="s-once" open onEntered={vi.fn()} />);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(post).toHaveBeenCalledTimes(1);
   });
 });
