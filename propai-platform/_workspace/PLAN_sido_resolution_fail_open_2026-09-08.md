@@ -438,6 +438,26 @@ curl -s -H "Authorization: Bearer $TOK" \
  | python3 -c 'import json,sys;d=json.load(sys.stdin);ws=[i for i in (d if isinstance(d,list) else d.get("items",[])) if i.get("insight_type")=="recurring_verify_error"];print(len(ws));[print(i["created_at"],i["narrative"][:80]) for i in ws[:5]]'
 ```
 · **판정**: 배포 후 새 창에서 `desk_appraisal` 재발 검증오류가 **줄어드는가**.
+
+★★**2026-09-12 재조회 — 이 판정축은 지금 상태로는 쓸 수 없다.** 재보니:
+
+| 타입 | 최신 발화 | 총 |
+|---|---|---|
+| `latency_baseline` | **2026-09-11 17:30** | 443 |
+| `latency_regression` | 2026-09-09 17:30 | 44 |
+| `fallback_rate` | **2026-09-04 17:30** | 3 |
+| `error_cluster` | **2026-09-04 11:05** | 6 |
+| `recurring_verify_error` | **2026-09-04 10:47** | 4 |
+
+**대조군(`latency_baseline`)은 어제도 발화**하므로 분석기 자체는 살아 있다. 그런데
+`recurring_verify_error`·`error_cluster`·`fallback_rate` **세 축이 같은 날 함께 멈췄다**.
+결함 셋이 동시에 고쳐진 것보다 **그 수집·분석 경로가 멈춘 것**이 훨씬 그럴듯하다
+(세 축은 서로 무관한 현상이다 — 동시 종료는 공통 원인을 시사한다).
+
+⇒ **배포 후 «줄었다» 를 개선으로 읽으면 안 된다.** 내 PR 이 배포되기 **8일 전에 이미 0** 이다.
+  이 축을 쓰려면 **먼저 그 세 축이 왜 멈췄는지**를 재야 한다(별건 · 이 PR 범위 밖).
+★「미측정」의 이유: **사건 미발생이 아니라 장치 정지 의심**이다 — 기다리면 되는 것이 아니라
+  **고쳐야 나온다**. 그 구분이 다음 행동을 가른다.
 · ★**줄지 않아도 이 PR 이 틀렸다는 뜻은 아니다** — 위 두 휴리스틱(용적률·면적)이 원인일 수 있고,
   그 축은 이 PR 이 건드리지 않았다. **줄면 확증, 안 줄면 미상**(비대칭 증거).
 · ★`0건`을 보면 **토큰 만료부터** 의심하라(만료 시 401 이 아니라 0건이 온다).
