@@ -122,7 +122,12 @@ describe("어댑터 — 소비처 규약을 지킨다", () => {
     const got = toConstructionCostAreas(
       base({ aboveGroundGfaSqm: 2000, uses: [makeUseLine("공동주택", 2000)!] }),
     );
-    expect(got).toEqual({ totalFloorArea: 2000, buildingUse: "공동주택" });
+    // ★★2026-09-12 정정 — 종전 이 줄은 `buildingUse: "공동주택"` 을 단언해 **틀린 값을 잠갔다**.
+    //   소비처(`kr-construction-cost.BASE_COST_PER_SQM`)의 키는 **영문**이라 한국어 라벨은
+    //   조회에 **HIT 0/11** 이었고 전 용도가 아파트 단가로 접혔다. 단언이 결함을 보호한 셈이다.
+    //   ★도메인 자체의 잠금은 `building-use-roundtrip.contract.test.ts` 가 **소비처 파일에서
+    //     키를 파생해** 대조한다 — 여기서 문자열을 한 번 더 적으면 그것이 또 상한이 된다.
+    expect(got).toEqual({ totalFloorArea: 2000, buildingUse: "apartment" });
   });
 
   it("★ESG: 그쪽은 **문자열**이고 빈 문자열이 미입력이다", () => {

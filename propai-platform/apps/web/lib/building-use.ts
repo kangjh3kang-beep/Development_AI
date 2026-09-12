@@ -58,7 +58,7 @@ export const BUILDING_USE_LABEL: Record<BuildingUseCode, string> = {
  *   ★이 표가 없으면 기존 데이터가 **미분류로 떨어진다** — 이관 없이 정본만 만들면
  *     화면은 새 목록을 쓰고 저장된 값은 옛 문자열이라 조용히 갈린다.
  */
-const ALIAS_TO_CODE: Record<string, BuildingUseCode> = {
+const RAW_ALIAS_TO_CODE: Record<string, BuildingUseCode> = {
   // 정본 라벨 자신
   공동주택: "apartment",
   "연립·다세대": "rowhouse",
@@ -87,6 +87,33 @@ const ALIAS_TO_CODE: Record<string, BuildingUseCode> = {
   warehouse: "knowledge",
   mixed: "mixed",
 };
+
+/**
+ * ★★정본 코드 **자신**을 항등으로 등재한다 — 손 목록이 아니라 `BUILDING_USE_CODES` 에서 **파생**.
+ *
+ * 왜(실증 2026-09-12 · 적대 리뷰가 런타임으로 잡았다): 위 표는 한국어 라벨과 **옛 전선값**만
+ * 키로 갖고 있어, 정본 코드를 그대로 넣으면 **11종 중 7종이 `null`** 이었다
+ * (`rowhouse · detached · retail · neighborhood · lodging · education · knowledge`).
+ * 살아남은 4종(`apartment · officetel · office · mixed`)은 **설계가 아니라 우연**이었다 —
+ * 옛 전선값과 철자가 겹쳤을 뿐이다.
+ *
+ * ★그 결과가 **무언 실패**였다: 모달의 `<option value={code}>` 를 고르면
+ * `normalizeBuildingUse(code)` 가 `null` 을 돌려주고, 호출부의 `if (next)` 가 거짓이라
+ * **상태가 안 바뀌고 오류도 안 뜬다.** 사용자는 클릭했는데 아무 일도 일어나지 않는다.
+ *
+ * ★목록이 아니라 **파생**인 이유 — 정본에 코드를 추가하면 그 순간 항등도 따라온다.
+ *   손으로 적으면 다음에 추가하는 사람이 **정확히 같은 결함**을 다시 만든다.
+ * ★충돌은 **개발 중에 터뜨린다**: 어떤 정본 코드가 이미 *다른* 코드의 동의어로 등재돼
+ *   있으면 항등이 그 뜻을 조용히 덮어쓴다. 그건 결함이므로 락이 잡는다(아래 테스트).
+ */
+const ALIAS_TO_CODE: Record<string, BuildingUseCode> = (() => {
+  const map: Record<string, BuildingUseCode> = { ...RAW_ALIAS_TO_CODE };
+  for (const code of BUILDING_USE_CODES) map[code] = code;
+  return map;
+})();
+
+/** 락 전용 — 항등 등재가 **다른 뜻을 덮어쓰는지** 보기 위해 원표를 노출한다. */
+export const __rawAliasToCode = RAW_ALIAS_TO_CODE;
 
 /**
  * 임의 문자열을 정본 코드로 바꾼다. **모르면 `null`** 을 돌려준다.
