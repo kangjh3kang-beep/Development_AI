@@ -290,7 +290,10 @@ else
     #   프로브가 순수 함수로 판정한 결과를 **그대로** 싣는다(셸이 규칙을 다시 구현하지 않는다).
     SKIND=$(echo "$G" | grep -oE 'skind=[^ ]+' | cut -d= -f2)
     SJOBS=$(echo "$G" | grep -oE 'sjobs=[^ ]+' | cut -d= -f2)
-    SWHY=$(echo "$G" | sed -n 's/^PROBE_SCHEDULE [a-z]* | //p' | head -1)
+    # ★사유는 `PROBE` 줄의 **마지막 필드**다(`swhy=` 뒤 줄 끝까지). 종전엔 별도 `PROBE_SCHEDULE`
+    #   줄에서 뽑으려 했는데 위 `$G` 가 `grep -m1 '^PROBE '` 라 **그 줄이 아예 안 들어온다** —
+    #   사유가 항상 빈 채로 `OBS=1` 이 올라갔다(독립 리뷰 MAJOR-1 · 실측 길이 0).
+    SWHY=$(echo "$G" | sed -n 's/.* swhy=//p' | head -1)
     echo "   스케줄: ${SKIND:-unknown} · 경과/주기 ${SJOBS:--} ${SWHY:+· ${SWHY}}"
     # ★**`obs` 만 관측으로 올린다 — `unknown` 은 올리지 않는다.**
     #   `unknown` 의 지배적 원인은 «API 가 아직 이 스냅샷을 발행하지 않는 버전» 이다

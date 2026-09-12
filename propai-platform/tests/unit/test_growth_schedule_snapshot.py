@@ -24,15 +24,18 @@ NOW = datetime(2026, 9, 12, 13, 11, 0, tzinfo=UTC)
 
 
 def _jobs_map(payload):
-    """`"analyze 7/60 heal 6/10"` → `{"analyze": (7, 60), ...}`."""
+    """payload → `{"analyze": ("7", "60"), ...}`.
+
+    ★생산자는 **잡별 키**로 싣는다(한 줄 요약 문자열이 아니다) — 프론트
+    `GrowthDashboard.summarizeParams` 가 값을 **24자에서 자르기** 때문이다(독립 리뷰 MEDIUM-1).
+    한 줄로 실으면 이 PR 이 생긴 계기인 `learn 9471/10080` 이 **화면에서 사라진다.**
+    """
     out = {}
-    for tok in str(payload["jobs"]).split():
-        if "/" not in tok:
-            out[tok] = None          # 잡 이름 토큰
-            last = tok
+    for k, v in payload.items():
+        if k in ("at", "overdue") or not isinstance(v, str) or "/" not in v:
             continue
-        a, b = tok.split("/", 1)
-        out[last] = (a, b)
+        a, b = v.split("/", 1)
+        out[k] = (a, b)
     return out
 
 
@@ -62,13 +65,40 @@ def test_same_elapsed_two_verdicts_learn_ok_analyze_overdue():
     assert got["analyze"] == ("9471", "60"), got
 
 
-def test_never_seen_is_not_zero_elapsed():
-    """워터마크를 본 적 없음(`-`)과 「방금 돌았음(0)」은 다른 사실이다."""
+def test_never_seen_is_its_own_value_and_is_not_folded_into_health():
+    """★「본 적 없음」은 자기 값(`!`)으로 말하고 **건강으로 접히지 않는다**.
+
+    종전엔 `-` 로 적고 overdue 판정에서 **빼** 버렸다. 그러면 «워터마크 쓰기가 계속 실패해
+    잡이 매 틱 재실행되는 병리»가 계기판에서 **`ok`** 로 보인다(독립 리뷰 MEDIUM-2 실측).
+    """
     p = schedule_snapshot_payload([("analyze", None), ("heal", NOW)], NOW)
     got = _jobs_map(p)
-    assert got["analyze"] == ("-", "60"), got
+    assert got["analyze"] == ("!", "60"), got
     assert got["heal"] == ("0", "10"), got
-    assert "analyze" not in str(p["overdue"]).split(), "본 적 없음을 지연으로 단정했다"
+    assert "analyze" in str(p["overdue"]).split(), (
+        "본 적 없음을 건강으로 접었다 — 매 틱 재실행 병리가 ok 로 보인다"
+    )
+
+
+@pytest.mark.parametrize("job", sorted(JOB_SPECS))
+def test_normal_due_tick_is_not_overdue_but_a_stalled_job_is(job):
+    """★**두 모집단을 경계에서** 가른다(독립 리뷰 MAJOR-2 · 14일 시뮬 13.33% 위양성).
+
+    스냅샷은 `compute_due` 안에서 **잡이 돌기 전**에 발행된다. 그래서 발화 직전 1틱은
+    «경과 == 주기» 가 **정상**이다. 그대로 신고하면 `heal`(10분)만으로 10틱 중 1틱이 경보다 —
+    ***상시 신호는 배경이 된다***(이 PR 이 `unknown` 을 안 올린 바로 그 근거).
+    ⇒ 정상 due 틱은 **조용**하고, 관용을 넘긴 지속 지연만 **운다**.
+    """
+    period = JOB_SPECS[job].period_minutes
+    def od(elapsed_min):
+        p = schedule_snapshot_payload([(job, NOW - timedelta(minutes=elapsed_min))], NOW)
+        return job in str(p["overdue"]).split()
+
+    assert not od(period - 1), f"{job}: 주기 전인데 지연으로 찍혔다"
+    assert not od(period), f"{job}: **정상 발화 직전 틱**인데 지연으로 찍혔다(위양성)"
+    assert not od(period + 1), f"{job}: 틱 한 번 밀린 것을 지연으로 찍었다"
+    assert od(period + 2), f"{job}: 2틱 넘게 밀렸는데 지연이 아니다(위음성)"
+    assert od(period * 2), f"{job}: 주기의 2배가 지났는데 지연이 아니다"
 
 
 def test_clock_rollback_agrees_with_is_due():
@@ -212,8 +242,16 @@ def test_at_is_published_and_is_the_liveness_signal():
     """
     p = schedule_snapshot_payload([("analyze", NOW)], NOW)
     assert "at" in p, f"at 이 없다 — 나이를 못 재면 정지와 정상이 같은 모양이다: {p}"
-    assert p["at"] == NOW.isoformat(), p["at"]
-    assert datetime.fromisoformat(str(p["at"])) == NOW      # 파싱 가능해야 한다
+    # ★파싱 가능해야 한다(프로브가 `fromisoformat` 로 읽는다)
+    parsed = datetime.fromisoformat(str(p["at"]).replace("Z", "+00:00"))
+    assert parsed == NOW, (parsed, NOW)
+    # ★★그리고 **24자를 넘지 않아야 한다** — 프론트 `summarizeParams` 가 값 24자에서 자른다
+    #   (독립 리뷰 MEDIUM-1). `isoformat()` 은 25자라 **마지막 글자가 잘려** 화면에서
+    #   시각이 거짓으로 보인다. 이건 표시 취향이 아니라 **소비처의 계약**이다.
+    assert len(str(p["at"])) <= 24, f"at 이 {len(str(p['at']))}자 — 프론트에서 잘린다: {p['at']!r}"
+    # 모든 값이 그 상한 안인가(잡별 키로 쪼갠 이유가 이것이다)
+    too_long = {k: v for k, v in p.items() if isinstance(v, str) and len(v) > 24}
+    assert too_long == {}, f"24자를 넘는 값이 있다 — 프론트에서 잘린다: {too_long}"
 
 
 def test_unknown_job_is_not_silently_dropped():

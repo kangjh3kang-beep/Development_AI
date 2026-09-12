@@ -105,9 +105,18 @@ def schedule_fields(srow):
       (형제 `analysis_fields` 와 같은 이유: 계기판이 `[^ ]+` 로 공백 경계에서 뽑는다).
     """
     if isinstance(srow, dict):
-        sat = str(srow.get("at") or "-")
-        sjobs = str(srow.get("jobs") or "-").replace(" ", "_")
+        sat = str(srow.get("at") or "-").replace(" ", "_")
         soverdue = str(srow.get("overdue") or "-").replace(" ", "_")
+        # ★생산자는 **잡별 키**로 싣는다(`analyze: "7/60"` …). 한 줄 요약 문자열로 실으면
+        #   프론트(`GrowthDashboard.summarizeParams`)가 **24자에서 자른다** — 그러면
+        #   이 PR 이 생긴 계기인 `learn 9471/10080` 이 **화면에서 사라진다**(독립 리뷰 MEDIUM-1).
+        #   요약은 **여기서** 만든다(소비처 하나가 만들고, 생산자는 값만 싣는다).
+        jobs = [
+            "%s_%s" % (k, v)
+            for k, v in sorted(srow.items())
+            if k not in ("at", "overdue") and isinstance(v, str)
+        ]
+        sjobs = "_".join(jobs) if jobs else "-"
     else:
         sat, sjobs, soverdue = "-", "-", "-"
     return sat, sjobs, soverdue
@@ -330,12 +339,20 @@ async def main():
               "impossible_post=%s impossible_pre=%s "
               "engine_alive=%s builds=%s overlap=%s "
               "astate=%s aat=%s aaxes=%s ains=%s alast=%s "
-              "sat=%s sjobs=%s soverdue=%s skind=%s"
+              "sat=%s sjobs=%s soverdue=%s skind=%s swhy=%s"
               % (now.strftime("%Y-%m-%d %H:%M"), ctrl, ctrl_all, post, pre, alive, bs, ov,
                  astate, aat, aaxes, ains, alast,
-                 sat, sjobs, soverdue, skind))
-        # ★사유는 사람이 읽는 줄로 따로 낸다(PROBE 줄은 공백 경계로 파싱되므로 못 싣는다).
-        print("PROBE_SCHEDULE %s | %s" % (skind, swhy))
+                 sat, sjobs, soverdue, skind, swhy))
+        # ★★**사유를 별도 줄로 내지 않는다**(독립 리뷰 MAJOR-1 · 2026-09-12).
+        #   종전엔 `print("PROBE_SCHEDULE …")` 로 둘째 줄을 냈는데, 계기판은 프로브 출력을
+        #   `grep -m1 '^PROBE '` 로 받는다 — `'^PROBE '`(뒤에 **공백**)는 `PROBE_SCHEDULE`
+        #   (뒤에 `_`)을 **매치하지 않고**, `-m1` 이라 애초에 **한 줄뿐**이다.
+        #   ⇒ 사유가 화면에 **영영 도달하지 않았고**(실측: `SWHY` 길이 0 · 대조군 57),
+        #     그런데도 `OBS=1`(exit 4)은 올라갔다 — **사유 없는 경보**다.
+        #   ★이 PR 의 존재 이유(「잡 사망」↔「틱 사망」 구별)는 **오직 사유 문장에만** 실린다
+        #     (`skind` 는 둘 다 `obs`). 즉 헤드라인 가치가 통째로 안 나가고 있었다.
+        #   ⇒ 줄을 하나로 합치고 **사유를 마지막 필드**로 둔다. 앞 필드들은 여전히
+        #     `[^ ]+` 로 뽑히고, 사유는 `sed 's/.* swhy=//'` 로 줄 끝까지 가져간다.
 
 if __name__ == "__main__":  # ★임포트만으로 DB 에 붙지 않는다(테스트가 순수 함수를 태운다)
     asyncio.run(main())

@@ -168,8 +168,11 @@ def test_schedule_fields_parses_a_real_producer_payload():
         NOW,
     )
     sat, sjobs, soverdue = probe.schedule_fields(produced)
-    assert sat == NOW.isoformat(), sat
+    from datetime import datetime as _dt
+    assert _dt.fromisoformat(sat.replace("Z", "+00:00")) == NOW, sat
     assert " " not in sjobs, "공백이 남으면 계기판 grep 이 뒤를 통째로 자른다"
+    # ★생산자가 **잡별 키**로 싣고, 요약은 **소비처(프로브)가** 만든다 —
+    #   한 줄 문자열로 실으면 프론트가 24자에서 잘라 `learn` 이 화면에서 사라진다.
     assert "analyze_7/60" in sjobs, sjobs
     assert "learn_9471/10080" in sjobs, sjobs
     assert soverdue == "-", f"둘 다 주기 안인데 지연으로 찍혔다: {soverdue}"
@@ -216,3 +219,80 @@ def test_probe_print_fields_match_what_the_shell_greps():
         f"셸이 뽑는데 프로브가 안 찍는 필드: {sorted(missing)} — "
         "빈 값이 되어 관측이 영원히 발화하지 않는다"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★독립 리뷰 MAJOR-1 — **사유가 화면에 도달하는가**를 「정적 검사」가 아니라 **셸로 태워서** 본다.
+#
+#   종전 정적 락(`assert "skind=" in code`)은 **통과했는데** 프로덕션에서는 사유가
+#   **영영 빈 문자열**이었다: 계기판이 프로브 출력을 `grep -m1 '^PROBE '` 로 받는데
+#   `'^PROBE '`(뒤 공백)는 `PROBE_SCHEDULE`(뒤 `_`)을 매치하지 않고 `-m1` 이라 한 줄뿐이다.
+#   ⇒ **사유 없는 경보**(`OBS=1` → exit 4)가 나갔다. 이 PR 의 존재 이유(잡사망↔틱사망 구별)는
+#     **오직 사유 문장에만** 실리는데(`skind` 는 둘 다 `obs`) 그것이 통째로 안 나갔다.
+#   ★형제 `test_dashboard_idle_vs_dead_scanner.py` 는 처음부터 블록을 bash 로 태우고 있었다 —
+#     **옳은 패턴이 바로 옆에 있었는데 내가 정적 검사를 골랐다.**
+# ─────────────────────────────────────────────────────────────────────────────
+
+import re as _re
+import shlex as _shlex
+import subprocess as _subprocess
+
+
+def _run_schedule_block(probe_line: str) -> str:
+    """계기판의 **스케줄 절 블록을 실제 파일에서 꺼내** bash 로 태운다.
+
+    ★`$G` 를 프로덕션과 **같은 방법으로** 만든다(`grep -m1 '^PROBE '`) — 그게 이 결함의 자리다.
+    """
+    src = _DASH.read_text(encoding="utf-8")
+    # ★블록은 **SKIND/SJOBS 추출부터** 잡아야 한다. 사유 추출 줄부터 자르면 변수가 비어
+    #   `${SKIND:-unknown}` 이 되고, **내 하네스가 만든 가짜 unknown** 을 코드 결함으로 읽게 된다
+    #   (실제로 처음에 그렇게 짜서 락이 울었다 — 락이 제 하네스를 잡아 준 것이다).
+    m = _re.search(r"\n(    # ★스케줄 축 .*?then OBS=1; fi\n)", src, _re.DOTALL)
+    assert m, "★스케줄 절 블록을 못 찾았다 — 락이 낡았다(공허한 초록 방지)"
+    block = m.group(1)
+    script = (
+        f"PROBE_OUT={_shlex.quote(probe_line)}\n"
+        # ↓ 프로덕션과 같은 수집 방식
+        "G=$(printf '%s\\n' \"$PROBE_OUT\" | grep -m1 '^PROBE ')\n"
+        "OBS=0\n" + block + 'echo "OBS=$OBS"\n'
+    )
+    out = _subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+    assert out.returncode == 0, f"★블록 실행 실패: {out.stderr[:200]}"
+    return out.stdout
+
+
+def _probe_line(kind: str, why: str, jobs: str = "analyze_7/60_heal_6/10") -> str:
+    return (
+        "PROBE now=2026-09-12 ctrl_type_total=0 astate=judged aat=- aaxes=- ains=0 alast=- "
+        f"sat=2026-09-12T22:00:00Z sjobs={jobs} soverdue=improve skind={kind} swhy={why}"
+    )
+
+
+def test_reason_actually_reaches_the_screen():
+    """★**사유 없는 경보를 내지 않는다** — 셸 파이프라인을 그대로 태워 확인한다."""
+    why = "틱은 돌고 있는데(스냅샷 1분) **지연된 잡**이 있다: improve — 그 잡의 실행 경로를 보라"
+    out = _run_schedule_block(_probe_line("obs", why))
+    assert "OBS=1" in out, f"obs 인데 관측으로 안 올라갔다:\n{out}"
+    assert why in out, (
+        "사유가 화면에 안 나온다 — 경보만 나가고 «어디를 보라»가 사라진다\n" + out
+    )
+    # ★공허 방지 대조군 — 사유가 **비어 있으면** 이 락이 실제로 운다
+    empty = _run_schedule_block(_probe_line("obs", ""))
+    assert why not in empty, "대조군이 본판정과 같다 — 락이 아무것도 안 본다"
+
+
+def test_job_death_and_tick_death_are_distinguishable_on_screen():
+    """★두 고장이 **화면에서** 갈리는가 — `skind` 는 둘 다 `obs` 라 사유가 유일한 판별자다."""
+    job_why = "틱은 돌고 있는데(스냅샷 1분) **지연된 잡**이 있다: improve — 그 잡의 실행 경로를 보라"
+    tick_why = "스케줄 스냅샷이 30분 낡았다(관용 10분) — **틱 루프**를 보라"
+    a = _run_schedule_block(_probe_line("obs", job_why))
+    b = _run_schedule_block(_probe_line("obs", tick_why))
+    assert "지연된 잡" in a and "지연된 잡" not in b, (a, b)
+    assert "틱 루프" in b and "틱 루프" not in a, (a, b)
+
+
+def test_unknown_is_printed_but_does_not_raise_observation():
+    """`unknown` 은 **찍히되 안 올린다** — 배포 전 상시 빨강을 피하면서 침묵도 안 한다."""
+    out = _run_schedule_block(_probe_line("unknown", "스케줄_스냅샷이_없다"))
+    assert "OBS=0" in out, f"unknown 을 관측으로 올렸다 — 배포 전 상시 빨강이 된다:\n{out}"
+    assert "unknown" in out, f"unknown 을 화면에 안 찍었다 — 조용한 초록이다:\n{out}"

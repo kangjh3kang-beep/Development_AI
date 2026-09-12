@@ -125,6 +125,13 @@ def watermark_key(job: str) -> str:
 #:   필터하지 않으므로(`routers/growth.py:574` 의 WHERE 는 TTL 만 본다) **라우터 변경이 필요 없다.**
 SCHEDULE_SNAPSHOT_KEY = "growth_schedule"
 
+#: 「지연」이라 부르기 전에 주는 **틱 여유**(분). 틱은 60초라 2면 **2틱**이다.
+#: ★SSOT 의 사본이 아니라 **틱 입도에 대한 관용**이다 — 스냅샷이 잡 실행 **전**에 쓰이므로
+#:   발화 직전 1틱은 «경과 ≥ 주기»가 정상이고, 틱이 한 번 밀려도 1틱이 더 붙는다.
+#: ★**곱이 아니라 덧셈**이다. `period * 2` 로 하면 `learn`(7일)은 **14일**이 되어
+#:   그 잡의 고장을 사실상 못 잡는다.
+_OVERDUE_GRACE_MIN = 2
+
 
 def schedule_snapshot_payload(observed, now: datetime) -> dict[str, object]:
     """잡별 **경과/주기**를 한 줄 요약으로 만든다(발행용).
@@ -154,28 +161,35 @@ def schedule_snapshot_payload(observed, now: datetime) -> dict[str, object]:
     now
         기준 시각(주입받는다).
     """
-    parts: list[str] = []
+    out: dict[str, object] = {"at": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
     overdue: list[str] = []
     for job, last in observed:
         spec = JOB_SPECS.get(job)
         if spec is None:          # 모르는 잡은 조용히 버리지 않는다
-            parts.append(f"{job} ?/?")
+            out[job] = "?/?"
             continue
         period = spec.period_minutes
         if last is None:
-            parts.append(f"{job} -/{period}")
+            # ★「본 적 없음」을 `-` 로 적고 **overdue 판정에서 빼지 않는다.**
+            #   빼면 「워터마크 쓰기가 계속 실패해 매 틱 재실행되는 병리」가 **건강으로 접힌다**
+            #   (독립 리뷰 MEDIUM-2 실측). `!` 는 「모른다」를 자기 값으로 말하는 표식이다.
+            out[job] = f"!/{period}"
+            overdue.append(job)
             continue
         elapsed = int((now - last).total_seconds() // 60)
-        parts.append(f"{job} {elapsed}/{period}")
-        # ★음수(시계 되돌림)도 `is_due` 가 참으로 보므로 여기서도 같은 값을 낸다.
-        #   두 곳이 갈리면 계기판이 「돌 때가 됐다」와 반대를 말한다.
-        if elapsed < 0 or elapsed >= period:
+        out[job] = f"{elapsed}/{period}"
+        # ★**관용 `_OVERDUE_GRACE_MIN` 을 더한다**(독립 리뷰 MAJOR-2 · 14일 시뮬 13.33% 위양성).
+        #   스냅샷은 `compute_due` 안에서 **잡이 돌기 전에** 발행된다(`main.py` 틱 루프가
+        #   `due` 를 받은 **뒤에야** 잡을 실행한다). 그래서 **발화 직전 1틱은 «경과 ≥ 주기»가
+        #   정상**이고, 그대로 신고하면 `heal`(10분)만으로 **10틱 중 1틱**이 경보가 된다.
+        #   ***상시 신호는 배경이 된다*** — 이 PR 이 `unknown` 을 안 올린 바로 그 근거(#868)를
+        #   채택안에도 대야 한다(§「대안을 기각한 자를 채택안에는 안 댔다」).
+        #   ★관용은 **틱 수**로 더한다(곱이 아니다) — 곱하면 `learn` 이 14일이 되어 못 잡는다.
+        #   ★음수(시계 되돌림)는 관용 없이 즉시 참이다(`is_due` 와 같은 방향).
+        if elapsed < 0 or elapsed >= period + _OVERDUE_GRACE_MIN:
             overdue.append(job)
-    return {
-        "at": now.isoformat(),
-        "jobs": " ".join(parts) or "-",
-        "overdue": " ".join(overdue) or "-",
-    }
+    out["overdue"] = " ".join(overdue) or "-"
+    return out
 
 
 async def compute_due(session, settings_api, now: datetime) -> dict[str, bool]:
@@ -205,10 +219,14 @@ async def compute_due(session, settings_api, now: datetime) -> dict[str, bool]:
         last = parse_watermark(await settings_api.get_setting(session, key))
         if should_seed(job, last):
             # 워터마크가 없고 지금 돌릴 잡이 아니면 **기준점만** 찍는다.
-            await settings_api.set_setting(
+            ok = await settings_api.set_setting(
                 session, key, now.isoformat(), updated_by="growth-scheduler(seed)",
             )
-            observed.append((job, now))   # 방금 찍은 기준점이 이 잡의 last 다
+            # ★**쓰기 결과를 버리지 않는다**(독립 리뷰 MEDIUM-2). `schema_guard.set_setting` 은
+            #   모든 예외를 삼키고 `False` 를 돌려준다 — 그걸 무시하면 스냅샷이
+            #   **일어나지 않은 씨드**를 `0/1440` 처럼 적어 **거짓을 보고**한다.
+            #   실패했으면 이 잡은 여전히 「본 적 없음」이다.
+            observed.append((job, now if ok else None))
             due[job] = False
             continue
         observed.append((job, last))
