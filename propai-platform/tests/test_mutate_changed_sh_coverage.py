@@ -525,3 +525,40 @@ def test_shell_string_rule_has_two_populations(line, should_fire):
     assert bool(got) is should_fire, f"{line!r} → {[(m.kind, m.new) for m in got]}"
     if should_fire:
         assert "__MUTATED__" in got[0].new
+
+
+# ── ⑬ 계수와 rc — **순수 함수로 잠근다**(산수는 잠글 수 있어야 한다) ──────────
+@pytest.mark.parametrize(
+    ("gen", "surv", "und", "skip", "want_judged", "want_caught"),
+    [
+        (10, 0, 0, 0, 10, 10),
+        (10, 3, 0, 0, 10, 7),
+        (10, 0, 4, 0, 6, 6),     # ★판정 불가는 분모에서 빠진다
+        (10, 0, 0, 2, 8, 8),     # ★★건너뜀도 분모에서 빠진다(종전엔 안 뺐다 — 거짓 수)
+        (10, 1, 4, 2, 4, 3),
+    ],
+)
+def test_audit_counts_removes_unaudited_from_the_denominator(
+    gen, surv, und, skip, want_judged, want_caught,
+):
+    c = mc._audit_counts(gen, surv, und, skip)
+    assert c["judged"] == want_judged, c
+    assert c["caught"] == want_caught, c
+    # ★항등식 — 분자들의 합이 분모를 넘지 않는다(계수가 서로 모순되지 않는다).
+    assert c["caught"] + c["survived"] == c["judged"], c
+    assert c["judged"] + c["undecided"] + c["skipped"] == c["generated"], c
+
+
+@pytest.mark.parametrize(
+    ("surv", "und", "skip", "want_rc"),
+    [
+        (0, 0, 0, 0),   # 전부 걸렸고 감사 안 된 것 없음 → 초록
+        (2, 0, 0, 1),   # 생존 있음
+        (0, 1, 0, 3),   # ★판정 불가만 → **0 이면 안 된다**(전수 CAUGHT 와 같은 신호가 된다)
+        (0, 0, 1, 3),   # ★건너뜀만 → 마찬가지
+        (2, 5, 5, 1),   # 생존이 우선(가장 시끄러운 신호)
+    ],
+)
+def test_audit_exit_puts_unaudited_work_on_the_return_code(surv, und, skip, want_rc):
+    counts = mc._audit_counts(10, surv, und, skip)
+    assert mc._audit_exit(counts) == want_rc, counts

@@ -343,6 +343,34 @@ def _is_front(test: str) -> bool:
     return test.endswith((".ts", ".tsx"))
 
 
+def _audit_counts(
+    generated: int, survived: int, undecided: int, skipped: int,
+) -> dict[str, int]:
+    """이 실행의 **분모와 분자**. 순수 함수로 둔다 — 산수는 잠글 수 있어야 한다.
+
+    ★`judged` 에서 **`undecided` 와 `skipped` 를 둘 다** 뺀다. 종전엔 `skipped` 를 안 빼서
+      *"판정된 N건이 전부 걸렸다"* 가 **거짓 수**였다(독립 리뷰 MAJOR-2 — 실제로 돌아간 변이가
+      0건인데 「판정된 2건」 + EXIT=0 이 나왔다).
+    """
+    judged = generated - undecided - skipped
+    return {
+        "generated": generated, "judged": judged, "caught": judged - survived,
+        "survived": survived, "undecided": undecided, "skipped": skipped,
+    }
+
+
+def _audit_exit(counts: dict[str, int]) -> int:
+    """`::AUDIT=` 계수 → 종료코드. **기계는 rc 만 본다**(모듈 독스트링의 계약).
+
+    ★`undecided`·`skipped` 가 있는데 0 을 주면 호출자에겐 「전수 CAUGHT」와 **같은 신호**다.
+    """
+    if counts["survived"]:
+        return 1
+    if counts["undecided"] or counts["skipped"]:
+        return 3
+    return 0
+
+
 def _apply_at_line(original: str, m: "Mutation") -> str | None:
     """변이를 **그 줄 번호에** 적용한다. 줄이 기대와 다르면 `None`(건너뜀).
 
@@ -676,15 +704,12 @@ def main() -> int:
             survived.append(m)
 
     print(f"\n{'=' * 70}")
-    judged = len(muts) - len(undecided) - len(skipped)
-    caught = judged - len(survived)
+    counts = _audit_counts(len(muts), len(survived), len(undecided), len(skipped))
+    judged = counts["judged"]
     # ★★**기계 판독 줄** — 사람이 읽는 산문과 분리한다. 형제 `scripts/mutate_manual.sh` 가
     #   `::VERDICT=` 로 이미 그렇게 한다(안내문에 절대 안 쓰이는 형태).
     #   종전엔 이 도구의 판정이 **산문에만** 있어, 호출자는 rc 밖에 볼 것이 없었다.
-    print(
-        f"::AUDIT=generated={len(muts)} judged={judged} caught={caught} "
-        f"survived={len(survived)} undecided={len(undecided)} skipped={len(skipped)}"
-    )
+    print("::AUDIT=" + " ".join(f"{k}={v}" for k, v in counts.items()))
     if undecided:
         # ★조용히 넘기지 않는다 — 「판정 불가」를 안 알리면 분모가 작아진 채
         #   "생존 0" 이 **전수 결과로** 읽힌다(이 도구가 잡으려는 공허한 초록).
@@ -702,10 +727,10 @@ def main() -> int:
             #   호출자·CI·`&&` 체인에는 **「전수 CAUGHT」와 완전히 같은 신호**가 간다
             #   (독립 리뷰 MAJOR-1 — *«기계는 rc 만 본다»*).
             print(f"★판정 {judged}건은 전부 걸렸으나 **감사되지 않은 변이가 "
-                  f"{len(undecided) + len(skipped)}건** 있다 — 이 실행은 전수가 아니다.")
-            return 3
+                  f"{counts['undecided'] + counts['skipped']}건** 있다 — 전수가 아니다.")
+            return _audit_exit(counts)
         print(f"생존 0 — 판정된 {judged}건이 전부 테스트에 걸린다.")
-        return 0
+        return _audit_exit(counts)
     print(f"★생존 {len(survived)}건 — 각각 **설명하거나 락을 추가**하라:\n")
     for m in survived:
         print(f"  {m.label()}")
@@ -713,7 +738,8 @@ def main() -> int:
         "\n생존이 곧 결함은 아니다. 이중 가드·도달 불가 방어라면 **그 사실을 코드에 적어라**"
         "(변이 점수 부풀리기 방지). 설명할 수 없는 생존만 진짜 구멍이다."
     )
-    return 1
+    # ★rc 는 **한 축에서만** 나온다 — 여기서 손으로 1 을 쓰면 계수와 rc 가 따로 놀 수 있다.
+    return _audit_exit(counts)
 
 
 if __name__ == "__main__":
