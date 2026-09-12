@@ -73,6 +73,12 @@ def _confidence_pct(v: Any) -> str | None:
         return None
 
 
+def _rep_addr_note(addr: str, region: str) -> str:
+    """대표 필지를 사람이 알아볼 수 있게 표기 — 주소가 없으면 해석된 지역으로."""
+    a = (addr or "").strip()
+    return a if a else (region or "대표")
+
+
 def build_report_model_from_appraisal(
     result: dict[str, Any], *, address: str = "", ai_sections: dict[str, Any] | None = None
 ) -> ReportModel:
@@ -182,13 +188,53 @@ def build_report_model_from_appraisal(
     ms = data.get("market_stats") or {}
     basis_lines: list[str] = []
     if data.get("time_adjust_basis"):
-        basis_lines.append(f"· 시점수정: {fmt_value(data['time_adjust_basis'])}")
+        _ta_line = f"· 시점수정: {fmt_value(data['time_adjust_basis'])}"
+        # ★화면과 같은 축으로 판정한다(독립 리뷰 R7 M-1) — 제출본이 화면보다 적게 말하지 않게.
+        _ta_scope, _region = data.get("time_adjust_scope"), ms.get("region")
+        if _ta_scope and _region and _ta_scope != _region:
+            _ta_line += (f" — 범위 {fmt_value(_ta_scope)} — "
+                         f"요청 지역({fmt_value(_region)}) 실데이터가 아닙니다")
+        basis_lines.append(_ta_line)
     cap = ms.get("cap_rate") or {}
     if cap.get("source") == "R-ONE":
         basis_lines.append(f"· 자본환원율(R-ONE 실측): {_pct(cap.get('pct'))} ({fmt_value(cap.get('basis'))})")
     jc = ms.get("jeonse_conversion_rate") or {}
     if jc.get("source") == "R-ONE":
-        basis_lines.append(f"· 전월세전환율(R-ONE 실측): {_pct(jc.get('pct'))}")
+        basis_lines.append(
+            f"· 전월세전환율(R-ONE 실측): {_pct(jc.get('pct'))} ({fmt_value(jc.get('basis'))})"
+        )
+    # ★★독립 리뷰 R6 LOW-2(2026-09-08): 화면은 4종을 그리는데 **제출 PDF 는 3종**이었다 —
+    #   `housing_time_adjust`(+그 대체 범위 경고)와 시·도 미해석 고지가 빠져 있었다.
+    #   제출본은 화면보다 오래 남고 **다른 사람이 읽는다**. 화면과 제출본이 갈리면
+    #   그 갈림 자체가 결함이다(§6 형제·미러 스윕).
+    ht = ms.get("housing_time_adjust") or {}
+    if ht.get("source") == "R-ONE":
+        line = f"· 주택가격지수 누적변동: {fmt_value(ht.get('factor'))}"
+        if ht.get("basis"):
+            line += f" — {fmt_value(ht.get('basis'))}"
+        scope, region = ht.get("scope"), ms.get("region")
+        if scope and region and scope != region:
+            line += f" — 범위 {fmt_value(scope)} — 요청 지역({fmt_value(region)}) 실데이터가 아닙니다"
+        basis_lines.append(line)
+    if ms.get("region_resolved") is False:
+        basis_lines.append(
+            "· 지역 해석: 주소에서 시·도를 해석하지 못해 전국 값을 적용했습니다"
+            "(이 지역 실데이터가 아닙니다)."
+        )
+    # ★★독립 리뷰 R8 F-7/F-1: 화면의 경고가 **제출본에 없었다**(화면 2 : PDF 0).
+    #   R6 LOW-2 에서 내가 세운 원칙(«화면과 제출본이 갈리면 그 갈림 자체가 결함») 그대로 적용한다.
+    _tr = ms.get("land_price_trend") or {}
+    if _tr.get("is_time_series") is False:
+        basis_lines.append(
+            f"· 지가변동률 추이: **시계열이 아닙니다** — 고유 기간 "
+            f"{fmt_value(_tr.get('distinct_periods'))}개/"
+            f"{fmt_value(_tr.get('requested_months') or 24)}개월"
+        )
+    if (_tr.get("ambiguous_periods") or 0) > 0:
+        basis_lines.append(
+            f"· 연도별 변동률: 값이 갈린 {fmt_value(_tr.get('ambiguous_periods'))}개 시점을 제외한 "
+            "**부분 합계**입니다(그 구간은 세지 못했습니다)."
+        )
     if not ms.get("rone_available"):
         basis_lines.append("· 시장통계: R-ONE 통계표 미설정 구간은 근사값 적용(설정 시 실데이터 전환).")
     sections.append(Section(title="5. 시점수정·시장통계 근거", blocks=[
@@ -305,7 +351,44 @@ def build_report_model_from_appraisal_multi(
     caption = f"성공 {n_ok}/{m}필지 (채택 추정가 확정). "
     if omitted_count > 0:
         caption += f"1회 상한(30필지) 초과로 31번째 이상 {omitted_count}필지는 보고서에 미포함. "
-    caption += "실패 필지는 공시지가 미확인 등으로 '보완필요'(주소·PNU 재확인 필요)."
+    caption += "실패 필지는 공시지가 미확인 등으로 '보완필요'(주소·PNU 재확인 필요). "
+
+    # ★★독립 리뷰 R8 F-6(2026-09-08): §5 근거 블록은 **대표(첫 성공) 필지 하나**로 만들어지는데
+    #   이 표는 **전 필지**를 싣는다. 그래서 이 PR 이 새로 넣은 «요청 지역 실데이터가 아닙니다» ·
+    #   «시·도를 해석하지 못해» 고지가 **1/N 만** 덮었다 — 결함의 범위(N필지)와 처방의 범위(1필지)가
+    #   갈렸다. 미루려면 «배치 안 필지가 시도를 공유한다» 를 재서 근거로 대야 하는데 그 측정이 없다.
+    #   ⇒ 담요 경고 대신 **실제로 다른 필지를 세어** 말한다(파생 — 목록이 상한이 되지 않게).
+    # ★★독립 리뷰 R9 HIGH-3(2026-09-09): 내가 센 축(`time_adjust_scope`)이 **결함이 사는 축이
+    #   아니었다.** §5 는 자본환원율·전월세전환율도 싣는데 그 둘은 `_sido_of(address)` 로
+    #   **필지마다 다르다**. 세 필지가 전부 시도 시계열이 없어 `scope="전국"` 으로 같아지면
+    #   `_diff_scope` 가 0 이라 **침묵**하고, 경기·부산 필지가 **서울 수치를 「R-ONE 실측」으로**
+    #   아무 고지 없이 받는다(실측).
+    #   ★락이 못 잡은 이유도 내 픽스처였다 — `region` 과 `scope` 를 **같은 값으로 묶어**
+    #     두 모집단의 차가 0 이었다(§검증규율 «차가 0인 픽스처는 잠금이 아니다»).
+    #   ⇒ 축을 **해석된 지역(`market_stats.region`)까지** 넓힌다 — 그것이 cap/jeonse 를 가른다.
+    _rep_scope = str((rep_result or {}).get("time_adjust_scope") or "")
+    _rep_region = str(((rep_result or {}).get("market_stats") or {}).get("region") or "")
+    _diff_scope = sum(
+        1 for r, _ in ok_pairs
+        if str(r.get("time_adjust_scope") or "") != _rep_scope
+        or str((r.get("market_stats") or {}).get("region") or "") != _rep_region
+    )
+    _unresolved = sum(
+        1 for r, _ in ok_pairs
+        if (r.get("market_stats") or {}).get("region_resolved") is False
+    )
+    if _diff_scope or _unresolved:
+        caption += (
+            f"★아래 §5 시점수정·시장통계 근거는 **대표 필지({_rep_addr_note(rep_addr, _rep_region)}) 기준**이다 — "
+        )
+        if _diff_scope:
+            caption += (
+                f"지역 해석 또는 시점수정 범위가 대표와 **다른 필지 {_diff_scope}건**이 있다"
+                "(자본환원율·전월세전환율은 필지별 지역으로 조회된다). "
+            )
+        if _unresolved:
+            caption += f"시·도를 해석하지 못한 필지 **{_unresolved}건**이 있다(전국 값 적용). "
+        caption += "그 필지들에는 §5 의 고지가 그대로 적용되지 않는다."
 
     # 통합 합계 — 성공 필지만 합산(실패 필지 제외, 정직).
     area_sum = sum(float(r.get("area_sqm") or 0) for r, _ in ok_pairs)

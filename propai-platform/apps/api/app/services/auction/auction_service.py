@@ -245,6 +245,15 @@ class AuctionStep1Service:
         if total == 0:
             sync = await self.sync_region(service_key=service_key, region=region, kind=kind)
             data_source = sync.get("data_source", "unavailable")
+            # ★★2026-09-12 — `sync_region` 이 **사유를 이미 계산해 돌려주는데**(`:161`)
+            #   여기서 `data_source` 만 꺼내고 **`reason` 을 버리고 있었다.**
+            #   그 결과 프론트는 `unavailable` 이라는 토큰 하나만 받는데, 그 토큰은
+            #   `onbid_client` 에서 **네 갈래**를 뭉친다:
+            #     ①인증키 미설정 ②응답 오류 ③**「온비드 응답 무자료(해당 조건의 공고 없음)」**
+            #     ④호출 실패 — ★③은 **조회에 성공하고 정말 없는** 경우다.
+            #   ⇒ 사유 없이는 「없다」와 「못 봤다」를 **원리적으로 가를 수 없다.**
+            #   ★형제가 바로 아래에서 이미 옳게 한다(`:396-397` — `if res.get("reason"): …`).
+            sync_reason = sync.get("reason")
             rows, total, _ = await self._query_items(
                 region=region, kind=kind, min_fail=min_fail, max_price=max_price,
                 page=page, page_size=page_size,
@@ -265,6 +274,9 @@ class AuctionStep1Service:
             "page_size": page_size,
             "data_source": data_source,
         }
+        # ★사유가 있으면 싣는다(형제 `:396-397` 과 같은 규약 — **있을 때만** 넣어 기존 응답 모양을 안 바꾼다).
+        if sync_reason:
+            result["reason"] = sync_reason
         # ★온비드 공고목록은 현재 감정가/최저입찰가/유찰횟수 미연동(가짜 금지) — 정직 안내.
         if enriched and any(
             e.get("source") == "onbid" and e.get("appraisal_price") is None

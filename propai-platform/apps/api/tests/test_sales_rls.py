@@ -720,9 +720,19 @@ async def test_resolve_site_membership_tie_breaks_by_id_when_path_equal():
 
 @pytest.mark.asyncio
 async def test_resolve_site_membership_superadmin_fallback():
-    """노드 없음 + user.role 이 SUPERADMIN 군 → ('', 'SUPERADMIN')."""
+    """노드 없음 + user.role 이 **플랫폼 전역** SUPERADMIN 군 → ('', 'SUPERADMIN').
+
+    ★★**대표값을 `"admin"` 에서 `"superadmin"` 으로 바꿨다**(2026-09-12).
+      종전 이 테스트는 `role="admin"` 을 「SUPERADMIN 군」의 대표로 써서
+      **누출을 정답으로 고정**하고 있었다 — `admin` 은 `POST /register` 가 **가입자 전원**에게
+      주는 **테넌트 스코프 라벨**이다(`routers/auth.py:347` · *"Create a tenant admin account"*).
+      그것이 여기서 통과하는 한, «가입한 누구나 전 현장 SUPERADMIN» 이 계약이 된다.
+    ★반대편 모집단(가입 기본값은 **아니다**)은 `test_sales_role_gate_tenant_scope.py` 가 태운다 —
+      한쪽만 두면 «전부 막는» 구현과 «전부 여는» 구현을 구별할 수 없다.
+    """
     db = _TokenFakeDB(node=None)
-    res = await deps_sales.resolve_site_membership(db, _Site("sid"), _MemberUser("u", role="admin"))
+    res = await deps_sales.resolve_site_membership(
+        db, _Site("sid"), _MemberUser("u", role="superadmin"))
     assert res == ("", "SUPERADMIN")
 
 

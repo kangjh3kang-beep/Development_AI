@@ -63,16 +63,39 @@ async def housing_time_adjust(address: str = "") -> dict[str, Any] | None:
         rows = await fetch_statbl_rows(statbl, "MM", size=480)
         if not rows:
             return None
-        f = cumulative_factor_from_rows(rows, _sido_of(address))
+        sido = _sido_of(address)
+        f = cumulative_factor_from_rows(rows, sido)
         if f and 0.5 < f < 2.0:  # sane: 24개월 누적이 ±100% 이내
-            return {"factor": f, "source": "R-ONE", "basis": "주택매매가격지수 누적 변동"}
+            # ★★독립 리뷰 R2 HIGH-B: 이 형제도 «요청 지역이 아니어도 R-ONE 이라고 단정» 하고
+            #   있었다. 실측에서 `zzz없는지역` 과 `경상남도` 가 **바이트 동일한 답**을 받았다 —
+            #   PR 제목 그 자체가 형제에 살아 있었다. 라벨은 `land_price_index` 와 **같은 규칙**을 쓴다.
+            from app.services.external_api.reb_client import rate_series_scope
+
+            scope = rate_series_scope(rows, sido)
+            if sido and scope == sido:
+                return {"factor": f, "source": "R-ONE", "scope": scope,
+                        "basis": f"주택매매가격지수 누적 변동({sido})"}
+            # ★`source` 는 "R-ONE" 유지 — 프론트가 정확일치로 렌더한다(R2 MEDIUM-3).
+            #   정직성은 `scope` + `basis` 가 나른다.
+            return {"factor": f, "source": "R-ONE", "scope": scope,
+                    "basis": (f"주택매매가격지수 누적 변동 — {scope} 범위 값"
+                              f"(요청 지역{f' {sido}' if sido else ''}의 시계열이 없어 대체 · "
+                              f"해당 지역 실데이터가 아닙니다)")}
     except Exception:  # noqa: BLE001
         pass
     return None
 
 
 async def commercial_cap_rate(address: str = "") -> dict[str, Any] | None:
-    """상업용부동산 투자수익률(소득수익률) 최신값 → 자본환원율(cap rate). 비정상 시 None."""
+    """상업용부동산 투자수익률 최신값 → 자본환원율(cap rate). 비정상 시 None.
+
+    ★★«(소득수익률)» 표기를 뺐다(독립 리뷰 R10 · 2026-09-12). **어떤 코드도 `ITM_NM` 을 고르지
+      않는다** — `latest_value_from_rows` 에 항목 필터가 한 줄도 없고, 레지스트리 키워드도
+      «상업용부동산 투자수익률» 이며, 테스트 픽스처도 `ITM_NM="투자수익률"` 이다.
+      투자수익률 = 소득수익률 + 자본수익률이라 **cap rate 로 쓰면 산식이 틀린다.**
+      이 PR 이 «지어낸 «실측» 라벨 금지» 를 선언하며 형제를 스윕했는데 이 라벨이 그 클래스였다.
+    ★실제로 소득수익률을 쓰려면 항목을 **선택**해야 한다 — 선택 전에는 그렇게 말하지 않는다.
+    """
     statbl = _statbl("commercial_yield")
     if not statbl:
         return None
@@ -92,7 +115,7 @@ async def commercial_cap_rate(address: str = "") -> dict[str, Any] | None:
         if lo <= val <= hi:
             return {"cap_rate": round(val / 100.0, 4), "pct": val,
                     "wrttime": wrttime, "source": "R-ONE",
-                    "basis": "상업용부동산 투자수익률(소득수익률) 실측"}
+                    "basis": "상업용부동산 투자수익률 실측"}
     except Exception as e:  # noqa: BLE001
         logger.warning("REB 조회 실패: %s", str(e)[:160])
     return None
@@ -181,8 +204,16 @@ async def get_market_stats(address: str = "", base_year: int | None = None) -> d
     cap = await commercial_cap_rate(address)
     jeonse = await jeonse_conversion_rate(address)
     trend = await land_price_trend(address)          # 월별·연도별 지가변동률 추이
+    _region = _sido_of(address)
     return {
-        "region": _sido_of(address) or "전국",
+        "region": _region or "전국",
+        # ★★독립 리뷰 R5 LOW-1(2026-09-08): 주소에서 시·도를 **해석하지 못했는데** `region` 이
+        #   `"전국"` 으로 채워지면, 프론트의 «`scope != region` 이면 대체값» 판정이 `전국 == 전국`
+        #   이라 **조용히 침묵**한다. 그때 정직성을 나르는 것은 백엔드 산문 하나뿐인데,
+        #   프론트는 «백엔드 문구를 안 믿어도 성립한다» 고 선언한다 — 그 선언이 이 경우 깨졌다.
+        #   ⇒ **해석 여부를 기계 필드로 분리**한다(모름을 유효값으로 표현하지 않는다).
+        #     `region` 자체는 기존 소비처 계약이라 바꾸지 않는다.
+        "region_resolved": bool(_region),
         "land_time_adjust": land_ta,                 # 토지 시점수정(지가변동률)
         "land_price_trend": trend,                   # 월별/연도별 통계분석(시계열)
         "housing_time_adjust": housing,              # 건물/주택 시점수정(주택가격지수)
