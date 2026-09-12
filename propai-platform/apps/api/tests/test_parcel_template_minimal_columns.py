@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import re
 
 from openpyxl import load_workbook
 
@@ -45,7 +46,7 @@ def _parse(raw: bytes, fn: str = "t.xlsx"):
 def test_template_has_exactly_address_and_jibun():
     """★두 열뿐이고, **파서가 그 둘을 주소·지번으로 인식**한다."""
     assert len(pes.TEMPLATE_COLUMNS) == 2, pes.TEMPLATE_COLUMNS
-    headers = [n for n, _ex in pes.TEMPLATE_COLUMNS]
+    headers = list(pes.TEMPLATE_COLUMNS)
 
     # ★손으로 문자열을 대조하지 않는다 — **파서의 판정 함수**에 태운다.
     roles = pes._detect_columns(headers)
@@ -58,7 +59,11 @@ def test_template_has_exactly_address_and_jibun():
 def test_downloaded_sheet_matches_the_declared_columns():
     """선언(`TEMPLATE_COLUMNS`)과 **산출물**(실제 시트)이 같은가 — 선언만 고치는 변경을 막는다."""
     ws = _sheet(pes.build_template_xlsx(), "토지조서")
-    assert [c.value for c in ws[1]] == [n for n, _ in pes.TEMPLATE_COLUMNS]
+    assert [c.value for c in ws[1]] == list(pes.TEMPLATE_COLUMNS)
+    # ★그리고 **적는 칸의 너비**도 산출물이다(머리글 길이가 아니라 값 길이로 정한다).
+    assert ws.column_dimensions["A"].width >= 30, (
+        f"주소 칸이 {ws.column_dimensions['A'].width} — 20자 넘는 주소가 안 보인다"
+    )
 
 
 def test_blank_template_yields_zero_parcels_but_filled_yields_rows():
@@ -144,3 +149,94 @@ def test_guide_promise_that_legacy_files_still_work_is_true():
     # ★동의 칸도 **여전히** 읽는다(양식에서 뺐을 뿐 능력은 그대로다)
     assert p.get("consent_land") is True, f"토지사용동의 O 가 안 읽혔다: {p}"
     assert p.get("consent_district") is False, p
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★독립 적대 리뷰(2026-09-12)가 찾은 자리 — 전부 **내가 새로 만든 사용자 대면 거짓**이었다.
+#   내 분모는 「데이터 시트」였고 결함은 「워크북」과 「안내문의 약속」에 있었다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _guide_text() -> str:
+    g = _sheet(pes.build_template_xlsx(), "작성안내")
+    return "\n".join(str(r[0].value or "") for r in g.iter_rows(max_col=1))
+
+
+def test_guide_sheet_has_no_literal_markdown():
+    """★엑셀 셀은 마크다운을 렌더하지 않는다 — `**` 가 **별표째** 사용자에게 찍힌다.
+
+    실측(이전 판): `**` 리터럴이 **6셀**. `origin/main` 은 0셀이었으니 **내가 새로 만든** 결함이다.
+    저장소에 같은 형태의 선례가 있다(`**같아야**` 가 별표째 화면에 찍힘).
+    """
+    text = _guide_text()
+    assert "★" in text or "[토지조서]" in text, "대조군 실패 — 안내문을 못 읽었다"
+    assert "**" not in text, (
+        "안내 시트에 마크다운 별표가 리터럴로 남았다 — 강조는 Font(bold=True) 로 하라:\n"
+        + "\n".join(l for l in text.splitlines() if "**" in l)
+    )
+
+
+def test_guide_sheet_has_no_bare_geocodable_address():
+    """★안내 시트에 **그대로 지오코딩되는 맨주소 줄**이 없어야 한다.
+
+    ## 왜 「필지 0건」이 아니라 이 축인가 (기준을 재서 정했다)
+
+    엑셀의 «다른 이름으로 저장 → CSV» 는 **활성 시트만** 내보낸다. 사용자가 안내 시트를
+    활성화한 채 저장해 올리면 이 시트가 데이터로 파싱된다. 그때 **필지 0건은 원리적으로
+    달성 불가**다 — 파서는 비지 않은 셀을 주소로 보므로 안내문 산문도 행이 된다.
+    실측: 현재 판 18행 · `origin/main` 9행. **둘 다 그렇다(회귀가 아니다).**
+
+    ★갈라 주는 것은 **맨주소가 섞였는가**다. 산문 행은 사용자 눈에 즉시 쓰레기로 보이고
+    지오코딩도 실패한다. 그러나 `경기도 안양시 동안구 비산동 511-168` 같은 **맨주소**는
+    조회에 성공해 **없는 필지가 그럴듯하게 등록**된다.
+    독립 리뷰 실측(이전 판): 맨주소 **2건** ↔ `origin/main` **0건** — 내가 새로 심었던 위험이다.
+    ⇒ 예시를 `(보기: …)` 로 감싸고 머리글처럼 보이던 표 줄(`소재지(주소) | 지번`)을 없앴다.
+    """
+    BARE = re.compile(
+        r"^\s*(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충청|충북|충남|"
+        r"전라|전북|전남|경상|경북|경남|제주)\S*\s+\S+.*\s산?\d+(-\d+)?\s*$"
+    )
+    # ★대조군 먼저 — 검사기가 살아 있는가(순서를 바꾸면 사람이 먼저 결론을 낸다)
+    assert BARE.match("경기도 안양시 동안구 비산동 511-168"), "검사기 사망 — 맨주소를 못 잡는다"
+    assert not BARE.match("     (보기: 경기도 의정부시 의정부동 224)"), "검사기 과탐 — 보기를 맨주소로 본다"
+
+    g = _sheet(pes.build_template_xlsx(), "작성안내")
+    lines = [str(r[0].value or "") for r in g.iter_rows(max_col=1)]
+    assert len(lines) >= 10, f"안내문을 못 읽었다(공허 방지): {len(lines)}줄"
+    offenders = [l for l in lines if BARE.match(l)]
+    assert offenders == [], (
+        "안내 시트에 그대로 지오코딩되는 맨주소가 있다 — 이 시트를 CSV 로 올리면 "
+        "없는 필지가 «성공적으로» 등록된다:\n" + "\n".join(offenders)
+    )
+
+
+
+def test_guide_makes_no_promise_the_code_does_not_keep():
+    """★안내문의 **약속**을 코드와 대조한다 — 거짓 약속은 사용자 대면 산출물에 인쇄된다.
+
+    ① 소유구분 「자동 조회」는 **거짓**이었다: `owner_type` 이 값을 얻는 자리는 엑셀 셀뿐이고
+       (`:981`), 공부의 `posesnSeCodeNm` 은 프론트 도달 **0건**(대조군 `official_price_per_sqm` 82건).
+    ② 지번 「따로 적으면 더 정확」도 **거짓**이었다: `_geocode_fill` 은
+       `jibun not in addr` 일 때만 결합하므로, 안내문 예시처럼 주소에 번지가 있으면
+       질의가 **문자 단위로 동일**하다.
+    """
+    text = _guide_text()
+    from pathlib import Path as _P
+    src = (_P(pes.__file__)).read_text(encoding="utf-8")
+
+    # ① 자동 조회 목록에 소유구분이 없어야 한다
+    auto_lines = [l for l in text.splitlines() if "자동으로 조회합니다" in l]
+    assert auto_lines, "대조군 실패 — 「자동으로 조회」 문장을 못 찾았다"
+    for l in auto_lines:
+        assert "소유구분" not in l, f"소유구분을 자동 조회한다고 약속한다(거짓): {l}"
+    # 그리고 **안 한다고** 명시했는가
+    assert "소유구분은 자동으로 조회하지 않습니다" in text, (
+        "소유구분을 빼기만 하고 «안 한다»를 말하지 않으면 사용자는 여전히 기대한다"
+    )
+
+    # ② 지번 약속이 코드와 맞는가 — 코드는 「주소에 없을 때만」 결합한다
+    assert "jibun not in addr" in src, "지오코딩 결합 조건이 바뀌었다 — 이 락을 다시 맞춰라"
+    assert "비워 두셔도 결과가 같습니다" in text, (
+        "지번이 조회에 기여하지 않는 경우를 안내문이 말하지 않는다"
+    )
+    assert "더 정확합니다" not in text, "코드가 지키지 않는 «더 정확» 약속이 남아 있다"
