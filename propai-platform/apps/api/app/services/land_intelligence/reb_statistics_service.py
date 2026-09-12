@@ -44,6 +44,14 @@ _STAT_REGISTRY = {
     },
 }
 
+# ★자본환원율(cap rate)인 항목 — **하나의 자리**에 둔다(소비처가 이 이름을 복사하지 않게).
+#   자본환원율 = 순영업소득 / 가치 = **소득수익률**이다. `투자수익률`(= 소득수익률 + 자본수익률)은
+#   자본이득을 포함하므로 **cap rate 가 아니다** — 같은 파일 `commercial_cap_rate` 독스트링 참조.
+#   ★재측정 명령(휘발성 — 값이 아니라 이것이 정본):
+#       GET /api/v1/land-price/rone-test?statbl_id=<RONE_COMMYIELD_STATBL_ID>&cycle=YY
+#       → 응답 `distinct_ITM_NM` 에 아래 항목이 있으면 이 경로가 값을 낼 수 있다.
+_CAP_RATE_ITM: tuple[str, ...] = ("소득수익률",)
+
 
 def _statbl(kind: str) -> str:
     reg = _STAT_REGISTRY.get(kind, {})
@@ -107,7 +115,13 @@ async def commercial_cap_rate(address: str = "") -> dict[str, Any] | None:
         rows = await fetch_statbl_rows(statbl, "QQ", size=120)
         if not rows:
             return None
-        res = latest_value_from_rows(rows, _sido_of(address))
+        # ★항목을 **선언**한다 — «무엇인지 모르면 채택하지 않는다».
+        #   바로 위 독스트링이 *"투자수익률 = 소득수익률 + 자본수익률이라 cap rate 로 쓰면
+        #   산식이 틀린다"* 고 적어 두었는데, 그것을 **강제하는 것이 한 줄도 없었다**
+        #   (전역 §30 — 주석에 쓴 동작 주장은 그 자체가 검증 대상이다).
+        #   ★라이브 실측(2026-09-12): 설정된 표는 `distinct_ITM_NM = ['투자수익률']` 하나뿐이라
+        #     선언 없이는 그 값이 **그대로 자본환원율로 채택**된다(단일 항목은 «모호하지 않다»).
+        res = latest_value_from_rows(rows, _sido_of(address), itm_allow=_CAP_RATE_ITM)
         if not res:
             return None
         val, wrttime = res

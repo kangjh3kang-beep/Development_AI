@@ -612,12 +612,23 @@ def test_latest_value_refuses_when_region_is_unknown() -> None:
 # ★R2 HIGH-B / HIGH-C / HIGH-D — 형제 표면과 **사용자 금액에 닿는 배선**
 # ─────────────────────────────────────────────────────────────
 
-def _patch_statbl(monkeypatch, rows: list[dict]) -> None:
-    """통계표 조회만 스텁 — 해석·범위판정·라벨조립은 진짜 코드가 돈다."""
+def _patch_statbl(monkeypatch, rows: list[dict], *, qq_rows: list[dict] | None = None) -> None:
+    """통계표 조회만 스텁 — 해석·범위판정·라벨조립은 진짜 코드가 돈다.
+
+    `qq_rows` — **자본환원율 축만** 다른 행을 주고 싶을 때(기본 `None` = 종전과 동일).
+    ★`_statbl` 이 전 통계에 같은 더미 ID 를 주므로 표 ID 로는 축을 가를 수 없다.
+      가를 수 있는 것은 **주기**다: `commercial_cap_rate` 만 `"QQ"` 를 쓰고
+      나머지(housing·jeonse·land)는 `"MM"` 이다.
+    ★왜 필요해졌나: 자본환원율은 이제 **항목을 선언**하므로(`_CAP_RATE_ITM`),
+      `ITM_NM="변동률"` 행을 자본환원율로 채택하지 않는다. 한 픽스처로 네 통계를 다 태우던
+      종전 방식은 **그 항목 축이 없던 시절의 편의**였다.
+    """
     import app.services.external_api.reb_client as _rc
     import app.services.land_intelligence.reb_statistics_service as _rs
 
     async def _fetch(statbl, cycle="MM", size=240, wrttime=None):
+        if qq_rows is not None and cycle == "QQ":
+            return qq_rows
         return rows
 
     monkeypatch.setattr(_rc, "fetch_statbl_rows", _fetch)
@@ -1272,7 +1283,10 @@ async def test_market_stats_carries_every_rone_backed_statistic(monkeypatch) -> 
     #   (cap 1.0~12.0 · 전월세 2.0~12.0 · 누적계수 0.5~2.0 → 1.025**24 = 1.81).
     #   한 픽스처로 넷을 태우려면 그 교집합 안에 있어야 한다.
     rows = _size_series_rows("서울", _TWO_YEARS, rate=2.5)
-    _patch_statbl(monkeypatch, rows)
+    # ★자본환원율 축만 **자본환원율인 항목**을 준다 — 그 축은 이제 항목을 선언한다(`_CAP_RATE_ITM`).
+    #   종전엔 `ITM_NM="변동률"` 행이 그대로 자본환원율로 채택됐다. 그것이 결함이었다.
+    cap_rows = [dict(r, ITM_NM="소득수익률") for r in rows]
+    _patch_statbl(monkeypatch, rows, qq_rows=cap_rows)
     _patch_rone(monkeypatch, rows)   # land_price_trend 는 다른 통로(fetch_land_price_changes)를 탄다
     ms = await get_market_stats("서울특별시 강남구 1")
 
@@ -1503,22 +1517,191 @@ async def test_the_two_pipelines_answer_substitute_scope_differently_on_purpose(
 #           거짓 부채의 xfail 은 지웠는데 참 부채는 주석으로만 남겨 **가시성이 순감**했다).
 
 
+# ★★2026-09-12 sid=68ed1a1d — 여기 있던 strict xfail 을 **교체**한다.
+#
+#   종전 단언은 `_STAT_REGISTRY["commercial_yield"]["cycle"] == "YY"` 였다.
+#   즉 **레지스트리를 QQ→YY 로 바꾸면 초록이 된다.** 그런데 라이브로 재 보니 그 변경은 **해롭다**:
+#
+#       GET /land-price/rone-test?statbl_id=A_2024_00683&cycle=QQ → 행 0건   (코드가 쓰는 주기)
+#                                                      cycle=YY → 300행 · latest(서울)=(6.96,"2005")
+#       GET /land-price/rone-status  후보 STATBL_NM
+#           = 「임대동향 투자수익률(분기/연간)**(2002년~2012년)**_중대형 상가」
+#             DTACYCLE_CD = **`YY,HY,QY`**  ⇒ ★`QQ` 는 애초에 **존재하지 않는 주기**다
+#           distinct_ITM_NM = **['투자수익률'] 하나뿐**(소득수익률 없음)
+#
+#   ⇒ YY 로 바꾸면 **2002~2012 폐지 시계열의 「투자수익률」이 「자본환원율(R-ONE 실측)」로**
+#     감정평가 제출본(`report/render/appraisal_adapter.py:200`)에 인쇄된다.
+#     ★***초록으로 가는 길이 곧 날조인 자리다.*** #1035 가 «지어낸 «실측» 라벨 금지» 를 선언하며
+#       형제를 스윕했는데, 그 PR 이 남긴 이 락이 정확히 그 클래스를 **처방**하고 있었다.
+#
+#   ★그렇다고 **지우기만 하면** R8 F-3 이 경고한 그 자리를 다시 밟는다(거짓 부채의 xfail 은
+#     지웠는데 참 부채는 주석으로만 남겨 **가시성이 순감**했다). 그래서 **참 부채로 바꾼다**:
+#     초록으로 가는 길이 «주기 바꾸기» 가 아니라 **«자본환원율 항목을 담은 표로 교체하기»** 가 되게.
+#
+#   ★휘발성이므로 값이 아니라 **재측정 명령**을 같이 둔다(전역 §28):
+#       curl -s 'https://api.4t8t.net/api/v1/land-price/rone-test?statbl_id=<표ID>&cycle=YY' \
+#         | python3 -c 'import json,sys;print(json.load(sys.stdin)["distinct_ITM_NM"])'
+_COMMYIELD_LIVE_ITM_OBSERVED: tuple[str, ...] = ("투자수익률",)
+"""설정된 상업용 통계표에서 **라이브로 관측된** 항목 집합(2026-09-12T12:2xZ · 무인증·무과금).
+
+★이것은 **관측**이지 계약이 아니다. 표를 교체하면 이 핀을 **다시 재서** 갱신해야 하고,
+  그때 아래 xfail 이 XPASS(strict) 로 **빨개져** 마커를 지우게 만든다 — 그것이 부채 상환 신호다.
+"""
+
+
 @pytest.mark.xfail(
     strict=True,
-    reason="★부채(R8 F-3): 상업용 자본환원율 경로가 라이브에서 값을 못 낸다 — 레지스트리 주기와 "
-           "실제 데이터가 있는 주기가 어긋난다(문서화된 통계표로 QQ=0행 · YY=300행 실측). "
-           "서버 설정값(RONE_COMMYIELD_STATBL_ID) 확인 + 시점 지정 조회 검토 필요",
+    reason="★부채: 설정된 상업용 통계표(RONE_COMMYIELD_STATBL_ID → A_2024_00683 계열)가 "
+           "**자본환원율 항목을 담지 않는다** — 라이브 distinct_ITM_NM 이 ['투자수익률'] 하나뿐이고 "
+           "그 표는 (2002년~2012년) 폐지 시계열이다. ★주기(QQ→YY)를 바꿔 초록으로 만들지 말 것 — "
+           "그 변경은 2005년 투자수익률을 「자본환원율(R-ONE 실측)」로 제출본에 인쇄한다. "
+           "상환 경로는 **소득수익률을 담은 표를 찾아 환경변수를 교체**하는 것이다.",
 )
-def test_commercial_yield_registry_cycle_should_match_a_cycle_that_has_rows() -> None:
-    """상업용 자본환원율은 라이브에서 값을 내야 한다(미해결 — strict xfail).
+def test_commercial_yield_table_publishes_a_cap_rate_item() -> None:
+    """상업용 자본환원율은 **자본환원율인 항목**에서 와야 한다(미해결 — strict xfail).
 
     ★지금 그대로면 `commercial_cap_rate` 가 **항상 None** 이고 화면·PDF 의
-      「자본환원율(R-ONE 실측)」 줄은 **한 번도 뜨지 않는다** — 기본 4.5% 가 영구 채택된다.
-      사용자에게 닿는 실결함인데 종전엔 초록 안에 아무 표시가 없었다.
+      「자본환원율(R-ONE 실측)」 줄은 한 번도 뜨지 않는다 — 기본 4.5% 가 영구 채택된다.
+      **다만 라벨은 정직하다**(`cap_rate_source="기본(R-ONE 값 채택 불가)"`). 죽은 것은 **기능**이다.
+    ★이 단언은 **주기를 바꿔도 초록이 되지 않는다** — 그것이 종전 락과의 차이다.
     """
-    from app.services.land_intelligence.reb_statistics_service import _STAT_REGISTRY
+    from app.services.land_intelligence.reb_statistics_service import _CAP_RATE_ITM
 
-    assert _STAT_REGISTRY["commercial_yield"]["cycle"] == "YY"
+    # ★공허 방지 — 양변이 비어 있으면 교집합 판정이 무의미하다.
+    assert _COMMYIELD_LIVE_ITM_OBSERVED, "라이브 관측 핀이 비었다 — 다시 재라"
+    assert _CAP_RATE_ITM, "자본환원율 항목 선언이 비었다"
+    assert set(_COMMYIELD_LIVE_ITM_OBSERVED) & set(_CAP_RATE_ITM), (
+        f"설정된 표의 항목 {_COMMYIELD_LIVE_ITM_OBSERVED} 에 자본환원율 항목 "
+        f"{_CAP_RATE_ITM} 이 없다 — 이 표로는 cap rate 를 만들 수 없다"
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# ★항목 식별 가드 — «모호하면 거부» 만으로는 부족하다(단일 오항목은 모호하지 않다)
+# ─────────────────────────────────────────────────────────────
+
+def _commyield_rows(itm: str, val: float) -> list[dict[str, object]]:
+    """라이브 모양 그대로의 상업용 수익률 행(시도 행 · `CLS_FULLNM` 도 시도명)."""
+    return [{"CLS_NM": "서울", "CLS_FULLNM": "서울", "ITM_NM": itm,
+             "DTA_VAL": val, "WRTTIME_IDTFR_ID": "2012"}]
+
+
+def test_itm_identity_guard_separates_a_cap_rate_from_a_total_return() -> None:
+    """★두 모집단이 **다른 답**을 낸다 — 차가 0인 픽스처는 잠금이 아니다."""
+    from app.services.external_api.reb_client import latest_value_from_rows
+    from app.services.land_intelligence.reb_statistics_service import _CAP_RATE_ITM
+
+    income = latest_value_from_rows(
+        _commyield_rows("소득수익률", 4.2), "서울", itm_allow=_CAP_RATE_ITM)
+    total = latest_value_from_rows(
+        _commyield_rows("투자수익률", 6.96), "서울", itm_allow=_CAP_RATE_ITM)
+
+    # ★공허 방지 선단언 — «채택» 쪽이 실제로 값을 내는가(둘 다 None 이면 아무것도 안 잠긴다).
+    assert income == (4.2, "2012"), "자본환원율 항목을 채택하지 못했다 — 가드가 과잉 거부한다"
+    assert total is None, (
+        "투자수익률(= 소득수익률 + 자본수익률)이 자본환원율로 채택됐다 — "
+        "이것이 제출본에 「자본환원율(R-ONE 실측)」로 인쇄되던 경로다"
+    )
+
+
+def test_itm_identity_guard_passes_rows_that_carry_no_item_label() -> None:
+    """★**의도된 면제**를 양방향으로 잠근다 — 죽은 면제가 되지 않도록.
+
+    이 코드베이스는 `ITM_NM` 이 **없는 표를 명시적으로 전제**한다(형제
+    `rate_series_from_rows` 의 «itm 이 비면 통과»). 그래서 항목 식별 가드도 **표기가 없으면
+    통과**시킨다 — 거부로 바꾸면 **정상 경로를 막는다**(위양성).
+
+    ★실측(2026-09-12): 처음엔 거부로 짰다가 기존 회귀 2건이 빨개졌고
+      (`test_cap_rate_refuses_for_unknown_region` · `test_market_stats_carries_every_rone_backed_statistic`)
+      **그 테스트들이 옳았다.** 빨간 기존 테스트를 «낡았다» 로 처리하지 않는다.
+    ★★그러므로 이것은 **부채이기도 하다**: 항목을 표기하지 않는 표에서는 이 가드가 무동작이다.
+      그 한계를 **초록 안에** 적어 둔다(주석에만 적으면 다음 사람이 못 본다).
+    """
+    from app.services.external_api.reb_client import latest_value_from_rows
+    from app.services.land_intelligence.reb_statistics_service import _CAP_RATE_ITM
+
+    bare = [{"CLS_NM": "서울", "CLS_FULLNM": "서울", "DTA_VAL": 4.2,
+             "WRTTIME_IDTFR_ID": "2012"}]
+    # ★공허 방지 — 이 픽스처가 정말 «ITM_NM 이 없는» 행인가.
+    assert all("ITM_NM" not in r for r in bare), "ITM_NM 이 있으면 면제 분기가 안 돈다"
+
+    assert latest_value_from_rows(bare, "서울", itm_allow=_CAP_RATE_ITM) == (4.2, "2012"), (
+        "항목 표기가 없는 표를 거부했다 — 형제 계약(«itm 이 비면 통과»)과 갈린다"
+    )
+    # ★반대편: **표기가 있고 다른 항목이면** 여전히 거부한다(면제가 담요가 되지 않게).
+    labeled = [dict(bare[0], ITM_NM="투자수익률")]
+    assert latest_value_from_rows(labeled, "서울", itm_allow=_CAP_RATE_ITM) is None, (
+        "면제가 표기된 오항목까지 통과시킨다 — 가드가 무력화됐다"
+    )
+
+
+def test_itm_identity_guard_is_inert_without_a_declaration() -> None:
+    """★선언이 없으면 **종전 동작 그대로**다(기본값이 계약을 바꾸지 않는다)."""
+    from app.services.external_api.reb_client import latest_value_from_rows
+
+    rows = _commyield_rows("투자수익률", 6.96)
+    assert latest_value_from_rows(rows, "서울") == (6.96, "2012"), (
+        "선언이 없는데 동작이 바뀌었다 — 다른 소비처 2곳의 계약이 깨진다"
+    )
+
+
+def test_declared_item_is_readable_even_when_the_period_is_mixed() -> None:
+    """★선언하면 «혼재» 도 읽는다 — 항목을 특정했으므로 더 이상 모호하지 않다.
+
+    그리고 **선언이 없으면 종전대로 거부**한다(두 계약을 같은 실행에서 대조한다).
+    """
+    from app.services.external_api.reb_client import latest_value_from_rows
+    from app.services.land_intelligence.reb_statistics_service import _CAP_RATE_ITM
+
+    mixed = _commyield_rows("소득수익률", 4.2) + _commyield_rows("투자수익률", 6.96)
+    # ★공허 방지 — 이 픽스처가 정말 «한 시점에 항목이 둘» 인가.
+    assert len({r["ITM_NM"] for r in mixed}) == 2, "혼재 픽스처가 아니다"
+    assert len({r["WRTTIME_IDTFR_ID"] for r in mixed}) == 1, "시점이 갈리면 혼재 분기가 안 돈다"
+
+    assert latest_value_from_rows(mixed, "서울", itm_allow=_CAP_RATE_ITM) == (4.2, "2012")
+    assert latest_value_from_rows(mixed, "서울") is None, "선언 없는 혼재는 종전대로 거부해야 한다"
+
+
+@pytest.mark.asyncio
+async def test_commercial_cap_rate_actually_passes_the_declaration() -> None:
+    """★배선 락 — 이름이 존재하는 것과 **그 값이 넘어가는 것**은 다르다.
+
+    `commercial_cap_rate` 가 `itm_allow` 를 **실제로 넘기는지**를 호출 인자로 태운다.
+    """
+    import app.services.land_intelligence.reb_statistics_service as S
+
+    seen: dict[str, object] = {}
+
+    async def _fake_fetch(statbl: str, cycle: str, size: int = 0):  # noqa: ANN202
+        seen["cycle"] = cycle
+        return _commyield_rows("투자수익률", 6.96)
+
+    def _fake_latest(rows, region, *, itm_allow=None):  # noqa: ANN001, ANN202
+        seen["itm_allow"] = itm_allow
+        return None
+
+    import app.services.external_api.reb_client as RC
+    monkey = [(RC, "fetch_statbl_rows", RC.fetch_statbl_rows),
+              (RC, "latest_value_from_rows", RC.latest_value_from_rows)]
+    RC.fetch_statbl_rows = _fake_fetch          # type: ignore[assignment]
+    RC.latest_value_from_rows = _fake_latest    # type: ignore[assignment]
+    import os
+    prev = os.environ.get("RONE_COMMYIELD_STATBL_ID")
+    os.environ["RONE_COMMYIELD_STATBL_ID"] = "TEST_TABLE"
+    try:
+        await S.commercial_cap_rate("서울특별시 강남구 역삼동 737")
+    finally:
+        for mod, name, orig in monkey:
+            setattr(mod, name, orig)
+        if prev is None:
+            os.environ.pop("RONE_COMMYIELD_STATBL_ID", None)
+        else:
+            os.environ["RONE_COMMYIELD_STATBL_ID"] = prev
+
+    assert seen.get("itm_allow") == S._CAP_RATE_ITM, (
+        f"선언이 조회에 전달되지 않았다(받은 값 {seen.get('itm_allow')!r}) — "
+        "가드를 정의만 하고 소비처가 안 쓰면 무잠금이다"
+    )
 #       · 상권 행이 시도 선택에 섞이지 않는 것은 `row_region_names` 의 정확일치가 보장한다 — 아래로 잠근다
 
 

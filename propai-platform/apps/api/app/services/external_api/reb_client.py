@@ -280,9 +280,32 @@ def narrow_to_period_aggregate(
 
 
 def latest_value_from_rows(
-    rows: list[dict[str, Any]], region_sido: str = ""
+    rows: list[dict[str, Any]], region_sido: str = "", *,
+    itm_allow: tuple[str, ...] | None = None,
 ) -> tuple[float, str] | None:
-    """월/분기 행에서 지역 매칭 최신 시점의 값(%)·작성시점을 반환. 값 필드 방어적 탐색."""
+    """월/분기 행에서 지역 매칭 최신 시점의 값(%)·작성시점을 반환. 값 필드 방어적 탐색.
+
+    `itm_allow` — **호출자가 «무엇의 값을 원하는지» 선언한다**(기본 `None` = 종전 동작).
+
+    ★왜 필요한가(2026-09-12 라이브 실측): 이 함수에는 항목 **카디널리티** 가드만 있었다 —
+      한 시점에 `ITM_NM` 이 여럿이면 거부한다(아래 `_homogeneous`). 그런데 **단일 오항목**은
+      «모호하지 않다» 는 이유로 **그대로 채택**된다. 실측:
+
+          latest_value_from_rows([{ITM_NM:"투자수익률", CLS_NM:"서울", DTA_VAL:6.96, …}], "서울")
+              → (6.96, '2005')   ★채택된다
+
+      `commercial_cap_rate` 가 부르는 상업용 표(`A_2024_00683` 계열)는 `distinct_ITM_NM` 이
+      **`['투자수익률']` 하나뿐**이라 정확히 이 경로를 탄다. 그리고 형제 모듈이 이미
+      *"투자수익률 = 소득수익률 + 자본수익률이라 **cap rate 로 쓰면 산식이 틀린다**"* 라고
+      적어 두었다 — **저장소가 아는 사실인데 강제하는 것이 없었다.**
+      ⇒ «모호하면 거부» 만으로는 부족하다. **«무엇인지 모르면 채택하지 않는다»** 가 필요하다.
+
+    ★형제 정합: `rate_series_from_rows` 는 처음부터 항목 필터(`변동률`)를 갖고 있었다.
+      **같은 축의 처방을 형제 한쪽에만 걸어 두었던 것**을 여기서 맞춘다(전역 §D-20).
+
+    ★선언하면 «혼재» 도 읽을 수 있다: 항목을 특정했으므로 더 이상 모호하지 않다.
+      선언하지 않으면 종전 계약(혼재 → 거부)이 **그대로** 유지된다.
+    """
     if not rows:
         return None
     if not region_sido:
@@ -332,6 +355,26 @@ def latest_value_from_rows(
     _matched_raw = [
         row for row in rows if isinstance(row, dict) and region_sido in row_region_names(row)
     ]
+    # ★항목 식별 가드 — 호출자가 선언한 항목만 남긴다(선언이 없으면 무동작).
+    #   ★**시점 그룹화보다 먼저** 건다. 뒤에 걸면 «엉뚱한 항목이 섞였다» 는 이유로 혼재 거부가
+    #     먼저 발화해, 선언한 항목이 그 시점에 **있는데도** 거부된다.
+    if itm_allow is not None:
+        _allow = {str(x).strip() for x in itm_allow}
+
+        def _itm_ok(row: dict[str, Any]) -> bool:
+            itm = str(row.get("ITM_NM") or "").strip()
+            # ★**항목 표기가 없는 표는 통과**시킨다 — 형제 `rate_series_from_rows` 의 계약과 같다
+            #   («itm 이 비면 통과»). 이 코드베이스는 `ITM_NM` 이 **없는 표를 명시적으로 전제**한다.
+            #   ★★이것은 **의도된 면제**이고 **부채**다: 항목을 표기하지 않는 표에서는 이 가드가
+            #     아무 일도 하지 않으므로 «무엇인지 모르면 채택하지 않는다» 가 그 표에는 미적용이다.
+            #     그래도 이렇게 두는 이유 — 거부로 바꾸면 **정상 경로를 막는다**(위양성).
+            #     실측: 그렇게 짰더니 기존 회귀 2건이 빨개졌고(`test_cap_rate_refuses_for_unknown_region`
+            #     · `test_market_stats_carries_every_rone_backed_statistic`) **그 테스트들이 옳았다**.
+            #   ⇒ 이 면제는 `test_itm_identity_guard_passes_rows_that_carry_no_item_label` 이 잠근다
+            #     (죽은 면제가 되지 않도록 **양방향**으로).
+            return (not itm) or itm in _allow
+
+        _matched_raw = [r for r in _matched_raw if _itm_ok(r)]
     # ★★독립 리뷰 R8 F-2(2026-09-08) — **내가 만든 회귀**다. 이 함수에는 항목(ITM) 필터가
     #   **한 줄도 없는데** 집계행 좁히기를 붙였다. 그래서 집계행(`CLS_NM="전체"`)이 **다른 항목**
     #   (예: `지수`)이면 그것이 좁히기에서 이겨 **엉뚱한 항목의 값**이 채택된다. 실측:
