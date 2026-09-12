@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { salesApi, won } from "@/lib/salesApi";
-import { useSalesStore } from "@/store/useSalesStore";
+import { selectSelected, selectUnits, useSalesStore, type Unit } from "@/store/useSalesStore";
 import { unitStatusLabel } from "@/components/sales/unitStatus";
 
 interface Detail {
@@ -36,10 +36,13 @@ const ACTIONS_BY_STATUS: Record<string, { action: string; label: string; tone: "
 };
 
 export default function Unit360Panel({ siteCode }: { siteCode: string }) {
-  const selectedUnit = useSalesStore((s) => s.selectedUnit);
-  const select = useSalesStore((s) => s.select);
-  const units = useSalesStore((s) => s.units);
-  const setUnits = useSalesStore((s) => s.setUnits);
+  // ★현장별로 읽는다 — 다른 현장으로 바꾸면 **남의 세대가 열려 있지 않다**(2026-09-09 Stage 3).
+  const selectedUnit = useSalesStore(selectSelected(siteCode));
+  const selectUnit = useSalesStore((s) => s.select);
+  const units = useSalesStore(selectUnits(siteCode));
+  const setUnitsFor = useSalesStore((s) => s.setUnits);
+  const select = (u?: Unit) => selectUnit(siteCode, u);
+  const setUnits = (u: Unit[]) => setUnitsFor(siteCode, u);
   const [d, setD] = useState<Detail | null>(null);
   // 계약 체결 진행/결과 메시지(버튼 중복클릭 방지 + 성공/실패 안내).
   const [signing, setSigning] = useState(false);

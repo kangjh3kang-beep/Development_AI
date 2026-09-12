@@ -260,8 +260,12 @@ async def my_customers(request: Request, scope: str = "site",
         target_sites = set(roles.keys())
         masked = True   # 통합은 요약만(연락처 마스킹)
 
+    # ★삭제된 현장은 이름도 주지 않는다(2026-09-12 · 리뷰 M3 — 종전엔 면제였고 그 **사유가
+    #   거짓**이었다: 상류 `_my_site_roles` 의 필터는 `SalesOrgNode.deleted_at` 이고
+    #   `SalesSite` 생존은 검증하지 않는다). 소비처는 `site_name.get(sid)`(:263) 이라 None 안전.
     site_rows = (await db.execute(select(SalesSite).where(
-        SalesSite.id.in_([uuid.UUID(s) for s in target_sites])))).scalars().all()
+        SalesSite.id.in_([uuid.UUID(s) for s in target_sites]),
+        SalesSite.deleted_at.is_(None)))).scalars().all()
     site_name = {str(s.id): s.site_name for s in site_rows}
 
     stmt = select(SalesCustomer).where(
@@ -582,8 +586,10 @@ async def work_log_summary(request: Request, period: str = "month",
         for k in total:
             total[k] += int(s.get(k, 0) or 0)
 
+    # ★삭제된 현장은 이름도 주지 않는다(리뷰 M3 — 형제 `my_customers` 와 같은 축).
     site_rows = (await db.execute(select(SalesSite).where(
-        SalesSite.id.in_([uuid.UUID(s) for s in sites])))).scalars().all()
+        SalesSite.id.in_([uuid.UUID(s) for s in sites]),
+        SalesSite.deleted_at.is_(None)))).scalars().all()
     name = {str(x.id): x.site_name for x in site_rows}
     return {"period": period, "summary": total,
             "by_site": [{"site_id": sid, "site_name": name.get(sid), **m}

@@ -87,8 +87,15 @@ async def resolve_approver_node(db: AsyncSession, site_id, user):
     if role in TENANT_SCOPED_APPROVER_ROLES:
         tenant_id = getattr(user, "tenant_id", None)
         if tenant_id is not None:
+            # ★`deleted_at` 을 **건다**(#1027 스윕). 여기서는 fail-**closed** 다 —
+            #   삭제된 현장이면 `org_id` 가 `None` 이 되고 바로 아래 `is not None` 이 False 라
+            #   **승인이 거부**된다. 그게 옳다(삭제된 현장에 사람을 넣을 이유가 없다).
+            # ★형제 `org/service.py::assign_user_to_node` 는 **반대**라 면제돼 있다 —
+            #   그쪽 술어는 `if org_id and … != …: raise` 여서 `None` 이면 **검사를 건너뛴다**(fail-open).
+            #   ***같은 모양의 조회라도 아래 술어가 방향을 뒤집는다 — 필터를 기계적으로 복사하지 마라.***
             org_id = (await db.execute(select(SalesSite.organization_id).where(
-                SalesSite.id == site_id))).scalar()
+                SalesSite.id == site_id,
+                SalesSite.deleted_at.is_(None)))).scalar()
             if org_id is not None and str(org_id) == str(tenant_id):
                 return True, None
 

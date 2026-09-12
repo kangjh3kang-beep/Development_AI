@@ -28,6 +28,8 @@ interface MySite {
   role_label?: string;
   can_manage?: boolean;
   membership?: string;
+  /** 2차 비밀번호가 설정돼 있나(백엔드 `/sales/my-sites` 가 실어 준다 · 2026-09-09). */
+  password_set?: boolean;
 }
 
 // membership(소속 유형) → 사람이 이해하는 한글 배지. 백엔드 my-sites가 부여:
@@ -200,8 +202,12 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
                         <span className="sa-dot sa-dot--success" aria-hidden /> 입장 완료
                       </span>
                     ) : (
+                      /* ★라벨이 사실과 어긋나 있었다(2026-09-09) — 진입 전 현장 **전부**에
+                           «2차 비밀번호» 를 그렸는데 라이브 14현장 중 11현장은 미설정이다.
+                           「승인이 곧 인증」 이후 그 라벨은 없는 관문을 안내한다. */
                       <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-tertiary)]">
-                        <LockKeyhole className="size-3.5" aria-hidden /> 2차 비밀번호
+                        <LockKeyhole className="size-3.5" aria-hidden />
+                        {s.password_set === false ? "승인 멤버십으로 진입" : "2차 비밀번호"}
                       </span>
                     )}
                     <span className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--accent-strong)] transition-transform group-hover:translate-x-0.5">
@@ -223,6 +229,7 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
           locale={locale}
           siteId={enterSite.site_id}
           siteName={enterSite.site_name}
+          passwordSet={enterSite.password_set}
           open={Boolean(enterSite)}
           onClose={() => setEnterSite(null)}
           onEntered={() => {

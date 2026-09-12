@@ -35,6 +35,39 @@ from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
 # ★SSOT(단일 출처): 플랫폼 User.role → sales 폴백 역할 매핑(조직노드 없을 때).
 # deps_sales 가 sales 인증의 최하위 모듈이므로 여기서 1회 정의하고, site_auth 등 상위 모듈은
 # 이 집합을 import 해 재사용한다(과거 deps_sales·site_auth 중복정의로 드리프트 위험이 있었음).
+# ★★**가입 기본값을 담지 않는다**(2026-09-12 · 사용자 결정).
+#
+#   `POST /register`(`routers/auth.py:347`)는 **새 Tenant 를 만들고** 그 사용자에게
+#   `role=UserRole.ADMIN.value`("admin") 를 준다 — 독스트링 그대로 *"Create a **tenant**
+#   admin account"*. `team_service.py:133,246` 도 팀에서 나온 사람을 **자기 개인 테넌트로
+#   복원**할 때 같은 라벨을 쓴다. 즉 `admin`·`owner` 는 **「내 테넌트의 관리자」**라는
+#   **테넌트 스코프 라벨**이다.
+#
+#   그런데 이 집합은 `resolve_site_membership` 에서 **테넌트 검사 없이**
+#   `("", "SUPERADMIN")` 을 내주는 **플랫폼 스코프 게이트**다(아래 :210). 두 스코프가
+#   같은 문자열을 공유하면 **가입한 누구나 플랫폼 전체 현장의 SUPERADMIN** 이 된다.
+#
+#   ★저장소는 이 함정을 **이미 알고 있었다** — `tier=='super_admin'` 로 판별하는 파일이
+#     **8개**이고(`billing_service.is_super_admin` · `routers/growth.py:166` ·
+#     `routers/admin_secrets.py:51` · `routers/admin_sales_rls.py:29` 등), 그 독스트링이
+#     *"role로 판별하면 모든 사용자가 플랫폼 전체를 보는 누출이 된다"* 를 명문으로 적는다.
+#     **`deps_sales` 만 role 게이트였다.**
+#
+#   ★라이브 실측(2026-09-12 · 읽기 전용): `/sales/sites`(테넌트 스코프) **13** vs
+#     `/sales/my-sites` **14** — 추가 1건의 `membership` 이 **`admin`**, 즉 이 게이트로
+#     들어온 **자기 테넌트 밖 현장**이었다.
+#
+#   ★DB 층은 막아 주지 않는다: RLS 정책에 `OR current_setting('app.role')='SUPERADMIN'`
+#     이 있고 이 파일이 **판정된 role 을 그대로 주입**한다. `sales_sites` 는 애초에
+#     정책 대상도 아니다(`site_id` 컬럼 없음).
+#
+#   ⇒ **플랫폼 전역 라벨만 남긴다.** 자기 테넌트 현장은 아래 `owns_site` 가 계속 연다
+#     (실측 13건이 그 경로). 축을 `tier` 로 옮기는 것은 **더 큰 변경이라 별건**이다.
+#
+#   ★★2026-09-12 — **값은 이제 `app/services/sales/org/roles.py`(SSOT) 에 있다.**
+#     위 근거는 그 SSOT 파일에도 함께 적어 두었다. **여기만 읽고 값을 판단하지 마라** —
+#     이 줄은 재수출일 뿐이고, `admin`·`owner` 가 다시 들어오면 그것은 **SSOT 에서** 들어온다.
+
 # ★★2026-09-09 — 정의를 **더 아래로** 내렸다(`app/services/sales/org/roles.py`).
 #   이 모듈은 스스로 «sales 인증의 최하위» 라 적었지만 FastAPI `Depends` 와 인증 서비스를
 #   끌고 온다. 그래서 **서비스 층이 상수 하나를 쓰려고 임포트하면 앱 전체가 딸려 왔다**
@@ -228,12 +261,21 @@ async def resolve_site(request: Request, db: AsyncSession) -> SalesSite:
         raise HTTPException(400, "site context missing (X-Site-Code 헤더 또는 경로 site_id 필요)")
 
     # UUID 우선 시도, 실패 시 site_code 로 조회
+    # ★★삭제된 현장은 **없는 현장**이다(2026-09-09 · 전역 스윕). 형제 `site_auth._get_site`·
+    #   `views.list_sites`·`my_sites` 는 전부 `deleted_at` 을 걸었는데 **여기만 안 걸려**
+    #   있었다 — 없는 것을 새로 만드는 것이 아니라 **있는 것을 안 쓴** 자리다.
+    #   이 함수는 요청이 준 식별자(경로·헤더·서브도메인)로 현장을 여는 **진입점**이라,
+    #   빠지면 폐지된 현장의 전 라우트가 살아 있는 것과 같다.
     try:
-        site = (await db.execute(select(SalesSite).where(SalesSite.id == uuid.UUID(str(site_code))))).scalar_one_or_none()
+        site = (await db.execute(select(SalesSite).where(
+            SalesSite.id == uuid.UUID(str(site_code)), SalesSite.deleted_at.is_(None),
+        ))).scalar_one_or_none()
     except (ValueError, TypeError):
         site = None
     if site is None:
-        site = (await db.execute(select(SalesSite).where(SalesSite.site_code == str(site_code)))).scalar_one_or_none()
+        site = (await db.execute(select(SalesSite).where(
+            SalesSite.site_code == str(site_code), SalesSite.deleted_at.is_(None),
+        ))).scalar_one_or_none()
     if not site:
         raise HTTPException(404, "site not found")
     return site
