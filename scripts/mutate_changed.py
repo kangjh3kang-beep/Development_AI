@@ -92,7 +92,7 @@ _TS_TYPE_DECL = re.compile(
 
 
 # ── 셸(.sh) 규칙 ───────────────────────────────────────────────────────────
-# ★이 저장소의 배포·롤백·감시·조율 스크립트가 전부 셸이고, 그중 **14개는 이미 pytest 락을
+# ★이 저장소의 배포·롤백·감시·조율 스크립트가 전부 셸이고, 그중 **17개는 이미 pytest 락을
 #   갖고 있다**(2026-09-12 파생 · ★**base `cd942c6ec` 의 트리에서** 잰 값 — 17/39).
 #   ★수를 인용할 때 **기준 sha 를 같이** 적는다: 처음 이 줄에 «14/35» 라 적었는데, 그것은
 #     **45커밋 뒤처진 공유 워크트리**에서 잰 값이었다(독립 리뷰 MAJOR-4). 파생식은 옳았고
@@ -134,9 +134,16 @@ def _shell_mutations_for_line(path: Path, line: str, line_no: int) -> list[Mutat
     #    ★이 저장소의 셸 락 상당수가 "위반이면 0 이 아닌 코드로 죽는다"를 계약으로 삼는다.
     #      rc 를 안 보는 테스트는 이 변이에서 **생존**하고, 그것이 정확히 구멍이다.
     #    ★`exit 0` 은 대상이 아니다(성공 경로를 실패로 만드는 것은 계약 위반이 아니라 파손).
-    killed_exit = _SH_EXIT.sub("exit 0", line)
-    if killed_exit != line:
-        out.append(Mutation("종료코드무력화", path, line, killed_exit, line_no))
+    # ★★**토큰마다 하나씩** 만든다. `sub()` 로 한꺼번에 죽이면 **두 계약이 한 변이에 묶여**
+    #   테스트가 둘 중 하나만 봐도 CAUGHT 가 나오고 나머지 한쪽의 무잠금이 **가려진다**.
+    #   ★이 PR 이 `safe-deploy.sh` 에서 찾아낸 결함(`or` 가 두 생존자를 서로 덮음)과
+    #     **같은 가림 기제**다 — 그것을 보고하면서 같은 자리를 내 도구 안에 만들고 있었다.
+    #   실측: 한 줄에 `exit N` 이 둘인 곳이 **6군데**(`safe-deploy.sh:164,229` · 계기판 4줄).
+    for mo in _SH_EXIT.finditer(line):
+        out.append(Mutation(
+            "종료코드무력화", path, line,
+            line[: mo.start()] + "exit 0" + line[mo.end():], line_no,
+        ))
 
     # ③ 줄삭제 — "정의만 하고 소비처 0" 이 여기서 드러난다.
     if _SH_ASSIGN.match(line):
@@ -154,12 +161,23 @@ def _shell_mutations_for_line(path: Path, line: str, line_no: int) -> list[Mutat
 def _mutations_for_line(path: Path, line: str, line_no: int) -> list[Mutation]:
     out: list[Mutation] = []
     stripped = line.strip()
-    if not stripped or stripped.startswith(("#", "//", "*", '"""', "'''")):
+    if not stripped:
+        return out
+    # ★★셸을 **주석 가드보다 먼저** 가른다. 그 가드는 `*` 로 시작하는 줄을
+    #   주석(JSDoc 이어짐)으로 보는데, 셸에서 `*)` 는 주석이 아니라 **`case` 의 기본 분기**다 —
+    #   이 저장소 배포 게이트의 **거부 경로**가 정확히 그 모양이다(실측 2건):
+    #     safe-deploy.sh  `*) status "FAIL unknown-target:$TARGET"; exit 1 ;;`
+    #     coord.sh        `*) echo "…판정 거부" >&2; exit 2 ;;`
+    #   그래서 종전엔 그 두 줄의 변이가 **0건**이었다(대조군 `z) exit 1 ;;` 은 생성됨).
+    #   ★**언어마다 주석 어휘가 다르다** — 한 목록으로 여러 언어를 판정하면 이렇게 왜다.
+    if path.suffix == ".sh":
+        if stripped.startswith("#"):
+            return out                    # 셸 주석은 `#` 뿐이다
+        return _shell_mutations_for_line(path, line, line_no)
+    if stripped.startswith(("#", "//", "*", '"""', "'''")):
         return out
     if path.suffix in (".ts", ".tsx") and _TS_TYPE_DECL.match(line):
         return out
-    if path.suffix == ".sh":
-        return _shell_mutations_for_line(path, line, line_no)
 
     # ① 조건을 무력화한다 — 가드가 실제로 무엇을 막는지 드러난다.
     m = _IF.match(line)
@@ -344,7 +362,7 @@ def _is_front(test: str) -> bool:
 
 
 def _audit_counts(
-    generated: int, survived: int, undecided: int, skipped: int,
+    generated: int, survived: int, undecided: int, skipped: int, truncated: int = 0,
 ) -> dict[str, int]:
     """이 실행의 **분모와 분자**. 순수 함수로 둔다 — 산수는 잠글 수 있어야 한다.
 
@@ -352,21 +370,27 @@ def _audit_counts(
       *"판정된 N건이 전부 걸렸다"* 가 **거짓 수**였다(독립 리뷰 MAJOR-2 — 실제로 돌아간 변이가
       0건인데 「판정된 2건」 + EXIT=0 이 나왔다).
     """
-    judged = generated - undecided - skipped
+    judged = generated - undecided - skipped - truncated
     return {
         "generated": generated, "judged": judged, "caught": judged - survived,
         "survived": survived, "undecided": undecided, "skipped": skipped,
+        "truncated": truncated,
     }
 
 
 def _audit_exit(counts: dict[str, int]) -> int:
     """`::AUDIT=` 계수 → 종료코드. **기계는 rc 만 본다**(모듈 독스트링의 계약).
 
-    ★`undecided`·`skipped` 가 있는데 0 을 주면 호출자에겐 「전수 CAUGHT」와 **같은 신호**다.
+    ★`undecided`·`skipped`·**`truncated`** 가 있는데 0 을 주면 호출자에겐 「전수 CAUGHT」와
+      **같은 신호**다.
+    ★★`truncated`(`--max` 절단)를 빠뜨린 판이 실제로 있었다 — 기본 `--max 60` 인데 이 저장소
+      `.sh` 전수 생성은 **2,441건**이라 **정상 사용 경로에서 97.5% 가 감사되지 않은 채 `rc=0`**
+      이 나갔다. 도구는 «전수가 아니다» 를 **산문으로** 찍고 있었고 기계는 그것을 안 읽는다
+      (독립 리뷰 R2 MAJOR-A).
     """
     if counts["survived"]:
         return 1
-    if counts["undecided"] or counts["skipped"]:
+    if counts["undecided"] or counts["skipped"] or counts["truncated"]:
         return 3
     return 0
 
@@ -602,6 +626,7 @@ def main() -> int:
     #     출력은 평온해서 "34 생존"이 전수 감사로 보고될 뻔했다. 같은 함정에 두 사람이
     #     연달아 빠졌다 — 침묵이 원인이었다.
     total_generated = len(muts)
+    dropped = 0
     if total_generated > args.max:
         dropped = total_generated - args.max
         muts = muts[: args.max]
@@ -704,7 +729,11 @@ def main() -> int:
             survived.append(m)
 
     print(f"\n{'=' * 70}")
-    counts = _audit_counts(len(muts), len(survived), len(undecided), len(skipped))
+    # ★분모는 **자르기 전 수**다. `len(muts)` 는 이미 잘린 리스트라 그것을 쓰면
+    #   `::AUDIT=generated=` 가 **거짓 분모**를 말한다(실측: 생성 9 · 출력 2).
+    counts = _audit_counts(
+        total_generated, len(survived), len(undecided), len(skipped), dropped,
+    )
     judged = counts["judged"]
     # ★★**기계 판독 줄** — 사람이 읽는 산문과 분리한다. 형제 `scripts/mutate_manual.sh` 가
     #   `::VERDICT=` 로 이미 그렇게 한다(안내문에 절대 안 쓰이는 형태).
@@ -718,6 +747,9 @@ def main() -> int:
         for m, why in undecided:
             print(f"  {m.label()}  ← {why}")
         print()
+    if dropped:
+        print(f"★`--max` 로 버린 변이 {dropped}건 — **감사되지 않았다**. "
+              "절단은 소스 순서라 뒤쪽 파일이 통째로 빠진다(rc 에 실린다).")
     if skipped:
         print(f"★건너뛴 변이 {len(skipped)}건 — 줄이 기대와 달라 **주입하지 못했다**. "
               "이 수만큼도 분모가 작다(도구 결함일 수 있으니 조용히 넘기지 마라).")

@@ -120,7 +120,7 @@ def test_syntax_gate_uses_bash_not_sh():
     """★`sh -n` 으로 짜면 **변이가 없어도** 실패하는 파일들이 전부 거짓 「판정 불가」가 된다.
 
     ★목록을 손으로 적지 않는다 — 저장소에서 **파생**시킨다.
-      (2026-09-12 실측: `sh -n` 실패 6/35 · `bash -n` 실패 0/35)
+      (2026-09-12 실측 · base `cd942c6ec`: `sh -n` 실패 **6/39** · `bash -n` 실패 **0/39**)
     """
     tracked = subprocess.run(
         ["git", "ls-files", "*.sh"],
@@ -219,6 +219,13 @@ def test_rel_test_promotes_only_unresolvable_paths():
            "이유는 「장치 부재」가 아니라 「안 쟀음」. 재서 참이 아니면 초록으로 뒤집힌다.",
 )
 def test_root_scripts_shell_also_enters_the_population(tmp_path, monkeypatch):
+    derived = subprocess.run(
+        ["git", "ls-files", "scripts/*.sh"], cwd=_REPO_ROOT,
+        capture_output=True, text=True, check=True,
+    ).stdout.split()
+    # ★사유에 개수를 **적지 않고** 여기서 파생시킨다 — 손으로 센 수는 곧 상한이 된다.
+    #   (종전 사유는 «테스트가 파생해 메시지에 싣는다» 고 **주장만** 하고 본문엔 없었다.)
+    assert derived, "루트 scripts/ 의 셸이 0건 — 조회기가 죽었다"
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "coord.sh").write_text("x\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
@@ -226,7 +233,9 @@ def test_root_scripts_shell_also_enters_the_population(tmp_path, monkeypatch):
         mc.subprocess, "run",
         lambda cmd, *a, **kw: subprocess.CompletedProcess(cmd, 0, "scripts/coord.sh\n", ""),
     )
-    assert [p.name for p in mc._changed_files("BASE")] == ["coord.sh"]
+    assert [p.name for p in mc._changed_files("BASE")] == ["coord.sh"], (
+        f"루트 scripts/ 의 셸 {len(derived)}건이 여전히 모집단 밖이다"
+    )
 
 
 @pytest.mark.xfail(
@@ -529,45 +538,49 @@ def test_shell_string_rule_has_two_populations(line, should_fire):
 
 # ── ⑬ 계수와 rc — **순수 함수로 잠근다**(산수는 잠글 수 있어야 한다) ──────────
 @pytest.mark.parametrize(
-    ("gen", "surv", "und", "skip", "want_judged", "want_caught"),
+    ("gen", "surv", "und", "skip", "trunc", "want_judged", "want_caught"),
     [
-        (10, 0, 0, 0, 10, 10),
-        (10, 3, 0, 0, 10, 7),
-        (10, 0, 4, 0, 6, 6),     # ★판정 불가는 분모에서 빠진다
-        (10, 0, 0, 2, 8, 8),     # ★★건너뜀도 분모에서 빠진다(종전엔 안 뺐다 — 거짓 수)
-        (10, 1, 4, 2, 4, 3),
+        (10, 0, 0, 0, 0, 10, 10),
+        (10, 3, 0, 0, 0, 10, 7),
+        (10, 0, 4, 0, 0, 6, 6),     # ★판정 불가는 분모에서 빠진다
+        (10, 0, 0, 2, 0, 8, 8),     # ★★건너뜀도 분모에서 빠진다(종전엔 안 뺐다 — 거짓 수)
+        (10, 0, 0, 0, 7, 3, 3),     # ★★★`--max` 절단도 — 기본 60 인데 셸 전수는 2,441건이다
+        (10, 1, 4, 2, 1, 3, 2),
     ],
 )
 def test_audit_counts_removes_unaudited_from_the_denominator(
-    gen, surv, und, skip, want_judged, want_caught,
+    gen, surv, und, skip, trunc, want_judged, want_caught,
 ):
-    c = mc._audit_counts(gen, surv, und, skip)
+    c = mc._audit_counts(gen, surv, und, skip, trunc)
     assert c["judged"] == want_judged, c
     assert c["caught"] == want_caught, c
     # ★항등식 — 분자들의 합이 분모를 넘지 않는다(계수가 서로 모순되지 않는다).
     assert c["caught"] + c["survived"] == c["judged"], c
-    assert c["judged"] + c["undecided"] + c["skipped"] == c["generated"], c
+    assert (
+        c["judged"] + c["undecided"] + c["skipped"] + c["truncated"] == c["generated"]
+    ), c
 
 
 @pytest.mark.parametrize(
-    ("surv", "und", "skip", "want_rc"),
+    ("surv", "und", "skip", "trunc", "want_rc"),
     [
-        (0, 0, 0, 0),   # 전부 걸렸고 감사 안 된 것 없음 → 초록
-        (2, 0, 0, 1),   # 생존 있음
-        (0, 1, 0, 3),   # ★판정 불가만 → **0 이면 안 된다**(전수 CAUGHT 와 같은 신호가 된다)
-        (0, 0, 1, 3),   # ★건너뜀만 → 마찬가지
-        (2, 5, 5, 1),   # 생존이 우선(가장 시끄러운 신호)
+        (0, 0, 0, 0, 0),   # 전부 걸렸고 감사 안 된 것 없음 → 초록
+        (2, 0, 0, 0, 1),   # 생존 있음
+        (0, 1, 0, 0, 3),   # ★판정 불가만 → **0 이면 안 된다**(전수 CAUGHT 와 같은 신호가 된다)
+        (0, 0, 1, 0, 3),   # ★건너뜀만 → 마찬가지
+        (0, 0, 0, 1, 3),   # ★★`--max` 절단만 → **기본 사용 경로**가 여기 걸린다
+        (2, 5, 5, 5, 1),   # 생존이 우선(가장 시끄러운 신호)
     ],
 )
-def test_audit_exit_puts_unaudited_work_on_the_return_code(surv, und, skip, want_rc):
-    counts = mc._audit_counts(10, surv, und, skip)
+def test_audit_exit_puts_unaudited_work_on_the_return_code(surv, und, skip, trunc, want_rc):
+    counts = mc._audit_counts(10, surv, und, skip, trunc)
     assert mc._audit_exit(counts) == want_rc, counts
 
 
 @pytest.mark.xfail(
     strict=True,
     reason="★부채(대칭 표기): 셸에는 `.py` 의 `_docstring_line_nos` 에 해당하는 장치가 없어 "
-           "**heredoc 내부 줄이 변이 대상으로 들어온다**(실행 파일 기준 87줄 실측). "
+           "**heredoc 내부 줄이 변이 대상으로 들어온다**(실행 파일 기준 **83줄이 87변이**를 낳는다 — 줄 수와 변이 수는 다른 단위다). "
            "구문 게이트가 일부를 잡고 전체 판정불가율은 5%로 낮아 **당장의 소음은 작지만**, "
            "부채를 산문으로만 두면 드러나지 않으므로 초록 안에 세워 둔다.",
 )
@@ -593,3 +606,177 @@ def test_heredoc_body_is_not_mutated(tmp_path):
         for m in mc._mutations_for_line(f, ln, i)
     ]
     assert not inside, f"heredoc 본문이 변이 대상으로 들어왔다: {[(m.kind, m.new) for m in inside]}"
+
+
+# ── ⑭ MAJOR-A — **`--max` 절단**도 감사되지 않은 일이다(rc 와 분모에 실린다) ──────
+def _synth_repo(tmp_path, name, sh_body, test_body):
+    repo = tmp_path / name
+    (repo / "tests").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
+    _git("config", "user.email", "t@t", cwd=repo)
+    _git("config", "user.name", "t", cwd=repo)
+    (repo / "tests" / "test_g.py").write_text(test_body, encoding="utf-8")
+    _git("add", "-A", cwd=repo)
+    _git("commit", "-qm", "base", cwd=repo)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    target = "g.sh" if sh_body.startswith("#!") else "m.py"
+    (repo / target).write_text(sh_body, encoding="utf-8")
+    _git("add", target, cwd=repo)          # ★9조 §3 — 미추적은 변이 대상 0건
+    return repo, base
+
+
+def _run_tool(repo, base, *extra):
+    return subprocess.run(
+        [sys.executable, str(_TOOL), "--base", base,
+         "--tests", "tests/test_g.py", "--cwd", ".", *extra],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+
+
+_ALL_EXITS_LOCKED = (
+    "import pathlib\n"
+    "def test_all_exits_present():\n"
+    "    src = pathlib.Path('g.sh').read_text(encoding='utf-8')\n"
+    "    for n in ('1', '2', '3', '9'):\n"
+    "        assert 'exit ' + n in src\n"
+)
+_FOUR_EXITS = "#!/usr/bin/env bash\nexit 1\nexit 2\nexit 3\nexit 9\n"
+
+
+def test_max_truncation_is_counted_and_lands_on_the_return_code(tmp_path):
+    """★`--max` 로 버린 변이는 **감사되지 않았다** — 그런데 종전엔 어느 통에도 안 들어갔다.
+
+    ★★실해가 크다: 기본값은 `--max 60` 인데 이 저장소 `.sh` 전수 생성은 **2,441건**이다.
+      즉 **정상 사용 경로에서 97.5% 가 감사되지 않은 채 `rc=0`** 이 나갔다. 도구는
+      «전수가 아니다» 를 **산문으로** 찍고 있었고, **기계는 산문을 안 읽는다**(리뷰 R2 MAJOR-A).
+    """
+    repo, base = _synth_repo(tmp_path, "trunc", _FOUR_EXITS, _ALL_EXITS_LOCKED)
+
+    cut = _run_tool(repo, base, "--max", "2")
+    out = cut.stdout + cut.stderr
+    audit = re.search(r"^::AUDIT=(.+)$", out, re.M)
+    assert audit, f"::AUDIT= 가 없다:\n{out}"
+    fields = dict(kv.split("=", 1) for kv in audit.group(1).split())
+    # ★분모는 **자르기 전 수**여야 한다 — 잘린 리스트를 세면 기계 줄이 거짓말을 한다.
+    assert fields["generated"] == "4", f"거짓 분모: {fields}"
+    assert fields["truncated"] == "2", fields
+    assert cut.returncode == 3, f"절단됐는데 rc={cut.returncode}\n{out}"
+
+    # ★대조군 — **같은 저장소·같은 변이**인데 절단만 없애면 `rc=0`. 차가 0인 픽스처가 아니다.
+    full = _run_tool(repo, base, "--max", "50")
+    fout = full.stdout + full.stderr
+    faudit = re.search(r"^::AUDIT=(.+)$", fout, re.M)
+    assert faudit and "truncated=0" in faudit.group(1), fout
+    assert full.returncode == 0, f"절단이 없는데 rc={full.returncode}\n{fout}"
+
+
+# ── ⑮ MAJOR-B — 판정 불가 배선이 **`.py` 축에서도** 살아 있는가 ──────────────────
+def test_undecided_wiring_is_alive_for_python_too(tmp_path):
+    """★처방 범위 = 결함 범위. 종단 락이 **셋 다 `.sh`** 라, 배선을 `.py` 에서만 되돌려도
+    전부 초록이었다(리뷰 R2 MAJOR-B — `and m.path.suffix != ".py"` 한 줄로 거짓 CAUGHT 복원).
+
+    ★이 저장소는 **압도적 다수 변이가 `.py`** 라 무잠금 면적이 셸보다 넓다.
+    """
+    # ★블록의 **유일한 문장**이어야 그 줄을 지우면 IndentationError 가 난다.
+    #   `return x` 를 남기면 지워도 **구문이 유효**해서 이 락이 재려는 상황이 안 만들어진다
+    #   (처음에 그렇게 썼다 — 픽스처가 부채를 안 가리면 락은 장식이다).
+    body = "def f():\n    x = 5\n"
+    test_body = (
+        "import pathlib\n"
+        "def test_body_present():\n"
+        "    assert 'x = 5' in pathlib.Path('m.py').read_text(encoding='utf-8')\n"
+    )
+    repo, base = _synth_repo(tmp_path, "pyrepo", body, test_body)
+    r = _run_tool(repo, base, "--max", "50")
+    out = r.stdout + r.stderr
+    verdicts = _verdicts(out)
+    assert "판정불가" in verdicts.values(), (
+        f"★`.py` 에서 구문 파손 변이가 **거짓 CAUGHT 로 되돌아갔다**:\n{out}"
+    )
+    assert r.returncode == 3, f"rc={r.returncode} · 기대 3\n{out}"
+
+
+# ── ⑯ MEDIUM-D — 셸 `case` 기본절 `*)` 은 **주석이 아니다** ──────────────────────
+@pytest.mark.parametrize(
+    ("line", "should_fire"),
+    [
+        ('*) status "FAIL unknown"; exit 1 ;;', True),   # ★배포 게이트의 **거부 경로**
+        ("z) exit 1 ;;", True),                          # 대조군(원래 잡히던 모양)
+        ("# exit 1", False),                             # 셸 주석은 `#` 뿐이다
+    ],
+)
+def test_shell_case_default_is_not_treated_as_a_comment(line, should_fire):
+    got = [
+        m for m in mc._mutations_for_line(pathlib.Path("d.sh"), line, 1)
+        if m.kind == "종료코드무력화"
+    ]
+    assert bool(got) is should_fire, f"{line!r} → {[(m.kind, m.new) for m in got]}"
+
+
+def test_jsdoc_continuation_is_still_a_comment_outside_shell():
+    """★대조군 — 셸을 먼저 가른다고 해서 **다른 언어의 주석 판정이 느슨해지면** 안 된다."""
+    assert not mc._mutations_for_line(pathlib.Path("a.ts"), " * 이것은 JSDoc 이어짐이다", 1)
+
+
+# ── ⑰ MEDIUM-E — 한 줄에 `exit` 이 둘이면 **변이도 둘** ────────────────────────
+def test_each_exit_token_gets_its_own_mutation():
+    """★한 변이로 둘을 같이 죽이면 테스트가 **둘 중 하나만 봐도 CAUGHT** 라, 나머지 한쪽의
+    무잠금이 **가려진다**. 이 PR 이 `safe-deploy.sh` 에서 찾아낸 `or` 결함과 같은 기제다.
+    """
+    line = "both) a || exit 1; b || exit 2 ;;"
+    got = [
+        m for m in mc._mutations_for_line(pathlib.Path("d.sh"), line, 1)
+        if m.kind == "종료코드무력화"
+    ]
+    assert len(got) == 2, f"토큰 2개인데 변이 {len(got)}건: {[m.new for m in got]}"
+    news = {m.new for m in got}
+    assert len(news) == 2, f"두 변이가 같다(뭉쳤다): {news}"
+    # ★각 변이는 **정확히 한쪽만** 죽인다.
+    assert "both) a || exit 0; b || exit 2 ;;" in news, news
+    assert "both) a || exit 1; b || exit 0 ;;" in news, news
+
+
+# ── ⑱ MINOR — 저자가 「…한다」고 쓴 동작 주장에 각각 변이를 넣을 자리 ─────────────
+def test_tests_referencing_uses_fixed_string_not_regex(tmp_path, monkeypatch):
+    """독스트링이 *"고정문자열(`-F`)로 찾는다"* 고 **주장**한다 — 그 주장을 잠근다(§G-30).
+
+    정규식으로 읽히면 `a-b.sh` 의 `.` 이 임의 문자가 되어 `a-bXsh` 를 집는다.
+    """
+    monkeypatch.chdir(_REPO_ROOT)
+    captured: list[list[str]] = []
+    real = mc.subprocess.run
+
+    def spy(cmd, *a, **kw):
+        if cmd and cmd[0] == "git" and "grep" in cmd:
+            captured.append(list(cmd))
+        return real(cmd, *a, **kw)
+
+    monkeypatch.setattr(mc.subprocess, "run", spy)
+    mc._tests_referencing(pathlib.Path("propai-platform/scripts/safe-deploy.sh"))
+    assert captured, "git grep 을 부르지 않았다 — 조회 축이 바뀌었다"
+    assert "-F" in captured[0], f"고정문자열 플래그가 없다(정규식으로 읽힌다): {captured[0]}"
+
+
+def test_rel_test_does_not_fabricate_paths_that_do_not_exist():
+    """★없는 경로를 **날조 절대경로**로 바꾸면 pytest 의 «file not found» 가 엉뚱한 곳을
+    가리켜 「기준선 실패」 진단이 틀린다.
+    """
+    cwd = pathlib.Path("propai-platform/apps/api")
+    ghost = f"zz-{uuid.uuid4().hex}/test_nope.py"
+    assert mc._rel_test(ghost, cwd) == ghost, "존재하지 않는 경로를 절대경로로 날조했다"
+
+
+@pytest.mark.parametrize(
+    ("src", "line_no", "new", "want"),
+    [
+        ("a\r\nb\r\n", 1, "Z", "Z\r\nb\r\n"),   # ★CRLF 보존
+        ("a\nb", 2, "Z", "a\nZ"),                # ★마지막 줄 개행 없음 — 만들어 내지 않는다
+        ("a\nb\n", 2, "", "a\n\n"),              # 줄삭제는 **빈 줄**을 남긴다
+    ],
+)
+def test_apply_at_line_preserves_line_endings(src, line_no, new, want):
+    body = src.splitlines()[line_no - 1]
+    m = mc.Mutation("줄삭제", pathlib.Path("x.sh"), body, new, line_no)
+    assert mc._apply_at_line(src, m) == want
