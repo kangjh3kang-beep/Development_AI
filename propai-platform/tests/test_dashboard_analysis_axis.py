@@ -531,3 +531,42 @@ def test_absent_constant_is_not_silently_shadowed():
                 "`test_shell_literal_and_python_constant_are_one_contract` 와 같은 락이 필요하다"),
         where="integrator_dashboard.sh",
     )
+
+def test_the_absence_guard_actually_detects_a_violation():
+    """★★**탐지 축** — 부재 단언은 「위반이 있으면 정말 터지는가」를 따로 잠가야 한다.
+
+    ★변이 실측(2026-09-12 R2): `assert_absent` 의 **패턴만** 매칭 0 짜리로 약화하면
+      **SURVIVED** 였다. `positive_control` 은 «조회기가 살아 있나」를 보지
+      «내 패턴이 그 위반을 집는가」를 보지 **않는다** — 둘은 다른 축이다.
+      ***특이도(위반 0)만 있고 탐지(위반이 있으면 터진다)가 없으면, 패턴이 죽어도 초록이다.***
+
+    ⇒ **합성 위반**을 만들어 가드가 실제로 터지는지 태운다(저장소 §가드 3축: 탐지·특이도·배선).
+    """
+    import re as _re
+
+    from tests import _scan_guard as sg
+
+    probe = PROBE.read_text(encoding="utf-8")
+    absent_value = _re.search(r'^ASTATE_ABSENT\s*=\s*"([^"]+)"', probe, _re.M).group(1)
+
+    def _guard(text: str):
+        """프로덕션 락과 **같은 패턴**을 쓴다 — 사본이 갈리면 이 락이 장식이 된다."""
+        return sg.assert_absent(
+            sg.code_lines(text),
+            pattern=_re.compile(r'(?:^|[;&|]\s*)ASTATE=([\'"])' + _re.escape(absent_value) + r'\1', _re.M),
+            positive_control=_re.compile(r'(?:^|[;&|]\s*)ASTATE=[\'"]', _re.M),
+            reason="합성 탐지 테스트",
+        )
+
+    # ① 위반이 있으면 **AssertionError** 로 터진다(탐지)
+    violating = f'ASTATE="ok"\nASTATE="{absent_value}"\n'
+    with pytest.raises(AssertionError) as ei:
+        _guard(violating)
+    assert not isinstance(ei.value, sg.ScannerDeadError), "★위반인데 「조회기 사망」으로 던졌다"
+
+    # ② 위반이 없으면 **통과**한다(특이도 — 위양성도 결함이다)
+    _guard('ASTATE="(필드없음)"\nASTATE="starved"\n')
+
+    # ③ ★조회기가 죽으면 **다른 예외**로 갈라 던진다(0 과 뭉치지 않는다)
+    with pytest.raises(sg.ScannerDeadError):
+        _guard('echo "대입이 하나도 없다"\n')
