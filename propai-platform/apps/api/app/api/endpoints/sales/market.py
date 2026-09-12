@@ -38,6 +38,17 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+
+# ★노드 생성은 **공용 함수 하나**를 경유한다(2026-09-08) — 종전 raw INSERT 가 루트 고아를
+#   만들어 수수료 RESIDUAL 전액이 신입에게 귀속됐다. create_node 가 루트 규칙을 강제한다.
+from app.services.sales.org.service import create_node
+from apps.api.database.models.sales.site_org import SalesOrgMembershipHistory
+
+# ★멤버십 판정은 **`active = true AND deleted_at IS NULL`** 두 조건을 함께 본다(2026-09-08).
+#   형제 3곳(`deps_sales.py:186-190` · `site_auth.py:233-235` · `crm_enhance.py:148-149`)은
+#   이미 둘 다 보는데 이 파일만 `active` 만 봤다. 범용 소프트삭제(`crud/base.py:62`)는
+#   `deleted_at` 만 세우고 `active` 를 안 내리므로 **«삭제됐는데 active=true»** 상태가 실재할 수
+#   있고, 그러면 해촉된 사람이 옛 현장 집계를 계속 보게 된다.
 from apps.api.database.sales_market_ddl import INDEX_DDLS, TABLE_DDLS  # DDL/인덱스 SSOT(036 과 공유)
 
 logger = logging.getLogger(__name__)
@@ -623,24 +634,74 @@ async def decide_application(application_id: uuid.UUID, body: DecideRequest,
     new_status = "accepted" if body.accept else "rejected"
     # 멱등 — 이미 동일 상태면 재실행해도 부작용 없이 현재 상태 반환
     if row[3] == new_status:
-        return {"id": str(application_id), "status": new_status, "idempotent": True, "membership_linked": False}
+        return {"id": str(application_id), "status": new_status, "idempotent": True,
+                "membership_linked": False, "membership_reason": "IDEMPOTENT_NO_CHANGE"}
 
     await db.execute(text(
         "UPDATE job_applications SET status = :st, updated_at = now() WHERE id = :id"),
         {"st": new_status, "id": str(application_id)})
 
-    membership_linked = False
+    # ★거절은 «해당 없음» 이 아니다 — 기계 변이가 이 줄의 생존으로 짚어 준 자리다(2026-09-08).
+    #   앞 판은 거절에도 `NOT_APPLICABLE`(현장 비연계 공고라 멤버십이 생길 일이 없다)을 실어,
+    #   **필드가 거짓말을 했다.** 화면이 accept 일 때만 읽으니 눈에 안 띄지만,
+    #   로그·감사로 이 값을 보는 쪽에는 «왜 안 붙었나» 가 틀린 답으로 남는다.
+    membership_reason = "DECLINED"
     if body.accept:
-        membership_linked = await _link_membership_on_accept(
+        membership_reason = await _link_membership_on_accept(
             db, site_id=row[5], applicant_user_id=row[2], post_kind=row[6], decider=user)
     await db.commit()
+    # ★bool 은 사유에서 **파생**한다 — 두 값이 갈릴 수 없게(기존 소비처의 계약은 그대로).
     return {"id": str(application_id), "status": new_status, "idempotent": False,
-            "membership_linked": membership_linked}
+            "membership_linked": membership_reason in _LINKED_REASONS,
+            "membership_reason": membership_reason}
+
+
+# ★멤버십 연결 **사유** — «연결 안 됨» 한 값이 서로 다른 여섯 상황을 덮고 있었다(2026-09-08 리뷰 M2).
+#   특히 `ORG_NOT_SEEDED` 는 **조치가 있는** 상태(조직도 시드 후 재시도)인데,
+#   `NOT_AUTHORIZED`(권한 없음)·`ORG_TABLE_MISSING`(이 현장은 조직도를 안 쓴다)과 같은 값으로 나갔다.
+#   ★그리고 라이브 13현장 중 10현장이 조직도 미시드라 **`ORG_NOT_SEEDED` 가 기본 경로**다.
+#
+#   ★이 튜플이 **사유의 SSOT** 다 — 프론트(`lib/sales-app/membership-reason.ts`)가 여기서 파생하고,
+#   `tests/test_membership_reason_axis.py` 가 «함수가 내는 값 ⊆ 이 목록» 을 AST 로 잠근다.
+#
+# ══ 변이 생존을 **설명한다**(2026-09-08 · 4차 실행 60변이 중 생존 15건) ══════════════════
+#   도구가 요구하는 대로, 남은 생존이 «구멍» 인지 «태울 수 없는 것» 인지 여기에 적는다.
+#   26 → 22 → 18 → **15** 로 줄였고, 남은 15건은 두 부류뿐이다:
+#
+#   ① **SQL 문자열 리터럴 8건**(이 파일의 `sales_org_nodes` 조회들 · `nlevel(path)` 정렬 등)
+#      — 이 술어들의 의미는 **Postgres+ltree 가 있어야** 갈린다. 대역(fake db)은 SQL 을
+#        해석하지 않으므로 문자열을 바꿔도 결과가 같다. 즉 **락을 더 써도 못 잡는다.**
+#      ⇒ 계획서 §5 「부채」 표에 «승인 경로 DB 통합 테스트 부재 = 미측정» 으로 올려 뒀다.
+#        정직한 상태는 «잠갔다» 가 아니라 **«이 축은 아직 안 재 봤다»** 다.
+#      ★그래도 **구조는 잠갔다**: 소프트삭제 조건 누락(`test_org_membership_queries_...`)과
+#        raw INSERT 재등장(`test_no_raw_insert_into_org_nodes_...`)은 조회문 단위로 잡힌다.
+#
+#   ② **사용자 안내·로그 문구 4건**(아래 `logger.warning` 두 줄 포함)
+#      — 저장소 규율이 명시한다: *"산문까지 단언하지 마라 — 계약이 아니라 표현이라
+#        다듬을 때마다 깨지는 취약한 락이 된다."* 계약은 **사유 코드**(`_MEMBERSHIP_REASONS`)로
+#        이미 잠겨 있고, 문구는 그 코드의 **표시**일 뿐이다.
+#      ★단 «문구가 서로 달라야 한다» 는 **속성**이라 프론트에서 잠갔다
+#        (`membership-reason.test.ts` — 같은 문구로 뭉개면 빨개진다).
+# ═══════════════════════════════════════════════════════════════════════════════════
+_MEMBERSHIP_REASONS = (
+    "LINKED",                 # 새 MEMBER 노드를 만들어 붙였다
+    "ALREADY_MEMBER",         # 이미 이 현장의 active 멤버다(멱등)
+    "NOT_APPLICABLE",         # 현장 비연계 공고 — 멤버십이 생길 일이 없다
+    "NOT_AUTHORIZED",         # 공고 작성자이나 이 현장의 관리자가 아니다
+    "ORG_NOT_SEEDED",         # ★조치 가능 — 조직도를 시드하고 다시 승인하면 된다
+    "ORG_TABLE_MISSING",      # 이 현장(설치)은 조직도 자체를 안 쓴다
+    "IDEMPOTENT_NO_CHANGE",   # 이미 같은 상태라 결정 자체가 무변경이었다
+    "DECLINED",               # 승인이 아니라 **거절**이다(멤버십을 만들 이유가 없다)
+)
+_LINKED_REASONS = frozenset({"LINKED", "ALREADY_MEMBER"})
 
 
 async def _link_membership_on_accept(db: AsyncSession, site_id, applicant_user_id,
-                                     post_kind: str, decider) -> bool:
+                                     post_kind: str, decider) -> str:
     """채용연계 — accept 시 기존 조직도(SalesOrgNode)에 멤버십을 best-effort 연결.
+
+    ★반환은 **사유 문자열**이다(종전 bool). 연결로 치는 값은 `_LINKED_REASONS` 두 개뿐이고,
+      나머지는 각각 다른 조치를 뜻한다 — 자세한 것은 위 상수 주석.
 
     안전조건(모두 충족해야 연결, 아니면 noop):
       - 공고에 site_id 가 있고(현장연계 공고)
@@ -657,7 +718,8 @@ async def _link_membership_on_accept(db: AsyncSession, site_id, applicant_user_i
           실패했는데 'accepted' 만 커밋되는 은폐를 막는다(운영자가 실패를 인지하도록).
     """
     if site_id is None or post_kind not in {"hire", "recruit_agency"}:
-        return False
+        # 현장 비연계 공고이거나 채용 종류가 아니다 — 애초에 멤버십이 생길 일이 없다.
+        return "NOT_APPLICABLE"
     try:
         # 결정자가 해당 현장의 관리자(노드 또는 플랫폼 역할)인지 확인
         decider_role = (getattr(decider, "role", "") or "").lower()
@@ -665,40 +727,72 @@ async def _link_membership_on_accept(db: AsyncSession, site_id, applicant_user_i
         if not is_admin:
             mgr = (await db.execute(text(
                 "SELECT node_type FROM sales_org_nodes"
-                " WHERE site_id = :sid AND user_id = :uid AND active = true"),
+                " WHERE site_id = :sid AND user_id = :uid AND active = true AND deleted_at IS NULL"),
                 {"sid": str(site_id), "uid": str(decider.id)})).first()
             is_admin = bool(mgr and str(mgr[0]) in {
                 "AGENCY", "SUBAGENCY", "GM_DIRECTOR", "DIRECTOR", "TEAM_LEADER"})
         if not is_admin:
-            return False
+            # 공고 작성자이긴 하나 **이 현장의 관리자가 아니다** — 조직도에 손댈 자격이 없다.
+            return "NOT_AUTHORIZED"
 
         # 이미 멤버면 noop(멱등)
         existing = (await db.execute(text(
-            "SELECT id FROM sales_org_nodes WHERE site_id = :sid AND user_id = :uid AND active = true"),
+            "SELECT id FROM sales_org_nodes WHERE site_id = :sid AND user_id = :uid"
+            " AND active = true AND deleted_at IS NULL"),
             {"sid": str(site_id), "uid": str(applicant_user_id)})).first()
         if existing:
-            return True
+            return "ALREADY_MEMBER"
 
-        # 신규 MEMBER 노드 생성 — ltree path 는 현장 루트 하위 단순경로(고유 라벨).
-        # ★라벨은 영문 'm' 접두(영숫자) — 숫자 시작 라벨은 text2ltree 캐스트가 거부하므로 접두로 방지.
-        node_id = uuid.uuid4()
-        label = f"m{str(node_id).replace('-', '')[:16]}"
+        # ★★신규 MEMBER 노드는 **공용 생성 함수를 경유한다**(2026-09-08).
+        #
+        # 종전엔 여기서 raw INSERT 로 `path = 라벨 1개` · `parent_id` 미지정 =  **루트 고아 노드**를
+        # 만들었다. 그런데 정산(`commission/engine.py:163-182`)은 `chain[0]` 을 대행사로 보므로
+        # 루트 노드로 계약이 체결되면 `chain=[자기자신]` → `allocated=0` → **`residual = total`**
+        # 이 그 신입에게 `basis="RESIDUAL"` 로 꽂힌다 — **대행사·본부장·팀장 배분 0원.**
+        #
+        # ★같은 테이블의 다른 생산자(`actions.add_node`)는 **루트 생성 시 AGENCY 아니면 400** 이었다.
+        #   두 생산자가 정반대 규칙을 갖고 있었고 **규칙 없는 쪽이 라이브 배선돼 있었다.**
+        #   ⇒ 이제 `create_node` 자신이 그 규칙을 강제하므로 이 경로도 자동으로 따라온다.
+        #
+        # ★**부모는 승인자의 노드**다. 위에서 이미 «결정자가 이 현장 관리자인가» 를 확인했으므로
+        #   그 노드가 곧 sponsor 이고, 그러면 수수료 체인이 **처음부터 대행사를 루트로** 갖는다.
+        #   승인자가 플랫폼 역할(SUPERADMIN 등)이라 조직도 노드가 없으면 **현장의 AGENCY 루트**에 붙인다.
+        parent_row = (await db.execute(text(
+            "SELECT id FROM sales_org_nodes"
+            " WHERE site_id = :sid AND user_id = :uid AND active = true AND deleted_at IS NULL"
+            " ORDER BY nlevel(path) ASC LIMIT 1"),
+            {"sid": str(site_id), "uid": str(decider.id)})).first()
+        if parent_row is None:
+            # 승인자가 조직도에 없다(플랫폼 관리자) → 현장의 대행사 루트를 부모로.
+            parent_row = (await db.execute(text(
+                "SELECT id FROM sales_org_nodes"
+                " WHERE site_id = :sid AND node_type = 'AGENCY' AND active = true"
+                " AND deleted_at IS NULL ORDER BY nlevel(path) ASC LIMIT 1"),
+                {"sid": str(site_id)})).first()
+        if parent_row is None:
+            # ★붙일 자리가 없다 — 조직도가 아직 없는 현장이다. **고아를 만들지 않는다.**
+            #   조용히 루트를 만드는 것이 바로 이 결함이었다(§돈).
+            logger.warning(
+                "채용연계: 현장 %s 에 상위 노드가 없어 멤버십 연결을 보류한다"
+                " (조직도 시드 후 재시도 필요) — 고아 루트 노드를 만들지 않는다", site_id)
+            # ★**보류**다 — 실패도, 해당없음도 아니다. 조직도를 시드하면 재시도로 해결된다.
+            return "ORG_NOT_SEEDED"
+
         name_row = (await db.execute(text("SELECT name FROM users WHERE id = :uid"),
                                      {"uid": str(applicant_user_id)})).first()
         display = name_row[0] if name_row else None
-        await db.execute(text(
-            "INSERT INTO sales_org_nodes (id, site_id, node_type, path, user_id, display_name, active)"
-            " VALUES (:id, :sid, 'MEMBER', :path::ltree, :uid, :nm, true)"),
-            {"id": str(node_id), "sid": str(site_id), "path": label,
-             "uid": str(applicant_user_id), "nm": display})
+        node = await create_node(db, site_id, "MEMBER", parent_id=parent_row[0],
+                                 user_id=applicant_user_id, display_name=display)
+        db.add(SalesOrgMembershipHistory(node_id=node.id, action="ASSIGN",
+                                         to_path=str(node.path), by=decider.id))
         # MGM 추천코드 귀속은 Phase1-C referral 모듈로 구현됨(고객 방문/계약 경로에서 귀속).
         # 채용(B2B)은 고객귀속과 별개 흐름이므로 여기서는 멤버십 연결만 수행한다.
-        return True
+        return "LINKED"
     except Exception as e:  # noqa: BLE001 — 분류: 정상 noop(테이블부재)만 흡수, 실오류는 전파
         code = _missing_object_sqlstate(e)
         if code:
             logger.info("채용연계: 조직 테이블 미존재(%s) — 조직도 미설치 현장, 멤버십 연결 noop", code)
-            return False
+            return "ORG_TABLE_MISSING"
         logger.exception("채용연계: 멤버십 연결 실패(테이블부재 외 오류 — 전파, 채용결정과 함께 롤백)")
         raise
 
@@ -774,7 +868,8 @@ async def _managed_site_ids(db: AsyncSession, user) -> list[str]:
     """내가 관리(또는 멤버)하는 현장 목록 — 조직도 노드 + 소유 현장(테넌트) union."""
     sids: set[str] = set()
     rows = (await db.execute(text(
-        "SELECT DISTINCT site_id FROM sales_org_nodes WHERE user_id = :uid AND active = true"),
+        "SELECT DISTINCT site_id FROM sales_org_nodes WHERE user_id = :uid"
+        " AND active = true AND deleted_at IS NULL"),
         {"uid": str(user.id)})).all()
     for r in rows:
         if r[0]:
@@ -801,7 +896,8 @@ async def _site_staff_summary(db: AsyncSession, site_id: str) -> SiteStaffSummar
       42703 까지 흡수하면 '있어야 할 컬럼이 사라진' 진짜 결함이 '계약/매출 0' 으로 은폐된다.
     """
     member_cnt = (await db.execute(text(
-        "SELECT count(*) FROM sales_org_nodes WHERE site_id = :sid AND active = true"),
+        "SELECT count(*) FROM sales_org_nodes WHERE site_id = :sid"
+        " AND active = true AND deleted_at IS NULL"),
         {"sid": site_id})).scalar() or 0
     site_name = (await db.execute(text(
         "SELECT site_name FROM sales_sites WHERE id = :sid"), {"sid": site_id})).scalar()
