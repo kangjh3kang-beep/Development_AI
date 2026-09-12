@@ -1975,6 +1975,29 @@ async def test_default_source_says_why_it_fell_back(monkeypatch) -> None:
     assert "값 채택 불가" in str(inc_u.get("cap_rate_source") or ""), inc_u.get("cap_rate_source")
     assert "값 채택 불가" in str(inc_u.get("deposit_conv_source") or ""), inc_u.get("deposit_conv_source")
 
+    # ★★**세 번째 모집단** — 축 선택을 실제로 가르는 유일한 조합(자기적용 변이 2026-09-12).
+    #   위 두 모집단에서는 `_statbl(kind)` 와 `rone_available` 이 **같은 답**을 내므로
+    #   축을 바꾸는 변이가 **등가**로 나왔다(실측: 두 형태 모두 SURVIVED).
+    #   R10 이 지적한 결함은 «`rone_available` 은 **다섯 통계의 OR**» 이라는 것이고,
+    #   그것이 드러나는 조합은 **한 통계표만 미설정이고 다른 통계는 살아 있는** 경우뿐이다.
+    #   ⇒ 그 조합을 만든다: 지가변동률은 살아 있고(→ `rone_available` True)
+    #     전월세·상업용 통계표만 **미설정**(→ 정답은 «미설정», 틀린 답은 «값 채택 불가»).
+    _patch_rone(monkeypatch, _many_months("서울", rate=0.5))   # trend 생존 → rone_available True
+    _patch_statbl(monkeypatch, [])
+    monkeypatch.setattr(_rs, "_statbl",
+                        lambda key: "" if key in ("jeonse_conv", "commercial_yield") else "DUMMY_ID")
+    mixed = await desk_appraisal(address="서울특별시 강남구 1", area_sqm=500.0,
+                                 official_price_per_sqm=1_000_000.0,
+                                 monthly_rent_won=5_000_000, deposit_won=100_000_000)
+    inc_m = mixed.get("income") or {}
+    # ★공허 방지 — 이 모집단이 실제로 «다른 통계는 살아 있는» 상태인가.
+    assert (mixed.get("market_stats") or {}).get("rone_available") is True, mixed.get("market_stats")
+    assert "R-ONE 미설정" in str(inc_m.get("cap_rate_source") or ""), (
+        f"통계표가 미설정인데 「값 채택 불가」라고 말했다(축이 rone_available 로 되돌아갔다): "
+        f"{inc_m.get('cap_rate_source')}"
+    )
+    assert "R-ONE 미설정" in str(inc_m.get("deposit_conv_source") or ""), inc_m.get("deposit_conv_source")
+
 
 # ─────────────────────────────────────────────────────────────
 # ★R10 HIGH — 집계행이 **있는데 값이 결측**이면 좁히기가 «성공» 하고 거짓 값을 낸다
