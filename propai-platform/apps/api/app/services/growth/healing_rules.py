@@ -172,12 +172,20 @@ CANDIDATE_ACTIONS = ("heal", "none", "correct")
 
 #: ★`status='open'` 한 낱말이 **여러 사실을 뭉친다** — 그것을 가르는 닫힌 어휘.
 #
-#  ## 왜 (2026-09-12 라이브 전수 실측 · open 671건)
+#  ## 왜 (라이브 실측 — ★**shipped 함수로 직접 재분류**했다 · 2026-09-12T13:40Z · status=open total 679)
 #
-#      타입이 애초에 후보 밖(선언된 면제)   609   ← latency_regression 309 · latency_baseline 271 …
-#      권고 조치가 사람 산출물               55   ← improvement_proposal 53 · prompt_candidate 2
-#      창(2h) 만료                            5   ← fallback_rate (전부 30~48일 경과)
-#      진짜 후보                              2   ← quality_drop
+#  ★★독립 적대 리뷰 MAJOR-1 이 **내 초판 표를 반증**했다. 초판은 671 을 **배타 버킷**
+#    (609/55/5/2)으로 적고 «진짜 후보 2 ← quality_drop» 이라 했는데, `quality_drop` 은
+#    `HANDLED_INSIGHT_TYPES` 에 **없어서 후보가 될 수 없다**(실측: `['type_not_handled']`).
+#    그리고 배타 분할은 **우선순위**이고, 바로 아래 `open_blockers` 독스트링이 그것을
+#    **명시적으로 거부**한다 — ***내가 같은 PR 안에서 내 원칙을 어겼다.***
+#  ⇒ 표를 **아래 함수가 실제로 내는 다중코드 분포**로 바꾼다(최신 500건):
+#
+#      type_not_handled + window_expired                        **454**
+#      type_not_handled + action_not_healable + window_expired    **35**
+#      type_not_handled 단독                                        **8**
+#      window_expired 단독                                          **3**
+#      **[] (치유 후보)**                                            **0**
 #
 #  넷이 **API 응답에서 같은 모양**이었다(`status:"open"`). 가를 수 있는 필드는
 #  `recommended_action` 뿐이고 그것으로는 둘째만 갈렸다. 그리고 **기계는 답을 알고 있었다** —
@@ -191,6 +199,15 @@ CANDIDATE_ACTIONS = ("heal", "none", "correct")
 #
 #  ★이 표는 **처방이 아니다.** 여기 적힌다고 치유가 생기지 않는다 — 「왜 안 도는지」를
 #    **판정 가능하게**만 한다. 실제 처방(자동 임계완화 등)은 이 저장소가 **기각한 길**이다.
+#  ★★독립 적대 리뷰 MAJOR-2 — **`[]` 는 「막는 것이 없음」이라는 적극적 주장**인데, 후보 쿼리가
+#    거는 것 중 **셋을 이 함수가 재지 않는다**:
+#      ① `LIMIT 200` 절단(200 밖으로 밀린 행은 읽히지 않는다 — 같은 파일이 「조용한 기아」로 경고)
+#      ② 메타가드(`gate()` 쿨다운·캡) — 후보로 뽑혀도 여기서 막히면 계속 `open` 이다
+#      ③ `mark_insight_acted` best-effort 실패 — 치유는 됐는데 닫기가 실패하면 영구 `open`
+#    ⇒ 그러므로 `[]` 의 뜻을 **「후보 쿼리의 술어를 전부 통과한다」로 좁혀 읽어야 한다.**
+#      「반드시 치유된다」가 아니다. ★라이브에서 `[]` 는 현재 **0건**이라 오늘 오보는 없지만,
+#      그 버킷이 **운영자가 가장 알고 싶은 자리**라 뜻을 정확히 적는다.
+#      (①②③ 를 코드로 반영하는 것은 별건이다 — ②는 `blocked_by_reason` 이 이미 답을 갖고 있다.)
 OPEN_BLOCKER_TYPE_NOT_HANDLED = "type_not_handled"
 OPEN_BLOCKER_ACTION_NOT_HEALABLE = "action_not_healable"
 OPEN_BLOCKER_WINDOW_EXPIRED = "window_expired"
@@ -208,17 +225,22 @@ OPEN_BLOCKER_WINDOW_EXPIRED = "window_expired"
 #      ***그 셋은 내가 손으로 고른 변이로는 안 나왔다 — 기계가 분모를 정했기에 나왔다.***
 OPEN_BLOCKER_REASONS: dict[str, str] = {
     OPEN_BLOCKER_TYPE_NOT_HANDLED: (
-        "치유기가 이 타입에 분기를 두지 않습니다(선언된 면제). "
-        "후보 쿼리가 `insight_type = ANY(HANDLED_INSIGHT_TYPES)` 로 거릅니다."
+        # ★MEDIUM-3: «선언된 면제» 는 사유가 기록된 타입(`HEAL_UNHANDLED_REASONS`)에만 참이다.
+        #   라이브 최신 500건 중 `latency_baseline` 271건이 이 문구를 받는데, 그 타입은
+        #   «누가 일부러 면제했다» 가 아니라 **그냥 목록에 없다**(부재 ≠ 선언).
+        # ★MEDIUM-4: 표면 문구는 **평문**으로 둔다 — 이 저장소에는 `**같아야**` 가 별표째
+        #   화면에 찍힌 실사고가 있다. 코드 좌표·강조는 주석에 남긴다.
+        "치유기가 이 타입에 분기를 두지 않습니다. "
+        "자동 치유 후보는 선언된 타입에 한정됩니다."
     ),
     OPEN_BLOCKER_ACTION_NOT_HEALABLE: (
-        "권고 조치가 자동 치유 대상이 아닙니다 — 사람이 처리하는 산출물입니다"
-        "(예: PR 제안·프롬프트 후보)."
+        "권고 조치가 자동 치유 대상이 아닙니다. 사람이 처리하는 산출물입니다"
+        "(예: PR 제안, 프롬프트 후보)."
     ),
     OPEN_BLOCKER_WINDOW_EXPIRED: (
         f"생성 후 {CANDIDATE_WINDOW_HOURS}시간 창을 벗어났습니다. "
-        "후보 쿼리는 그보다 오래된 행을 다시 읽지 않으며, `created_at` 을 갱신하는 경로가 "
-        "없어 **재진입할 수 없습니다** — 사람이 확인(ack)하는 것 외에 탈출구가 없습니다."
+        "후보 조회는 그보다 오래된 항목을 다시 읽지 않고, 생성 시각을 갱신하는 경로가 "
+        "없어 다시 후보가 될 수 없습니다. 사람이 확인(ack)하는 것 외에 탈출구가 없습니다."
     ),
 }
 
@@ -230,7 +252,10 @@ def open_blockers(
     created_at: datetime | None,
     now: datetime,
 ) -> list[str]:
-    """이 **열린** 인사이트가 치유 후보가 되지 못하는 이유 전부(빈 리스트 = 후보).
+    """이 **열린** 인사이트가 치유 후보가 되지 못하는 이유 전부.
+
+    ★빈 리스트 = **후보 쿼리의 술어를 전부 통과한다**(= 「반드시 치유된다」가 아니다 —
+      `LIMIT 200` 절단·메타가드·닫기 실패는 이 함수가 재지 않는다. 위 상수 블록 참조).
 
     ★**하나만 고르지 않는다.** 후보 쿼리는 조건들을 `AND` 로 묶으므로 여러 개가 동시에
       참일 수 있다. 하나로 줄이면 「우선순위」라는 없는 사실을 지어내게 된다.
@@ -712,6 +737,14 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
 
 
 __all__ = [
+    "CANDIDATE_ACTIONS",
+    "CANDIDATE_WINDOW_HOURS",
+    "OPEN_BLOCKER_ACTION_NOT_HEALABLE",
+    "OPEN_BLOCKER_REASONS",
+    "OPEN_BLOCKER_TYPE_NOT_HANDLED",
+    "OPEN_BLOCKER_WINDOW_EXPIRED",
+    "open_blocker_reason",
+    "open_blockers",
     "evaluate", "gate", "mark_insight_acted",
     # 순수 가드 함수(단위검증 공개).
     "_within_cooldown", "_cap_exceeded", "should_escalate",

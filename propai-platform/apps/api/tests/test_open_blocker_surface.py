@@ -1,13 +1,21 @@
 """`status='open'` 한 낱말이 **여러 사실을 뭉쳤다** — 가르는 축을 표면까지 나른다.
 
-## 왜 (2026-09-12 라이브 전수 실측 · open **671건**)
+## 왜 (라이브 실측 — ★**shipped 함수로 직접 재분류** · 2026-09-12T13:40Z · `status=open` total **679**)
 
-| 뭉쳐 있던 사실 | 건수 | 종전에 가를 수 있었나 |
-|---|---|---|
-| 타입이 애초에 후보 밖(선언된 면제) | **609** | ✗ `HANDLED_INSIGHT_TYPES` 가 API·화면에 **노출 0** |
-| 권고 조치가 사람 산출물(ack 대기) | **55** | ◎ `recommended_action` 으로만 |
-| 창(2h) 만료 | **5** | ✗ 2h 가 SQL 안 리터럴 · 상태변경 시각 열 없음 |
-| 진짜 후보(미처리) | **2** | ✗ 위 둘과 같은 모양 |
+★★독립 적대 리뷰 MAJOR-1 이 **초판 표를 반증**했다. 초판은 배타 버킷(609/55/5/2)으로 적고
+«진짜 후보 2 ← quality_drop» 이라 했는데, `quality_drop` 은 `HANDLED_INSIGHT_TYPES` 에 **없어
+후보가 될 수 없다**. 배타 분할은 **우선순위**이고 `open_blockers` 독스트링이 그것을 **거부**한다 —
+***같은 PR 안에서 내 원칙을 내가 어겼다.*** ⇒ 함수가 실제로 내는 **다중코드 분포**로 바꾼다:
+
+| shipped 함수 분류(최신 500) | 건수 |
+|---|---|
+| `type_not_handled` + `window_expired` | **454** |
+| `type_not_handled` + `action_not_healable` + `window_expired` | **35** |
+| `type_not_handled` 단독 | **8** |
+| `window_expired` 단독 | **3** |
+| **`[]` (= 후보 쿼리 술어 통과)** | **0** |
+
+종전에 가를 수 있었나: `recommended_action` 으로 **사람 산출물만** 갈렸고 나머지는 **같은 모양**이었다.
 
 ★**기계는 답을 알고 있었다** — `HEAL_UNHANDLED_REASONS` 에 사유가 한 문단으로 적혀 있는데
   **프로덕션 소비처가 0**이었다(라우터·스키마·프론트 참조 0건. 대조군: 같은 방법이 프론트에서
@@ -145,6 +153,18 @@ def _fn_src(fn) -> str:
     return textwrap.dedent(inspect.getsource(fn))
 
 
+def _candidate_sql_of(fn) -> str:
+    """함수 안 `text(...)` 의 `platform_insights` 질의 문자열(파서로 — 주석에 안 뚫린다)."""
+    for sub in ast.walk(ast.parse(_fn_src(fn))):
+        if isinstance(sub, ast.Call) and getattr(sub.func, "id", None) == "text" and sub.args:
+            lits = [c.value for c in ast.walk(sub.args[0])
+                    if isinstance(c, ast.Constant) and isinstance(c.value, str)]
+            joined = "".join(lits)
+            if "platform_insights" in joined:
+                return joined
+    raise AssertionError("후보 조회 SQL 을 못 찾았다 — 파서가 죽었다")
+
+
 def _names_in(fn) -> set[str]:
     return {n.id for n in ast.walk(ast.parse(_fn_src(fn))) if isinstance(n, ast.Name)}
 
@@ -155,11 +175,35 @@ def test_explanation_and_query_read_the_same_window_constant() -> None:
     종전 SQL 은 `timedelta(hours=2)` **리터럴**이었다. 설명하는 쪽이 그 값을 손으로 옮기면
     한쪽만 바뀌었을 때 **조용히 갈린다**(그리고 그 갈림은 초록이다).
     """
-    assert "CANDIDATE_WINDOW_HOURS" in _names_in(H._candidate_actions), \
-        "후보 쿼리가 창 상수를 안 쓴다(리터럴로 되돌아갔다)"
-    assert "CANDIDATE_WINDOW_HOURS" in _names_in(H.open_blockers), \
-        "설명이 창 상수를 안 쓴다(값을 복사했다)"
+    # ★★독립 적대 리뷰 MEDIUM-1 — 독스트링은 **세 상수**를 공유한다고 선언하는데 초판 락은
+    #   **창 상수만** 봤다. 실측: `not in CANDIDATE_ACTIONS` → 리터럴 튜플 복사 **SURVIVED** ·
+    #   `not in HANDLED_INSIGHT_TYPES` → 복사 **SURVIVED**(대조군: 창 상수 복사는 CAUGHT).
+    #   ⇒ **선언한 셋 전부**를 본다. 선언과 락의 범위가 갈리면 락이 선언보다 좁다.
+    shared = ("CANDIDATE_WINDOW_HOURS", "CANDIDATE_ACTIONS", "HANDLED_INSIGHT_TYPES")
+    q_names, e_names = _names_in(H._candidate_actions), _names_in(H.open_blockers)
+    for name in shared:
+        assert name in q_names, f"후보 쿼리가 {name} 을 안 쓴다(리터럴로 되돌아갔다)"
+        assert name in e_names, f"설명이 {name} 을 안 쓴다(값을 복사했다)"
     assert H.CANDIDATE_WINDOW_HOURS == 2, f"창이 바뀌었다: {H.CANDIDATE_WINDOW_HOURS}"
+
+
+def test_candidate_query_predicates_are_pinned() -> None:
+    """★★독립 적대 리뷰 MEDIUM-2 — **술어가 하나 늘어나는 축**이 통째로 열려 있었다.
+
+    실측: 후보 쿼리 WHERE 에 `severity <> 'info'` 를 **추가**하는 변이가 **SURVIVED**.
+    설명(`open_blockers`)은 그 술어를 모르므로 **사용자에게 거짓 사유**를 주게 된다.
+    ★기계 변이는 **삭제 축만** 만들어 이 자리를 원리적으로 못 겨눈다.
+    ⇒ WHERE 절의 **술어 컬럼 집합을 파생**해 알려진 넷과 정확히 일치하는지 본다.
+    """
+    import re
+
+    sql = _candidate_sql_of(H._candidate_actions)
+    where = sql.split("WHERE", 1)[1].split("ORDER BY", 1)[0]
+    cols = set(re.findall(r"\b([a-z_]+)\s*(?:=|<>|>=|<=|IN\b)", where))
+    assert cols == {"status", "recommended_action", "insight_type", "created_at"}, (
+        f"후보 쿼리의 술어 집합이 바뀌었다: {sorted(cols)} — "
+        "`open_blockers` 가 그 술어를 모르면 사용자에게 거짓 사유를 준다"
+    )
 
 
 # ── 배선(라우터가 실제로 값을 싣는가) ────────────────────────────────────────

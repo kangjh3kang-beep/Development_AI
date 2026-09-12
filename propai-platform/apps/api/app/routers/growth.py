@@ -190,7 +190,12 @@ class GrowthInsightOut(BaseModel):
     created_at: datetime | None = None
     #: ★`status="open"` 한 낱말이 뭉치던 **여러 사실**을 가른다(2026-09-12 라이브 전수 671건:
     #  타입 면제 609 · 사람 산출물 55 · 창 만료 5 · 진짜 후보 2 — **넷이 같은 모양**이었다).
-    #  빈 리스트 = **치유 후보**(진짜 미처리) · `None` = 열려 있지 않음(판정 대상 아님).
+    #  ★**세 상태 인코딩**(MINOR-2 — JS 소비처에서 `[]`(truthy)와 `null`(falsy)이 미끄럽다):
+    #    `null`      = **열려 있지 않음**(`status != "open"` — 판정 대상 아님)
+    #    `[]`        = **후보 쿼리의 술어를 전부 통과**  ★「반드시 치유된다」가 **아니다** —
+    #                  `LIMIT 200` 절단·메타가드(`blocked_by_reason` 이 답을 갖고 있다)·
+    #                  닫기 실패는 `open_blockers` 가 **재지 않는다**(독립 리뷰 MAJOR-2)
+    #    `[...]`     = 그 코드들이 **전부** 막고 있다(하나만 고르지 않는다 — SQL 이 `AND` 다)
     #  ★어휘·판정은 `healing_rules` 가 소유한다 — 여기서 **복사하지 않는다**.
     open_blockers: list[str] | None = None
     #: 사람이 읽는 사유. 타입 면제에는 `HEAL_UNHANDLED_REASONS` 의 **그 타입 고유 사유**가 실린다
