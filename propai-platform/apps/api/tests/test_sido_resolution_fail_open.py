@@ -1663,6 +1663,31 @@ def test_declared_item_is_readable_even_when_the_period_is_mixed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cap_rate_path_refuses_a_total_return_end_to_end(monkeypatch) -> None:
+    """★**경로**를 잠근다 — 함수 둘을 각각 잠그는 것과 경로를 잠그는 것은 다르다.
+
+    이것이 사용자에게 닿는 계약이다: 「투자수익률」 표가 주어져도 **자본환원율로 채택되지
+    않는다**. 그래야 누가 주기를 바꿔 행이 돌아와도 제출본에 날조가 인쇄되지 않는다.
+    """
+    from app.services.land_intelligence.reb_statistics_service import commercial_cap_rate
+
+    # ★두 모집단 — 같은 지역·같은 시점·같은 값, **항목만 다르다**(차가 항목 축에만 있다).
+    income = [{"CLS_NM": "서울", "CLS_FULLNM": "서울", "ITM_NM": "소득수익률",
+               "DTA_VAL": 4.2, "WRTTIME_IDTFR_ID": "2012"}]
+    total = [dict(income[0], ITM_NM="투자수익률")]
+
+    _patch_statbl(monkeypatch, income)
+    got = await commercial_cap_rate("서울특별시 강남구 1")
+    # ★공허 방지 선단언 — «채택» 쪽이 실제로 값을 내는가(둘 다 None 이면 아무것도 안 잠긴다).
+    assert got and got["pct"] == 4.2, f"자본환원율 항목을 채택하지 못했다: {got}"
+
+    _patch_statbl(monkeypatch, total)
+    assert await commercial_cap_rate("서울특별시 강남구 1") is None, (
+        "투자수익률이 자본환원율로 채택됐다 — 이 값이 「자본환원율(R-ONE 실측)」로 제출본에 인쇄된다"
+    )
+
+
+@pytest.mark.asyncio
 async def test_commercial_cap_rate_actually_passes_the_declaration() -> None:
     """★배선 락 — 이름이 존재하는 것과 **그 값이 넘어가는 것**은 다르다.
 
