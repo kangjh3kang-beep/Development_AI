@@ -166,6 +166,21 @@ async def split_commission(db: AsyncSession, site_id, contract):
         await db.flush()
         return ev
     agency = chain[0]
+    # ★★**고아 루트를 조용히 배분하지 않는다**(2026-09-08).
+    #   이 함수는 `chain[0]` 이 대행사라고 **가정**한다(위 주석의 `[대행사 … 팀원]`). 그런데
+    #   `ancestors_path` 는 path 라벨을 앞에서부터 자를 뿐이라 그 가정을 **강제하지 않는다.**
+    #   부모 없는 `MEMBER` 노드로 계약이 체결되면 `chain=[자기자신]` → `chain[1:]` 이 비어
+    #   `allocated=0` → **`residual = total` 전액이 그 MEMBER 에게 `basis="RESIDUAL"` 로** 꽂힌다.
+    #   대행사·본부장·팀장 배분 0원. (2026-09-08 실측: 라이브 고아 루트 0건 — 도달 가능하나 미발화.)
+    #
+    #   ★이것은 **데이터 무결성 위반이지 정상 입력이 아니다.** 조용히 배분하면 돈이 잘못 가고
+    #     아무도 모른다 — 거부해서 **시끄럽게** 만든다(무언 실패 금지).
+    #   ★생성 쪽(`org/service.create_node`)이 루트를 AGENCY 로 강제하므로 이것은 **두 번째 가드**다.
+    #     하나만 두면 우회 경로가 생겼을 때 다시 새어 나간다.
+    if str(agency.node_type) != "AGENCY":
+        raise ValueError(
+            f"수수료 배분 체인의 최상위가 대행사(AGENCY)가 아닙니다(node_type={agency.node_type}) — "
+            "부모 없는 노드로 계약이 체결됐을 수 있습니다. 조직도를 확인하세요.")
     by_node, by_type = await _rules(db, site_id, m.id)
     allocated = Decimal(0)
     for node in chain[1:]:

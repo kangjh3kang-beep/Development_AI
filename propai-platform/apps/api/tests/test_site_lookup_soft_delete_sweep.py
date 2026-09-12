@@ -42,11 +42,11 @@ APP = pathlib.Path(__file__).resolve().parents[1] / "app"
 #   ⇒ **그 넷을 면제로 유지하지 않고 필터를 걸었다.** 거짓 사유를 관리하는 것보다
 #     조회를 고치는 것이 싸다. 원장에는 «걸면 더 나빠지는» 한 건만 남는다.
 _EXEMPT: dict[str, str] = {
-    "app/services/sales/org/service.py::assign_user_to_node:131":
+    "app/services/sales/org/service.py::assign_user_to_node:240":
         "★필터를 걸면 **더 나빠진다**(2026-09-12 실측). 이 조회는 "
         "`select(SalesSite.organization_id)` 이고 바로 다음 줄이 "
         "`if org_id and u[2] and str(u[2]) != str(org_id)`"
-        "(app/services/sales/org/service.py:133) 다 — "
+        "(app/services/sales/org/service.py:241) 다 — "
         "삭제된 현장이면 `org_id` 가 `None` 이 되어 **테넌트 검사가 건너뛰어진다**(fail-open). "
         "즉 여기서 막을 것은 「삭제된 현장의 값을 읽는 것」이 아니라 「삭제된 현장에 배정하는 "
         "것」이고, 그 판정은 **호출부**가 해야 한다. 봉합이 새 결함을 만드는 자리라 "
@@ -291,6 +291,48 @@ def test_exemptions_carry_a_reason_whose_coordinates_exist() -> None:
             assert lines[n - 1].strip(), f"{key}: 사유의 좌표가 **빈 줄**이다 — {rel}:{n}"
 
 
+
+def _docstring_lines(tree: ast.AST) -> set[int]:
+    """독스트링이 차지하는 **줄 번호 집합**.
+
+    ★이 헬퍼가 필요한 이유(2026-09-12 실측): 앞 판은 `#` 주석만 걷어내고 **독스트링은 그대로** 셌다.
+      `site_join.py` 의 모듈 독스트링이 «`sales_sites` 는 테넌트에 묶여 있는데…» 라고 **설명**하자
+      래칫이 9→10 으로 **거짓 발화**했다. 저장소 지침이 이미 명문으로 경고한다 —
+      *「소스 검사는 주석뿐 아니라 **독스트링에도 뚫린다**」*. 그 경고를 **내 락이 위반하고 있었다.**
+    """
+    out: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        body = getattr(node, "body", None) or []
+        first = body[0] if body else None
+        if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)):
+            out.update(range(first.lineno, (first.end_lineno or first.lineno) + 1))
+    return out
+
+
+def _raw_sql_hits(root: pathlib.Path) -> list[str]:
+    """`sales_sites` 를 **실행 줄에서** 여는데 `deleted_at` 이 없는 좌표.
+
+    ★`root` 를 인자로 받는다 — 합성 입력으로 태울 수 있어야 판정식 자체를 잠글 수 있다.
+    """
+    hits: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        rel = str(path.relative_to(root.parent))
+        try:
+            doc = _docstring_lines(ast.parse(src))
+        except SyntaxError:
+            doc = set()
+        for i, line in enumerate(src.splitlines(), 1):
+            if i in doc:
+                continue
+            if "sales_sites" in line and "deleted_at" not in line and not line.lstrip().startswith("#"):
+                hits.append(f"{rel}:{i}")
+    return hits
+
+
 def test_raw_sql_site_lookups_are_visible_as_debt() -> None:
     """★남은 축을 **초록 안에 보이게** 둔다 — 원시 SQL 은 AST 로 못 본다.
 
@@ -301,21 +343,46 @@ def test_raw_sql_site_lookups_are_visible_as_debt() -> None:
     ★**부채를 숨기지 않는 방식**: 지금 몇 건인지 세어 두고, **늘면 실패**시킨다.
       새 원시 SQL 조회를 추가하는 사람이 여기서 걸린다(래칫).
     """
-    hits: list[str] = []
-    for path in sorted(APP.rglob("*.py")):
-        src = path.read_text(encoding="utf-8")
-        rel = str(path.relative_to(APP.parent))
-        for i, line in enumerate(src.splitlines(), 1):
-            if "sales_sites" in line and "deleted_at" not in line and not line.lstrip().startswith("#"):
-                hits.append(f"{rel}:{i}")
+    hits = _raw_sql_hits(APP)
 
     # ★대조군 — 조회기가 죽으면 「0건」이 공짜다.
     assert hits, "원시 SQL 조회가 **한 건도** 안 잡혔다 — 조회기가 죽었다"
 
-    # ★래칫: 현재 관측치(2026-09-12). **늘면 실패**한다.
-    RATCHET = 9
+    # ★래칫: 현재 관측치(2026-09-12 R2). **늘면 실패**한다.
+    #   ★9 → **8**. 줄어든 1건은 «고쳤다»가 아니라 **이 판정식이 독스트링을 세지 않게 됐기 때문**이다
+    #     (`site_join.py:23` 의 모듈 독스트링이 `sales_sites` 를 **설명**하고 있었다).
+    #     ***래칫을 내릴 때는 「무엇이 줄었나」가 아니라 「왜 줄었나」를 적어라*** —
+    #     고친 것과 못 세던 것을 같은 칸에 두면 다음 사람이 진짜 개선으로 오독한다.
+    RATCHET = 8
     assert len(hits) <= RATCHET, (
         f"`sales_sites` 를 원시 SQL 로 여는 줄이 {len(hits)}건으로 늘었다(래칫 {RATCHET}). "
         "새 조회에 `deleted_at` 을 걸었는지 확인하고, 걸었으면 래칫을 내려라: "
         + ", ".join(sorted(hits)[:6]) + " …"
     )
+
+def test_the_raw_sql_scanner_separates_four_populations(tmp_path) -> None:
+    """★판정식 자체를 **합성 입력**으로 잠근다 — 항목마다 「그것만 걸리는」 파일 하나씩.
+
+    ★왜 필요했나(2026-09-12 실측): 앞 판은 `#` 주석만 걷어내고 **독스트링을 셌다.**
+      `site_join.py` 의 모듈 독스트링이 `sales_sites` 를 **설명**하자 래칫이 9→10 으로
+      **거짓 발화**했다. 그때 실제 코드는 한 줄도 늘지 않았다.
+    ★★**차가 0인 픽스처는 잠금이 아니다** — 그래서 네 파일이 **각각 다른 이유로** 갈린다.
+      한 파일에 여러 조건을 섞으면 하나를 지워도 나머지가 초록을 만든다.
+    """
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "only_docstring.py").write_text(
+        '"""설명: sales_sites 는 테넌트에 묶여 있다."""\nX = 1\n', encoding="utf-8")
+    (app / "real_code.py").write_text(
+        'X = text("SELECT * FROM sales_sites WHERE id=:i")\n', encoding="utf-8")
+    (app / "guarded.py").write_text(
+        'X = text("SELECT * FROM sales_sites WHERE deleted_at IS NULL")\n', encoding="utf-8")
+    (app / "line_comment.py").write_text('# sales_sites 를 연다\nX = 1\n', encoding="utf-8")
+
+    hits = _raw_sql_hits(app)
+    names = sorted(h.split("/")[-1].split(":")[0] for h in hits)
+
+    # ★공허 방지 선단언 — 아무것도 안 잡으면 아래 「안 잡힌다」 셋이 공짜로 참이 된다.
+    assert names == ["real_code.py"], (
+        "실행 줄 하나만 잡혀야 한다(독스트링·주석·가드된 줄은 제외). 실제: " + repr(hits))
+

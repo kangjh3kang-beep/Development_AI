@@ -3,7 +3,7 @@
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -79,7 +79,13 @@ async def resale_decide(transfer_id: uuid.UUID, body: dict, db: AsyncSession = D
 @r6.post("/commission/splits/{split_id}/schedule")
 async def comm_schedule(split_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
                         ctx: SalesCtx = Depends(require_role("AGENCY", "DEVELOPER"))):
-    await create_schedule(db, split_id, body["milestones"])
+    # ★현장을 넘긴다 — 안 넘기면 A현장 운영자가 B현장 split 에 지급표를 만든다(적대 리뷰 B3).
+    try:
+        await create_schedule(db, ctx.site_id, split_id, body["milestones"])
+    except ValueError as e:
+        # 형제 패턴(actions.py:141-143) — 500 누출을 막고 롤백한다.
+        await db.rollback()
+        raise HTTPException(404, str(e)) from e
     await db.commit()
     return {"ok": True}
 
@@ -87,8 +93,13 @@ async def comm_schedule(split_id: uuid.UUID, body: dict, db: AsyncSession = Depe
 @r6.post("/commission/holdback")
 async def comm_holdback(body: dict, db: AsyncSession = Depends(get_db),
                         ctx: SalesCtx = Depends(require_role("AGENCY", "DEVELOPER"))):
-    await set_holdback(db, uuid.UUID(body["split_id"]), body["reason"], int(body["amount"]),
-                       body.get("release_condition"))
+    # ★현장을 넘긴다 — 안 넘기면 A현장이 B현장 split 에 보류금을 걸어 **B의 지급이 깎인다**.
+    try:
+        await set_holdback(db, ctx.site_id, uuid.UUID(body["split_id"]), body["reason"],
+                           int(body["amount"]), body.get("release_condition"))
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(404, str(e)) from e
     await db.commit()
     return {"ok": True}
 
@@ -96,7 +107,12 @@ async def comm_holdback(body: dict, db: AsyncSession = Depends(get_db),
 @r6.post("/commission/holdback/{holdback_id}/release")
 async def comm_release(holdback_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                        ctx: SalesCtx = Depends(require_role("AGENCY", "DEVELOPER"))):
-    await release_holdback(db, holdback_id)
+    # ★현장을 넘긴다 — 안 넘기면 A현장 운영자가 B현장 보류금을 해제할 수 있다(2026-09-08).
+    try:
+        await release_holdback(db, ctx.site_id, holdback_id)
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(404, str(e)) from e
     await db.commit()
     return {"ok": True}
 

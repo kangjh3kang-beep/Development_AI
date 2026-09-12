@@ -79,6 +79,96 @@ def rewrite_subtree_path(old: str, new_parent_path: str, path: str) -> str:
     return ".".join([*new_parent_path.split("."), *remainder])
 
 
+# ★조직 위계 서열(작을수록 상위) — **여기가 SSOT 다**(2026-09-08).
+#   종전엔 `endpoints/sales/actions.py` 에 있었고 위계 판정이 **라우터에 두 벌**로 복사돼 있었다
+#   (`add_node` 생성 · `move_node` 이동). 그래서 라우터를 안 거치는 생산자는 위계를 안 봤다.
+#   ★서비스 층에 두면 라우터가 임포트하는 방향이 되어 **순환이 없다**(반대는 순환이다).
+_ORG_RANK = {
+    "AGENCY": 0, "SUBAGENCY": 1, "GM_DIRECTOR": 2, "DIRECTOR": 3, "TEAM_LEADER": 4, "MEMBER": 5,
+}
+
+
+def assert_hierarchy(parent_type: str, child_type: str) -> None:
+    """부모가 자식보다 **상위**인지 — 판정을 한 곳에 둔다.
+
+    ★위반이면 `ValueError` 를 던진다(라우터가 400 으로 매핑). 미등재 타입은 **거부**한다
+      (fail-closed — `_REGISTER_MATRIX` 의 «미등재 node_type 은 403» 과 같은 방향).
+    """
+    p = _ORG_RANK.get(str(parent_type))
+    c = _ORG_RANK.get(str(child_type))
+    if p is None or c is None or p >= c:
+        raise ValueError(f"{parent_type} 아래에 {child_type}을(를) 둘 수 없습니다(직속 위계 위반).")
+
+
+class OrgChainNotCommissionableError(ValueError):
+    """조상 체인의 최상위가 대행사가 아니라 **수수료 배분이 성립하지 않는다.**"""
+
+
+class OrgMemberNodeFormatError(ValueError):
+    """`member_node_id` 가 UUID 가 아니다(입력 형식 오류 — 400)."""
+
+
+async def resolve_member_node(db: AsyncSession, site_id, raw):
+    """요청 본문의 `member_node_id` 를 **검증된 UUID(또는 None)** 로 바꾼다.
+
+    ## 왜 「검증 함수」가 아니라 「해석 함수」인가 (2026-09-08 · 3차 변이)
+
+    앞 판은 라우터가 세 가지를 직접 했다 — ①빈 값 분기 ②UUID 파싱 ③검증 호출.
+    그 셋이 라우터에 흩어져 있으니 **어느 하나를 꺼도 나머지가 그대로 돌았다**:
+
+        if mnode:            → `if False:`  ::VERDICT=SURVIVED   ← 검증이 통째로 꺼진다
+        mnode = mnode_uuid   → 줄삭제       ::VERDICT=SURVIVED   ← 원문 문자열이 그대로 간다
+
+    ★두 번째가 특히 나쁘다: 검증은 **돌지만** 그 결과가 버려지고 원문 문자열이 계약으로 간다.
+      「검증했다」와 「검증한 것을 썼다」는 다른 명제인데, 라우터에서는 두 줄이라 갈렸다.
+
+    ⇒ 셋을 **한 값 흐름**으로 묶는다. 그러면 어느 조각을 지워도 반환값이 달라져
+      호출부에서 즉시 드러난다(끄면 `None` 이 되어 담당자가 사라진다).
+
+    ★AST 락으로는 이 축을 못 잡는다 — `if False:` 안에서도 **호출 노드는 남기** 때문이다
+      («존재를 잠그면 행위는 안 잠긴다» 의 실측 사례).
+    """
+    if not raw:
+        return None
+    try:
+        node_id = uuid.UUID(str(raw))
+    except (ValueError, TypeError) as e:
+        raise OrgMemberNodeFormatError(
+            "member_node_id 형식이 올바르지 않습니다(UUID 필요)") from e
+    await assert_commissionable_chain(db, site_id, node_id)
+    return node_id
+
+
+async def assert_commissionable_chain(db: AsyncSession, site_id, member_node_id):
+    """담당 노드가 «이 현장 소속 · 살아 있음 · 배분 가능» 셋을 모두 만족하는가.
+
+    ## 왜 서비스 층인가 (2026-09-08 · 기계 변이 생존 8건이 짚어 준 자리)
+
+    이 판정은 **라우터 안에 인라인**돼 있었다(`actions.record_contract`). 그래서
+    ①라우터를 안 거치는 계약 생성 경로가 생기면 그대로 새고
+    ②판정을 태우려면 FastAPI 의존을 통째로 세워야 해서 **락이 하나도 없었다.**
+    기계 변이가 `if not chain:` 과 `if str(chain[0].node_type) != "AGENCY":` 를
+    조건무력화로 지웠는데 **둘 다 `::VERDICT=SURVIVED`** 였다 —
+    이 PR 이 «돈이 새는 것을 막았다» 고 선언한 자리가 **무잠금**이었다는 뜻이다.
+
+    ★M1 과 **같은 형태의 형제**다: 규칙을 라우터에 두면 생산자마다 규칙이 갈린다.
+
+    반환은 조상 체인(호출자가 재조회하지 않게). 위반은 **서로 다른 예외**로 구분한다 —
+    호출자가 404(못 찾음)와 409(상태 충돌)로 나눠 매핑해야 하고,
+    한 예외로 뭉치면 사용자가 «내 잘못인가 데이터 잘못인가» 를 가를 수 없다.
+    """
+    chain = await ancestors_path(db, site_id, member_node_id)
+    if not chain:
+        # ★현장 밖·미존재·삭제됨을 **같은 오류**로 돌린다(존재 여부가 새면 그 자체가 IDOR 단서).
+        raise OrgNodeNotFoundError(
+            "담당 노드를 찾을 수 없습니다(이 현장의 조직 노드만 지정 가능)")
+    if str(chain[0].node_type) != "AGENCY":
+        raise OrgChainNotCommissionableError(
+            "담당 노드의 조직 체인 최상위가 대행사(AGENCY)가 아닙니다 — "
+            "부모 없는 노드로는 수수료가 배분되지 않습니다. 조직도에서 상위를 지정하세요.")
+    return chain
+
+
 async def create_node(db: AsyncSession, site_id, node_type, parent_id=None, **kw) -> SalesOrgNode:
     """org 노드 생성. parent_id 가 있으면 그 부모의 path 를 상속해 자식 path 를 만든다.
 
@@ -97,6 +187,25 @@ async def create_node(db: AsyncSession, site_id, node_type, parent_id=None, **kw
             SalesOrgNode.deleted_at.is_(None)))).scalar_one_or_none()
         if parent is None:
             raise ValueError("상위(부모) 조직 노드를 찾을 수 없습니다(현장 소속 노드만 상위로 지정 가능)")
+    # ★★**루트는 AGENCY 만**(2026-09-08). 종전엔 이 함수가 부모 없는 노드를 **아무 타입으로나**
+    #   만들 수 있었고, 라우터(`actions.py:113-116`)만 그것을 400 으로 막고 있었다.
+    #   그래서 **라우터를 안 거치는 생산자**(`market._link_membership_on_accept` 의 raw INSERT)가
+    #   루트 `MEMBER` 를 만들었고, 정산이 `chain[0]` 을 대행사로 보므로
+    #   **수수료 RESIDUAL 전액이 그 신입에게 귀속**됐다(`commission/engine.py:163-182`).
+    #
+    #   ⇒ 규칙을 **라우터가 아니라 생성 함수**에 둔다. 그러면 어느 경로로 들어와도 따라온다.
+    #   ★저장소가 이미 그 사유를 적어 뒀다 — `actions.py:43-48`:
+    #     *"상위가 말단을 건너뛰어 직접 등록하면 중간 계층의 승인·책임 체계가 무너진다
+    #       (수수료 2단 배분 기준 붕괴)."* 이 가드는 그 문장을 **기계로** 만든 것이다.
+    if parent is None and str(node_type) != "AGENCY":
+        raise ValueError(
+            "부모 없이 만들 수 있는 것은 대행사(AGENCY) 노드뿐입니다 — "
+            f"'{node_type}' 는 상위 노드를 지정해야 합니다(수수료 배분 체인이 대행사에서 시작한다)")
+    # ★★위계도 **여기서** 강제한다(2026-09-08 적대 리뷰 M1).
+    #   종전엔 루트 규칙만 생성 함수로 내리고 위계는 라우터에 남겨 뒀다 — 그래서
+    #   «두 생산자가 정반대 규칙을 갖는다» 는 이 PR 의 논지를 **절반만** 실행한 셈이었다.
+    if parent is not None:
+        assert_hierarchy(parent.node_type, node_type)
     node = SalesOrgNode(site_id=site_id, node_type=node_type, parent_id=parent_id, path="tmp", **kw)
     db.add(node)
     await db.flush()
