@@ -16,6 +16,7 @@ import importlib.util
 import pathlib
 import subprocess
 import sys
+import uuid
 
 import pytest
 
@@ -168,7 +169,15 @@ def test_shell_tests_are_found_by_reference_not_by_name(monkeypatch):
     assert not (_REPO_ROOT / "propai-platform/apps/api/tests/test_safe-deploy.py").exists()
 
     # ★대조군 — 존재하지 않는 스크립트는 공집합이어야 한다(조회기가 아무거나 집지 않는다).
-    assert mc._tests_referencing(pathlib.Path("no-such-script-zzz.sh")) == []
+    #   ★★이름을 **런타임에 만든다**. 처음엔 리터럴을 적었다가 이 단언이 빨개졌다:
+    #     `git grep -F` 가 **내가 방금 쓴 그 리터럴을 이 파일에서** 찾았기 때문이다.
+    #     (CLAUDE.md §검증규율 8 — *"주석에 예시를 적으면 그 예시가 다음 검사의 위양성이 된다"*.)
+    #   ★그리고 그 실패는 **커밋한 뒤에야** 났다 — `git grep` 은 **추적 파일만** 본다.
+    #     미추적 상태에서 초록이던 락이 추적되는 순간 뒤집힌다(9조 §3 의 형제).
+    absent = pathlib.Path(f"zz-{uuid.uuid4().hex}.sh")
+    assert mc._tests_referencing(absent) == [], (
+        f"존재하지 않는 스크립트에 참조가 잡혔다 — 조회기가 아무거나 집는다: {absent}"
+    )
 
 
 def test_guess_tests_routes_shell_through_reference_derivation(monkeypatch):
