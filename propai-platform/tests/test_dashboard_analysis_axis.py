@@ -161,3 +161,105 @@ def test_probe_state_vocabulary_matches_the_producer():
     for token in ("idle", "judged", "starved"):
         assert f'"{token}"' in line[0], token
         assert m.analysis_verdict(token, "0")[0] != "unknown", token
+
+
+# ── ④ 변이 감사가 드러낸 **안 태워지던 층** ─────────────────────────────────
+#    2026-09-12: 설정 행 → 다섯 값 대응이 `main()` 안에 있어 **DB 없이는 도달 불가**였고
+#    `isinstance` 무력화·네 줄 삭제가 **전부 SURVIVED**(변이 6건). 순수 함수로 꺼내 태운다.
+def test_fields_from_a_real_snapshot_shape():
+    """★라이브 실측 형태(2026-09-12 08:05Z)를 그대로 태운다."""
+    m = _probe_mod()
+    row = {"at": "2026-09-12T08:05:05.549467+00:00",
+           "axes": "fal 0/0 lat 0/19 pay 0/1 qua 0/0",
+           "state": "starved", "insights": 0}
+    astate, aat, aaxes, ains, alast = m.analysis_fields(row, '"2026-09-12T08:02:22Z"')
+    assert astate == "starved"
+    assert aat == "2026-09-12T08:05:05.549467+00:00"
+    assert ains == 0
+    assert alast == "2026-09-12T08:02:22Z", "★워터마크의 따옴표가 안 벗겨졌다"
+
+
+def test_axes_must_not_contain_spaces_or_the_dashboard_truncates_it():
+    """★★계기판은 `grep -oE 'aaxes=[^ ]+'` 로 **공백 경계**로 뽑는다.
+
+    원본 `axes` 에는 공백이 있다(`"fal 0/0 lat 0/19"`). 치환을 빼면 **뒤가 통째로 잘려**
+    화면에는 `fal` 만 남는다 — 값이 **조용히 반쪽**이 된다.
+    """
+    m = _probe_mod()
+    _, _, aaxes, _, _ = m.analysis_fields(
+        {"state": "starved", "axes": "fal 0/0 lat 0/19"}, None)
+    assert " " not in aaxes, aaxes
+    # ★두 모집단 — 내용이 실제로 실려 있어야 한다(공백만 지우고 값을 버리면 안 된다).
+    assert "fal" in aaxes and "lat" in aaxes and "0/19" in aaxes
+
+
+def test_absent_and_non_dict_rows_both_become_absent():
+    """★`None` 과 «dict 가 아닌 값» 은 **같은 처방**이다 — 둘 다 부재로 본다."""
+    m = _probe_mod()
+    for row in (None, "some string", 42, []):
+        astate, aat, aaxes, ains, _ = m.analysis_fields(row, None)
+        assert astate == m.ASTATE_ABSENT, row
+        assert (aat, aaxes, ains) == ("-", "-", "-"), row
+    # ★대조군 — 정상 dict 는 부재가 **아니어야** 한다(위 단언이 공허하지 않다).
+    assert m.analysis_fields({"state": "judged"}, None)[0] == "judged"
+
+
+def test_missing_watermark_is_dash_not_empty():
+    """★빈 문자열이면 계기판의 `[^ ]+` 가 **다음 토큰을 끌어온다**(값이 밀려 들어온다)."""
+    m = _probe_mod()
+    assert m.analysis_fields({"state": "starved"}, None)[4] == "-"
+    assert m.analysis_fields({"state": "starved"}, "")[4] == "-"
+
+
+def test_five_populations_give_five_distinct_reasons():
+    """★★사유 문구는 잠그지 않지만 **「각자 자기 사유를 낸다」는 잠근다**.
+
+    이것이 `astate == ASTATE_MISSING` 분기의 **무력화를 잡는다** — 그 분기를 끄면
+    미지 어휘 폴백과 **같은 사유**로 떨어지기 때문이다(변이 실측 2026-09-12: 종전엔 생존).
+    """
+    m = _probe_mod()
+    inputs = ["starved", "idle", m.ASTATE_ABSENT, m.ASTATE_MISSING, "brand_new_state"]
+    reasons = [m.analysis_verdict(s, "0")[1] for s in inputs]
+    assert len(set(reasons)) == 5, list(zip(inputs, reasons))
+
+
+def test_probe_emits_every_key_the_dashboard_extracts_from_the_probe_line():
+    """★**목록이 아니라 파생**으로 대조한다 — 계기판이 `$G` 에서 뽑는 **모든** 키.
+
+    손으로 센 목록은 곧 상한이 된다. 계기판 소스에서 `grep -oE '<키>=…' "$G"` 패턴을
+    긁어 그 전부를 프로브 출력에 요구한다 — 새 키가 생겨도 자동으로 감시망에 든다.
+    ★이것이 프로브 `print` 형식 문자열 변이를 잡는다(종전 생존 2건).
+    """
+    import re as _re
+    dash = SCRIPT.read_text(encoding="utf-8")
+    # ★**어느 프로브의 줄에서 뽑는지**까지 함께 파생시킨다. 첫 판은 변수를 안 보고
+    #   키만 긁어 **버스트 프로브의 키 3개를 성장 프로브에 요구**했다(위양성) —
+    #   *«파생으로 바꿔도 축이 틀리면 틀린다»*. 축은 «키» 가 아니라 «(출처 변수, 키)» 다.
+    # ★공백에 관대하게 — 첫 판은 `echo  "$B"`(두 칸) 때문에 13개 중 8개만 집었고,
+    #   그 절단이 **하한 단언을 빨갛게 만들어** 드러났다(조용히 반쪽이 되지 않았다).
+    pairs = _re.findall(
+        r"""echo\s+"\$([A-Z])"\s*\|\s*grep -oE ['"]([a-z_]+)=""", dash)
+    assert len(pairs) >= 13, f"★키 수집기가 죽었다(공허 방지) — {sorted(set(pairs))}"
+    sources = {"G": PROBE, "B": MON / "latency_burst_probe.py"}
+    assert set(v for v, _ in pairs) <= set(sources), f"★모르는 출처 변수: {set(v for v, _ in pairs)}"
+    missing = []
+    for var, key in sorted(set(pairs)):
+        if f"{key}=%s" not in sources[var].read_text(encoding="utf-8"):
+            missing.append(f"${var}:{key}")
+    assert missing == [], f"★계기판이 뽑는데 프로브가 안 내보내는 키: {missing}"
+    # ★대조군 — 두 출처가 **둘 다** 실제로 쓰였는가(한쪽만 걸리면 반쪽 감시다).
+    assert {v for v, _ in pairs} == {"G", "B"}, sorted({v for v, _ in pairs})
+
+
+def test_watermark_key_is_derived_from_its_producer():
+    """★워터마크 키가 갈리면 화면에 조용히 `-` 만 뜬다 — **생산자에서 파생**해 대조한다."""
+    m = _probe_mod()
+    sched = (REPO / "propai-platform" / "apps" / "api" / "app" / "services"
+             / "growth" / "schedule.py").read_text(encoding="utf-8")
+    assert 'return f"growth_last_run.{job}"' in sched, "★생산자 형식이 바뀌었다(락이 낡았다)"
+    prefix, job = m.ANALYZE_WATERMARK_KEY.rsplit(".", 1)
+    assert prefix == "growth_last_run", m.ANALYZE_WATERMARK_KEY
+    # ★잡명이 실제 beat 잡과 같아야 한다 — 오타면 영원히 `-` 다.
+    beat = (REPO / "propai-platform" / "apps" / "api" / "app" / "tasks"
+            / "celery_app.py").read_text(encoding="utf-8")
+    assert f"growth_tasks.{job}_growth" in beat or f"growth_tasks.{job}" in beat, job

@@ -55,6 +55,34 @@ ASTATE_MISSING = "(필드없음)"
 ASTATE_ABSENT = "(행없음)"
 
 
+def analysis_fields(arow, watermark):
+    """설정 행 → 계기판이 `PROBE` 줄에서 뽑는 **다섯 값**.
+
+    ★**순수 함수로 꺼낸 이유**(2026-09-12 변이 실측): 이 대응이 `main()` 안에 있을 때는
+      DB 가 있어야만 태울 수 있어 **어떤 테스트도 도달하지 못했다** — `isinstance` 조건을
+      무력화하고 네 줄을 지워도 **전부 SURVIVED**(변이 6건). 층이 안 태워지면 «N/N CAUGHT»
+      는 그 사실의 가림막이다. 형제 `analysis_status_payload`(생산자 쪽)도 같은 이유로 순수다.
+
+    반환: `(astate, aat, aaxes, ains, alast)` — 전부 문자열/None 이며 공백이 없다
+      (계기판이 `grep -oE 'astate=[^ ]+'` 로 **공백 경계**로 뽑기 때문이다 —
+       `axes` 는 원본에 공백이 있어 `_` 로 바꾸지 않으면 **뒤가 통째로 잘린다**).
+
+    ★`None` 과 «dict 가 아닌 값» 을 **같이** 부재로 보낸다 — 둘 다 "이 스냅샷으로는
+      판정 못 한다" 이고, 갈라 봐야 처방이 같다.
+    """
+    if isinstance(arow, dict):
+        astate = str(arow.get("state") or ASTATE_ABSENT)
+        aat = str(arow.get("at") or "-")
+        aaxes = str(arow.get("axes") or "-").replace(" ", "_")
+        ains = arow.get("insights")
+        if ains is None:
+            ains = "-"
+    else:
+        astate, aat, aaxes, ains = ASTATE_ABSENT, "-", "-", "-"
+    alast = str(watermark).strip('"') if watermark else "-"
+    return astate, aat, aaxes, ains, alast
+
+
 def analysis_verdict(astate, insights_24h):
     """계기판 ③ 이 인사이트 24h 창 **0** 을 만났을 때 무엇이라 불러야 하는가.
 
@@ -68,6 +96,12 @@ def analysis_verdict(astate, insights_24h):
       unknown — **안 재 봤다**. 0 과 절대 뭉치지 않는다
 
     ★네 모집단이 **서로 다른 값**을 내야 한다. 하나로 접으면 이 함수는 장식이다.
+
+    ★**변이 생존을 여기 적는다**(2026-09-12 · 점수 부풀리기 방지): 아래 사유 **문구**를
+      바꾸는 변이는 생존한다. **구멍이 아니다** — 계약은 `kind` 와 «각 모집단이 자기만의
+      사유를 낸다» 이지 그 문장의 철자가 아니다. 문구를 단언하면 다듬을 때마다 깨지는
+      취약한 락이 된다(§G-30). 대신 **다섯 입력이 다섯 개의 서로 다른 사유**를 내는지를
+      락이 단언하고, 그것이 `astate == ASTATE_MISSING` 분기의 무력화를 잡는다.
     """
     if astate == ASTATE_MISSING:
         return "unknown", "프로브에 분석상태 필드가 없다 — 컨테이너의 프로브가 옛 사본이다"
@@ -146,16 +180,7 @@ async def main():
         wm = (await s.execute(text(
             "select value from platform_settings where key = :k"),
             {"k": ANALYZE_WATERMARK_KEY})).scalar()
-        if isinstance(arow, dict):
-            astate = str(arow.get("state") or ASTATE_ABSENT)
-            aat = str(arow.get("at") or "-")
-            aaxes = str(arow.get("axes") or "-").replace(" ", "_")
-            ains = arow.get("insights")
-        else:
-            # ★`None` 과 «dict 가 아닌 값» 을 **같이** 여기로 보낸다 — 둘 다
-            #   "이 스냅샷으로는 판정 못 한다" 이고, 갈라 봐야 처방이 같다.
-            astate, aat, aaxes, ains = ASTATE_ABSENT, "-", "-", "-"
-        alast = str(wm).strip('"') if wm else "-"
+        astate, aat, aaxes, ains, alast = analysis_fields(arow, wm)
         print("PROBE now=%s ctrl_type_total=%s ctrl_type_alltime=%s "
               "impossible_post=%s impossible_pre=%s "
               "engine_alive=%s builds=%s overlap=%s "
