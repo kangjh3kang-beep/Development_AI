@@ -5,6 +5,8 @@
  *     totalFloorArea · grossFloorAreaSqm · gross_floor_area_sqm · total_gfa_sqm · far.effective_pct
  *   여기가 그 하나의 출처다. 소비처는 `building-overview-adapters.ts` 를 경유한다.
  */
+import { PYEONG_SQM } from "@/lib/formatters";
+
 import {
   type BuildingUseCode,
   normalizeBuildingUse,
@@ -159,8 +161,16 @@ export function makeUseLine(
   };
 }
 
-/** 1평 = 3.3058㎡(부동산 관행 · 공식 환산치). 표시 전용 — **저장하지 않는다.** */
-export const SQM_PER_PYEONG = 3.3058;
+/**
+ * ★평↔㎡ 상수를 **여기에 두지 않는다** — 정본은 `lib/formatters.ts` 의 `PYEONG_SQM` 이다.
+ *
+ * ★★2026-09-12 — 나는 여기에 `SQM_PER_PYEONG = 3.3058` 을 새로 적었고, 래칫 락
+ *   (`construction-cost-params.test.ts`)이 *"보유 파일이 11개로 늘었다(상한 10)"* 로 잡았다.
+ *   ***SSOT 를 만드는 PR 에서 내가 다섯 번째 이름을 만들었다.***
+ *   ★게다가 그 정본의 주석은 **명문으로** *"3.3058 근사값 혼용 금지"* 라고 적고 있었다
+ *   (정본 값은 `3.305785` = 백엔드 `PYEONG_TO_SQM` 과 동일). 나는 금지된 그 값을 썼다.
+ *   ★잡아 준 것은 내 주의가 아니라 **래칫**이다 — 그리고 래칫을 올려 통과시키지 않았다.
+ */
 
 /**
  * 용도별 **입력 항목 구성** — 사용자 요청의 *«평형·상가·오피스 등 건축물 종목에 따른 입력항목»*.
@@ -201,5 +211,5 @@ export function fieldsForUse(code: BuildingUseCode): UseLineFields {
 export function derivePyeong(avgExclusiveSqm: number | null): number | null {
   if (avgExclusiveSqm === null || !Number.isFinite(avgExclusiveSqm) || avgExclusiveSqm <= 0)
     return null;
-  return avgExclusiveSqm / SQM_PER_PYEONG;
+  return avgExclusiveSqm / PYEONG_SQM;
 }
