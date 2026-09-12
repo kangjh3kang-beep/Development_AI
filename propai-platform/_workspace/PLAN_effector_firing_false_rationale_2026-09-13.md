@@ -46,9 +46,10 @@
 
 | 락 | 무엇을 잠그나 |
 |---|---|
-| `test_consumer_accepts_every_severity_the_producer_can_emit` | ★**생산 severity ⊆ 소비 severity.** 생산은 `_classify_quality` 를 **태워서** 파생(소스 안 읽음), 소비는 **ast 로 실행 문자열만**(주석·독스트링 배제). 소비처를 `critical` 로 좁히면 **조용한 도달 불가** → 이 락이 빨개진다 |
+| `test_consumer_accepts_every_severity_the_producer_can_emit` | ★**생산 severity ⊆ 소비 severity.** 생산은 `_classify_quality` 를 **태워서** 파생(소스 안 읽음), 소비는 **`text()` 인자만**(★종전 「ast 로 실행 문자열만」은 §10 MEDIUM-1 이 **철회한 문구**인데 §5 에 남아 있었다 — R3 MEDIUM-E). 소비처를 `critical` 로 좁히면 **조용한 도달 불가** → 이 락이 빨개진다 |
 | ~~`test_the_down_pct_floor_actually_filters_two_populations`~~ | ★**R1 MAJOR-2 로 삭제**(§8) — 게이트를 **재구현**해 진짜 게이트를 `if True` 로 바꿔도 SURVIVED 였다. 그 축은 형제 `test_l1_...::test_the_gate_decides_at_the_boundary` 가 **실물 `ff.evaluate()`** 로 잠근다 |
-| `test_producer_emits_the_insight_type_the_consumer_queries` | `quality_drop` 오타 잠금(생산↔소비 문자열 동일성) |
+| `test_producer_emits_the_insight_type_the_consumer_queries` | ★**생산 배선** 잠금 — 「동일성」이 아니라 **일방 포함 + 살아 있는 호출부**(R3 MEDIUM-B/MINOR-3 정정). 다른 **생산되는** 타입으로 바꿔치기는 **못 잡는다**(의미 판정) |
+| `test_the_candidate_window_is_pinned_against_loosening` | ★**결정적 축**(`timedelta(hours=6)`)을 느슨해지는 방향으로 핀 — AST 리터럴 핀이라 **런타임 0줄** 유지(R3 MAJOR-3) |
 | `xfail(strict=True)` | ★**미잠금 부채를 초록 안에** — 표의 **산문 근거**가 코드와 어긋나는 것은 의미 판정이라 기계가 못 잡는다 |
 
 ★**공허 방지 선단언**을 각 락에 넣었다(생산 집합이 비면 실패 · 질의 문자열을 못 찾으면 실패).
@@ -191,7 +192,7 @@
 |---|---|---|
 | **MAJOR-A** §5 가 삭제된 락을 선언 | §5 행을 취소선+사유로 교체 | `git grep` 유일 히트가 계획서였다 → 해소 |
 | **MAJOR-B** 오타 락이 **존재 검사**라 생산처 파괴가 SURVIVED | 발행 dict 의 `insight_type` 값을 **AST 로 파생**해 소비 파싱값과 `⊇` 대조 | 생산 리터럴 변이 **SURVIVED → CAUGHT** |
-| **MAJOR-C** 독스트링의 「실측」이 재현 불가 + 한계 오진 | *"15점 표본"* 철회 → **구조적 한계**로 교체(severity 대입이 `analyzer.py:462` **유일**이라 술어 변이는 원리적으로 `⊆{"warn"}` 를 못 벗어난다) + **그 축은 형제가 잡는다**고 명시 | — |
+| **MAJOR-C** 독스트링의 「실측」이 재현 불가 + 한계 오진 | *"15점 표본"* 철회 → **구조적 한계**로 교체(severity 대입이 **`_classify_quality` 안에서** 유일이라 술어 변이는 원리적으로 `⊆{"warn"}` 를 못 벗어난다 — ★R3 MEDIUM-C 로 **범위 정정**: 모듈 전체로는 **8곳**이고 `:1005` 는 `'critical'` 을 낸다) + **그 축은 형제가 잡는다**고 명시 | — |
 | **MAJOR-D** 「막는 건 `down_pct` 하나」가 거짓 | 세 표면 전부 정정 | 아래 실측 |
 | **MEDIUM-A** `accepted` 합집합이 제2 `text()` 로 뭉개짐 | 게이트 질의를 **유일 특정**(`quality_drop` ∧ `status='open'`) + `len==1` 단언 | 살아 있는 미끼 **SURVIVED → CAUGHT** · ★위양성 대조군(미끼만) **SURVIVED** 유지 |
 | **MEDIUM-B** 「보류→None→강등」 기제가 측정행과 모순 | 추론/측정을 갈라 적음(그 4행은 **보류 도입 이전 생산자** 산출) | — |
@@ -213,5 +214,38 @@
 
 ### ★남는 한계(정직 표기)
 
-- `hours=6` **창 축은 잠기지 않았다**(미측정 · 이 PR 의 락 축이 아니다).
-- `status='open'` 축 변이는 CAUGHT 이나 **잡는 것은 형제** `test_l1_...` 이다 — 내 기여가 아니다.
+- ~~`hours=6` 창 축 미잠금(미측정 · 내 락 축 아님)~~ → ★**라벨이 틀렸다**(R3 MAJOR-3): 같은 커밋이 그 축을 **0/4 로 측정**하고 **결정적 축으로 승격**시켜 놓고 «내 축 아님»이라 적었다 — **잠글 수 있는데 안 잠근 것**이었다. ⇒ 신설 락으로 **CAUGHT**.
+- ~~`status='open'` 축은 형제가 잡는다~~ → ★**틀린 귀속**(R3 MINOR-1): 새 파일만 태워도 `CAUGHT` 다. ***겸양이라도 틀린 귀속은 다음 사람의 커버리지 지도를 망친다.***
+
+---
+
+## §11. R3 상환 (MAJOR 3 · MEDIUM 5 · MINOR 3 — 델타만 공격 · REQUEST CHANGES)
+
+★R3 는 **논지를 재검증하지 않았다**(두 번 확인됐으므로). 표적은 `9a03497a8..7fd5a1787` 델타였고,
+**세 MAJOR 가 전부 R2 상환에서 새로 쓴 코드**에 있었다. **세 라운드 연속 같은 자리다.**
+
+| 지적 | 상환 | 재검증 |
+|---|---|---|
+| **MAJOR-1** 수집기가 **여전히 존재 검사** — 생산자 **호출부**를 지워도 초록 | `_producer_of()` + `_producer_functions_with_live_call_sites()` 로 **배선**을 단언 | 호출부 삭제 **SURVIVED → CAUGHT** · ★위양성 대조군(무관 주석) **SURVIVED** |
+| **MAJOR-2** 수집기가 `Call` 발행을 못 봐 **거짓 메시지**를 낼 수 있었다 | 「발행 안 함」과 **「판정 불가」**를 분리 — 파생 불가 발행식이 있으면 **단정하지 않는다** | 파생 집합에 `latency_*` 부재 ↔ 라이브 438/49건(최신 0.0h·5.6h) |
+| **MAJOR-3** 결정적 축 `hours=6` 이 **느슨해지는 방향 무잠금** | `test_the_candidate_window_is_pinned_against_loosening` 신설(**AST 리터럴 핀** — 런타임 0줄 유지) | `hours=600` **SURVIVED → CAUGHT** |
+| **MEDIUM-A** 두 락이 게이트를 **다른 축**으로 골랐다 | `_gate_sql()` 로 **한 곳 통일** | — |
+| **MEDIUM-B/MINOR-3** 「동일성」이 아니라 **일방 포함** | §5 표기 정정 + 락 독스트링에 **못 잡는 것** 명시 | — |
+| **MEDIUM-C** 새 전제가 **과대 범위**(`analyzer.py` → 실제 8곳, `'critical'` 포함) | 범위를 **`_classify_quality` 안**으로 좁힘 | — |
+| **MEDIUM-D** 「19일째 생산 정지」가 고유 현상처럼 읽힘 | **형제 축 실측**을 함께 적음(latency 최신 **0.0h** — 배치는 돈다) | — |
+| **MEDIUM-E** §5 1행이 **철회된 문구**를 싣고 있었다 | 교체 | — |
+| **MINOR-1** 「형제가 잡는다」가 **틀린 귀속** | 취소선 + 정정 | 새 파일만으로 **CAUGHT** |
+
+### ★상환 중에 **또 결함을 만들었고, 기계가 잡았다**
+
+`test_producer_…` 를 다시 쓰면서 **파일 끝의 `xfail` 부채 표식을 통째로 지웠다.**
+드러난 경로 둘: ①테스트 수가 `2 passed·1 xfailed` → **`3 passed`** 로 바뀐 것
+②`ruff` 의 **`F401 pytest imported but unused`**.
+⇒ **테스트 이름 집합을 차집합으로 대조**해 확인하고 복원했다(사라진 것 **0건**).
+★***순증이 순삭제를 덮는다*** — 이 저장소의 기록된 실패 형태이고, 이번엔 **두 기계 신호**가 잡았다.
+
+### ★R3 가 재현해 준 것(저자 보고 검증 — 전부 일치)
+
+라이브 4축 수치 한 자리도 안 틀림(`total`↔`len(items)` 비절단 · 역대조군 `zzz_nope`=0 ·
+정대조군 `fallback_rate`=30) · `_sql_literals()` 의 `text()` 좁히기는 **실제 면역** ·
+삭제한 약체 중복의 **잔재 0건** · 「3/3→2/3」 자진 정정.
