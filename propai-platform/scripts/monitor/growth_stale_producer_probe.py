@@ -151,9 +151,16 @@ def schedule_verdict(sat, sjobs, soverdue, now):
         at = at.replace(tzinfo=timezone.utc)
     age_min = int((now - at).total_seconds() // 60)
     if age_min >= SCHEDULE_STALE_MIN:
+        # ★**여기서 원인을 단정하지 않는다**(독립 리뷰 MINOR-3 · 2026-09-12 구조 확인).
+        #   종전엔 «스케줄러 자신이 멈춘 모양이다» 라고 적었는데, 그건 이 값으로 알 수 없다:
+        #   `main.py` 틱 루프는 잡을 **순차 `await`** 하고 `_growth_run_locked` 에 **타임아웃이 없다**.
+        #   따라서 «틱 루프 사망」과 «긴 잡이 도는 중»이 **같은 모양**이다(스냅샷이 낡는다).
+        #   ***진단 못 하는 자리에서 진단하면 사람을 틀린 곳으로 보낸다*** — 관측만 적고
+        #   후보를 **복수로** 남긴다.
         return "obs", (
-            "스케줄 스냅샷이 %d분 낡았다(관용 %d분) — **틱 루프**를 보라. "
-            "잡 하나가 아니라 스케줄러 자신이 멈춘 모양이다" % (age_min, SCHEDULE_STALE_MIN)
+            "스케줄 스냅샷이 %d분 낡았다(관용 %d분). 후보 둘: 틱 루프가 멈췄거나, "
+            "긴 잡(learn/improve)이 도는 중이다 — 둘은 이 값으로 못 가른다. "
+            "직전 잡 워터마크와 컨테이너 로그를 함께 보라" % (age_min, SCHEDULE_STALE_MIN)
         )
     if soverdue != "-":
         return "obs", (

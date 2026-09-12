@@ -62,6 +62,12 @@ def test_job_dead_and_tick_dead_are_different_reasons():
     assert why_job != why_tick
     assert "틱은 돌고" in why_job, why_job
     assert "틱 루프" in why_tick, why_tick
+    # ★★낡은 스냅샷 쪽은 **원인을 단정하지 않는다**(2026-09-12 구조 확인):
+    #   틱 루프는 잡을 **순차 await** 하고 타임아웃이 없어, «틱 사망」과 «긴 잡이 도는 중»이
+    #   **같은 모양**이다. 진단 못 하는 자리에서 진단하면 사람을 틀린 곳으로 보낸다.
+    assert "후보 둘" in why_tick, f"원인을 단정하고 있다: {why_tick}"
+    assert "못 가른다" in why_tick, why_tick
+    assert "멈춘 모양이다" not in why_tick, f"근거 없는 단정이 남아 있다: {why_tick}"
     # 공허 방지: 두 문장이 실제로 다른 곳을 가리키는가
     assert "지연된 잡" in why_job and "지연된 잡" not in why_tick
 
