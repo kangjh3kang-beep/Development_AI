@@ -66,10 +66,17 @@ def _producible_severities() -> set[str]:
     """`_classify_quality` 를 **실제로 태워서** 낼 수 있는 severity 를 모은다.
 
     ★소스를 읽지 않는다 — 함수를 부르므로 분기 변경이 반영된다.
-    ★★**전수가 아니라 15점 표본이다**(독립 리뷰 지적). `warn=0` 을 고정했고
-      `fail ∈ {0, vtotal}` 만 본다. 실측: `analyzer.py` 의 `or`→`and` 는 CAUGHT 이지만
-      **`>`→`>=` 는 SURVIVED** 다. ⇒ 이 헬퍼는 «생산 가능 집합의 하한»을 주지
-      «분기 전수»를 주지 않는다. **그 한계를 여기 적어 둔다**(면역을 거짓 주장하지 않는다).
+    ★★**한계는 「표본」이 아니라 「구조」다**(R2 MAJOR-C 정정).
+      종전엔 *"15점 표본이라 `>`→`>=` 를 못 잡는다"* 고 적었다. **그 진단이 틀렸다** —
+      *"더 촘촘히 하면 된다"* 는 **틀린 처방**을 지시한다.
+      실제 이유: `analyzer.py` 에서 severity 대입은 **`severity = "warn"` 한 곳뿐**이다.
+      그러므로 `_classify_quality` **술어 안의 어떤 변이도** 생산 가능 집합을
+      `⊆ {"warn"}` 밖으로 내보낼 수 없다 — **표본을 무한히 늘려도 원리적으로 못 잡는다.**
+    ⇒ 이 헬퍼가 잠그는 것은 **「생산 집합이 소비 집합에 담기는가」** 하나다.
+      술어(`>` ↔ `>=`, `or` ↔ `and`)는 **이 락의 축이 아니다** — 그 축은 형제
+      `test_growth_analysis_coverage.py` · `test_growth_reason_reaches_surface.py` 가 잡는다
+      (R2 실측: 파생 10파일로 넓혀야 CAUGHT 이고, **잡는 것은 그 형제들**이다).
+    ★***「이 헬퍼가 잡는다」고 읽히게 적지 않는다*** — 그게 이 PR 이 고치러 온 결함이다.
     """
     out: set[str] = set()
     floor = A.QUALITY_MIN_SAMPLES
@@ -88,8 +95,14 @@ def test_consumer_accepts_every_severity_the_producer_can_emit() -> None:
     produced = _producible_severities()
     assert produced, "생산처가 아무 severity 도 못 냈다 — 수집기가 죽었다(공허한 참 방지)"
 
-    quality_sql = [s for s in _sql_literals() if "quality_drop" in s]
-    assert quality_sql, "소비처에서 quality_drop 질의를 못 찾았다(조회기 사망)"
+    # ★게이트 질의 **하나만** 고른다 — 합집합을 쓰면 같은 함수의 **두 번째 `text()`** 가
+    #   판정을 뭉갠다(R2 MEDIUM-A 실측: 살아 있는 미끼 질의를 한 줄 더하면 SURVIVED).
+    #   게이트는 `quality_drop` + `status='open'` 을 **함께** 담은 리터럴이다.
+    quality_sql = [s for s in _sql_literals() if "quality_drop" in s and "status='open'" in s]
+    assert len(quality_sql) == 1, (
+        f"게이트 질의를 유일하게 특정하지 못했다({len(quality_sql)}건) — "
+        f"질의가 늘었으면 이 락의 축을 다시 정해야 한다"
+    )
     # ★하드코딩 후보 목록을 쓰지 않는다 — `severity IN (...)` 절에서 **파생**한다.
     #   목록을 쓰면 새 severity 어휘가 조용히 통과한다(독립 리뷰 MINOR).
     accepted: set[str] = set()
@@ -106,16 +119,43 @@ def test_consumer_accepts_every_severity_the_producer_can_emit() -> None:
     )
 
 
+def _emitted_insight_types() -> set[str]:
+    """생산처가 **발행 dict 에 싣는** `insight_type` 값을 AST 로 파생한다.
+
+    ★R2 MAJOR-B: 종전 판은 *"analyzer.py 의 Constant 어딘가에 `quality_drop` 이 있는가"* 였다.
+      그건 **존재 검사**라 발행 리터럴(`_analyze_quality_drop` 의 emit dict)을 깨도
+      **같은 파일의 화면 문구 포매터**(`if t == "quality_drop":`)가 초록을 유지했다
+      (실측 `::VERDICT=SURVIVED`). ⇒ **발행 자리의 값만** 뽑는다.
+    """
+    src = Path(inspect.getfile(A)).read_text(encoding="utf-8")
+    out: set[str] = set()
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Dict):
+            continue
+        for k, v in zip(node.keys, node.values, strict=False):
+            if (isinstance(k, ast.Constant) and k.value == "insight_type"
+                    and isinstance(v, ast.Constant) and isinstance(v.value, str)):
+                out.add(v.value)
+    return out
+
+
 def test_producer_emits_the_insight_type_the_consumer_queries() -> None:
-    """생산처가 만드는 `insight_type` 과 소비처가 조회하는 문자열이 같은가(오타 잠금)."""
-    a_src = Path(inspect.getfile(A)).read_text(encoding="utf-8")
-    emitted = [
-        n.value for n in ast.walk(ast.parse(a_src))
-        if isinstance(n, ast.Constant) and n.value == "quality_drop"
-    ]
-    assert emitted, "analyzer 가 quality_drop 을 발행하지 않는다 — 소비처 질의가 영원히 빈다"
-    assert any("quality_drop" in s for s in _sql_literals()), \
-        "소비처가 quality_drop 을 조회하지 않는다"
+    """★생산 발행값 **⊇** 소비 조회값 — 존재가 아니라 **동일성**을 본다."""
+    emitted = _emitted_insight_types()
+    assert emitted, "발행 dict 에서 insight_type 을 하나도 못 뽑았다(수집기 사망)"
+
+    gate = [s for s in _sql_literals() if "status='open'" in s and "insight_type=" in s]
+    assert gate, "소비처 게이트 질의를 못 찾았다(조회기 사망)"
+    queried = {
+        m for s in gate for m in re.findall(r"insight_type\s*=\s*'([^']+)'", s)
+    }
+    assert queried, f"게이트에서 insight_type 값을 못 뽑았다: {gate}"
+
+    missing = queried - emitted
+    assert not missing, (
+        f"★소비처가 조회하는 {sorted(missing)} 를 생산처가 **발행하지 않는다** — "
+        f"그 질의는 영원히 0행이다. 발행={sorted(emitted)}"
+    )
 
 
 @pytest.mark.xfail(strict=True, reason=(

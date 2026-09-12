@@ -47,7 +47,7 @@
 | 락 | 무엇을 잠그나 |
 |---|---|
 | `test_consumer_accepts_every_severity_the_producer_can_emit` | ★**생산 severity ⊆ 소비 severity.** 생산은 `_classify_quality` 를 **태워서** 파생(소스 안 읽음), 소비는 **ast 로 실행 문자열만**(주석·독스트링 배제). 소비처를 `critical` 로 좁히면 **조용한 도달 불가** → 이 락이 빨개진다 |
-| `test_the_down_pct_floor_actually_filters_two_populations` | **두 모집단** — 바닥 위는 후보가 되고 **중간대는 걸러진다**. 한쪽만 보면 「아무것도 안 하는 구현」과 구별 불가 |
+| ~~`test_the_down_pct_floor_actually_filters_two_populations`~~ | ★**R1 MAJOR-2 로 삭제**(§8) — 게이트를 **재구현**해 진짜 게이트를 `if True` 로 바꿔도 SURVIVED 였다. 그 축은 형제 `test_l1_...::test_the_gate_decides_at_the_boundary` 가 **실물 `ff.evaluate()`** 로 잠근다 |
 | `test_producer_emits_the_insight_type_the_consumer_queries` | `quality_drop` 오타 잠금(생산↔소비 문자열 동일성) |
 | `xfail(strict=True)` | ★**미잠금 부채를 초록 안에** — 표의 **산문 근거**가 코드와 어긋나는 것은 의미 판정이라 기계가 못 잡는다 |
 
@@ -62,10 +62,11 @@
 | 변이 | 뜻 | 판정 |
 |---|---|---|
 | 소비처 `severity IN ('warn','critical')` → `IN ('critical')` | **조용한 도달 불가** 만들기 | `::VERDICT=CAUGHT` |
-| `FEATURE_DISABLE_ERROR_PCT` **40 → 20** | ★**거짓 근거가 지시하던 바로 그 처방** | `::VERDICT=CAUGHT` |
+| `FEATURE_DISABLE_ERROR_PCT` **40 → 20** | ★거짓 근거가 지시하던 그 처방 | `CAUGHT` — ★**그러나 내 기여 아님**. 형제만 태운 대조군에서도 `CAUGHT`(§8 MAJOR-1). **이 PR 의 신규 커버리지는 2/3** |
 | 소비처 `quality_drop` → `quality_drpo` | 생산↔소비 문자열 절단 | `::VERDICT=CAUGHT` |
 
-★★**그런데 「3/3 CAUGHT」를 그대로 인용하면 안 된다.** 기계 도구를 돌린 결과:
+★★**이 표를 「3/3」으로 인용하면 안 된다 — 실제 신규는 2/3 이다**(위 표 ② 참조 · 근거는 §8 MAJOR-1 의 대조군).
+그리고 기계 도구를 돌린 결과:
 
     python scripts/mutate_changed.py --tests tests/test_feature_toggle_band_is_reachable.py
       base: origin/main → 89fa2da46e32 (공통 조상 · 남의 커밋 제외)
@@ -80,7 +81,13 @@
 
 ## §7. 회귀
 
-파생 모집단(변경 3심볼을 참조하는 테스트) **13파일 · 205 passed · 2 xfailed · 실패 0**.
+파생 모집단 — ★**값이 아니라 명령**으로 적는다:
+
+    grep -rlE "_classify_quality|quality_drop|effector_firing|firing_status" tests/
+
+결과(head `60a06de40` 이후 · R2 상환 반영): **15파일 · 204 passed · 1 xfailed · 실패 0**.
+★종전엔 *"13파일 · 205 passed · 2 xfailed"* 라고 **명령 없이** 적어 재현이 안 됐다(R2 MINOR-2).
+숫자 차이의 원인은 **내가 쓴 파생 축이 달랐던 것**이다 — 그래서 명령을 박는다.
 `ruff check .` 전체 통과(★`SIM300` 1건을 **커밋 전에** 적발 — #1042 는 바로 이 자리에서 CI 가 죽었다).
 
 ---
@@ -172,3 +179,39 @@
 **0건**. 판정기 생존 대조군: `app/routers/growth.py` **12건** · `app/routers/land_price.py` **6건** ·
 서비스 층 형제 `feature_flags.py`·`analyzer.py` **0건**. ⇒ **api 불요**(근거는 「docstring 미변경」이
 아니라 「라우트 데코레이터 0건 ∧ `__doc__` 소비처 0건」).
+
+---
+
+## §10. R2 적대 리뷰 상환 (MAJOR 4 · MEDIUM 2 · MINOR 3 — REQUEST CHANGES)
+
+★R2 는 **핵심 논지를 전부 독립 재확인**했다(`>20 ⊇ >=40` · 도달 가능 · `warn` 단독 발행 ·
+`UPDATE … SET severity` 0건 · 런타임 0줄). 지적은 전부 **락과 그 락을 정당화한 근거**에 대한 것이다.
+
+| 지적 | 상환 | 재검증 |
+|---|---|---|
+| **MAJOR-A** §5 가 삭제된 락을 선언 | §5 행을 취소선+사유로 교체 | `git grep` 유일 히트가 계획서였다 → 해소 |
+| **MAJOR-B** 오타 락이 **존재 검사**라 생산처 파괴가 SURVIVED | 발행 dict 의 `insight_type` 값을 **AST 로 파생**해 소비 파싱값과 `⊇` 대조 | 생산 리터럴 변이 **SURVIVED → CAUGHT** |
+| **MAJOR-C** 독스트링의 「실측」이 재현 불가 + 한계 오진 | *"15점 표본"* 철회 → **구조적 한계**로 교체(severity 대입이 `analyzer.py:462` **유일**이라 술어 변이는 원리적으로 `⊆{"warn"}` 를 못 벗어난다) + **그 축은 형제가 잡는다**고 명시 | — |
+| **MAJOR-D** 「막는 건 `down_pct` 하나」가 거짓 | 세 표면 전부 정정 | 아래 실측 |
+| **MEDIUM-A** `accepted` 합집합이 제2 `text()` 로 뭉개짐 | 게이트 질의를 **유일 특정**(`quality_drop` ∧ `status='open'`) + `len==1` 단언 | 살아 있는 미끼 **SURVIVED → CAUGHT** · ★위양성 대조군(미끼만) **SURVIVED** 유지 |
+| **MEDIUM-B** 「보류→None→강등」 기제가 측정행과 모순 | 추론/측정을 갈라 적음(그 4행은 **보류 도입 이전 생산자** 산출) | — |
+| **MINOR 1·2** §6 「3/3」· §7 명령 부재 | 제자리 정정 + 파생 명령 명기 | — |
+| **MINOR 3** 선재 무기준 주장 5곳 | ★**이 PR 범위 밖**(전부 선재)이라 손대지 않고 **좌표만 남긴다**: `analyzer.py:654·725·1153` · `healing_rules.py:208·229` | — |
+
+### ★MAJOR-D 실측 — 게이트는 **네 술어의 곱**이다
+
+    [라이브 2026-09-13 · insight_type 필터 · total=4=len(items) **비절단**]
+    ftotal+vtotal>=10   **4/4 통과**
+    status='open'       **2/4**
+    created_at>=now-6h  **0/4**   ← ★이 축 하나가 전부를 떨어뜨린다(나이 461~479h ≈ 19~20일)
+    down_pct>=40        **0/4**
+
+⇒ ***`down_pct` 를 100 으로 만들어도 게이트는 0행이다.*** 더 상위 사실은
+**`quality_drop` 이 약 19일째 생산되지 않았다**는 것이다.
+★***두 축을 갈라 놓고 질의문의 나머지 두 축을 뭉뚱그렸다*** — 이 PR 이 고치러 온 그 형태를
+**상환문 안에서** 재발시켰다. R1 MAJOR-3 정정(1차)→2차→**3차**로 세 번 고쳤다.
+
+### ★남는 한계(정직 표기)
+
+- `hours=6` **창 축은 잠기지 않았다**(미측정 · 이 PR 의 락 축이 아니다).
+- `status='open'` 축 변이는 CAUGHT 이나 **잡는 것은 형제** `test_l1_...` 이다 — 내 기여가 아니다.

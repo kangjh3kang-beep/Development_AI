@@ -50,7 +50,7 @@ L0·L1 이 **같은 매체**에 있다. 따라서 위 0건은 매체를 잘못 �
 
 | 효과기 | 실제 | 0건의 뜻 |
 |---|---|---|
-| `feature_toggle` | **살아 있는 경로** — 조건 미충족 | ★**데이터 조건**이다(배선 결함 아님). ★★두 축을 뭉뚱그리지 마라 — **표본 축은 이미 통과한다**(라이브 `quality_drop` 4건 전부 `ftotal+vtotal` **25~38 ≥ 10**). 막는 것은 **`down_pct` 축 하나**이고, 그 값이 `0.0` 인 이유는 **`feedback_total` 이 4건 전부 `0`** 이기 때문이다 ⇒ `enough_feedback=False` → 보류 → 소비처가 `None or 0.0` 으로 강등. 즉 **엄지내림 깔때기(`ai_feedback`)에 행이 한 번도 안 들어왔다**(생산 경로는 `routers/growth.py:758` 에 **실재** — 장치 부재가 아니라 **사건 미발생**). 잠금: `tests/test_feature_toggle_band_is_reachable.py` |
+| `feature_toggle` | **살아 있는 경로** — 조건 미충족 | ★**데이터 조건**이다(배선 결함 아님). ★★**막는 축이 하나가 아니다**: 게이트는 `status='open'` **AND** `created_at >= now-6h` **AND** `down_pct>=40` **AND** `ftotal+vtotal>=10` 네 술어의 곱이다. 라이브 실측 (2026-09-13 · `GET /growth/insights?insight_type=quality_drop` · total=4=len(items) **비절단**): 표본 축 **4/4 통과** · `status='open'` **2/4** · **창 축 0/4**(행 나이 461~479시간 ≈ 19~20일) · `down_pct>=40` **0/4**. ⇒ ***`down_pct` 를 100 으로 만들어도 창 축에서 0행이다.*** 그리고 더 상위 사실은 **`quality_drop` 이 약 19일째 생산되지 않았다**는 것이다. 잠금: `tests/test_feature_toggle_band_is_reachable.py` |
 | `stale_reanalysis` | **자기참조** — 유일한 생산자가 자기 자신 | **건강한 시스템의 사실**(원장 훼손이 없었다는 뜻). 결함 아님 |
 | `prompt_ab_adopt` | ★**구조적 도달 불가** | `_pick_better_version` 이 `cand-N` 라벨을 기대하는데 텔레메트리는 `"v4"` 를 준다 → 언제나 `insufficient_versions`. **부트스트랩 교착** |
 
@@ -63,22 +63,30 @@ L0·L1 이 **같은 매체**에 있다. 따라서 위 0건은 매체를 잘못 �
     **40 → 20**. 그런데 `_classify_quality` 의 severity 는 **`"warn"` 하나뿐**이라 등급 구분이 없다
     ⇒ 임계를 20 으로 내리면 ***「경고」와 「자동 비활성」이 같은 지점이 된다.*** 임계를 조금 낮추는 것이
     아니라 **관측 층과 조치 층의 분리를 없애는 것**이다(`llm_narrative` 가 절반의 down 비율에 꺼진다).
-  ★★**2026-09-13 2차 정정(독립 적대 리뷰 MAJOR-3)** — 위 1차 정정도 **여전히 부정확했다.**
-    *"`down_pct>=40` **이면서** `ftotal+vtotal>=10` 인 서비스가 없었을 뿐"* 은 **두 축을 뭉뚱그려**
-    *"어느 쪽으로도 나쁘지 않았다"* 로 읽힌다. 실측은 다르다:
+  ★★**2026-09-13 2·3차 정정** — 1차 정정도, 그것을 고친 2차도 **부정확했다.**
 
-        [라이브 GET /api/v1/growth/insights?insight_type=quality_drop · 2026-09-13]
-        4건 전부 severity=warn · verify_total 38/25/29/29 · **feedback_total 0/0/0/0** · down_pct 0.0
-        ⇒ 표본 축 `ftotal+vtotal>=10` : **4/4 충족**      ← 이미 통과한다
-        ⇒ `down_pct>=40`              : **0/4**          ← 막는 건 이 축 하나
-        ★대조군 insight_type=fallback_rate → 30건(severity에 critical 포함) ⇒ 필터·조회기 생존
+    2차: *"막는 것은 `down_pct` 축 **하나**"* → ★**거짓**(R2 MAJOR-D).
+    두 축을 갈라 놓고 **질의문의 나머지 두 축을 뭉뚱그렸다** — 내가 고치러 온 그 모양 그대로다.
 
-    ⇒ **막는 것은 품질이 아니라 「피드백이 0행」이다.** `feature_toggle` 은 전적으로
-      **엄지내림 깔때기 뒤에** 있고 그 깔때기가 **한 행도 만든 적이 없다**(생산 경로는
-      `routers/growth.py:758` 에 실재 ⇒ **장치 부재가 아니라 사건 미발생**).
-    ★그리고 이 PR 이 *"미측정 — 권한 차단"* 이라 적었던 것이 **거짓이었다**: 위 조회는
-      **인증 붙은 공개 엔드포인트 한 번**이면 되고 프로덕션 DB 가 필요 없다.
-      ***「못 잰다」고 적기 전에 「이 축으로 잴 수 있나」를 먼저 물었어야 했다.***
+    소비 게이트 전문(`feature_flags.py:480-484`)은 **네 술어의 곱**이다:
+        insight_type='quality_drop' AND severity IN ('warn','critical')
+        AND status='open' AND created_at >= now-6h        ← ★질의 안의 두 축
+        …이후 파이썬에서  down_pct>=40  AND  ftotal+vtotal>=10
+
+    라이브 실측(2026-09-13 · `insight_type` 필터 · **total=4=len(items) 비절단**):
+        ftotal+vtotal>=10   **4/4 통과**
+        status='open'       **2/4**
+        created_at>=now-6h  **0/4**   ← ★이 축 하나가 전부를 떨어뜨린다(나이 461~479h ≈ 19~20일)
+        down_pct>=40        **0/4**
+    ⇒ ***`down_pct` 를 100 으로 만들어도 게이트는 0행을 반환한다.***
+    ⇒ 그리고 **더 상위 원인**: `quality_drop` 자체가 **약 19일째 생산되지 않았다.**
+
+    ★**「보류→None→강등」 기제 서술도 추론이었다**(R2 MEDIUM-B). 측정된 4행의 `metrics_json` 은
+      `"down_pct": 0.0`(**실수**)이고 `down_pct_absent` 가 **없다** — `withheld()` 는
+      `{field: None, …_absent}` 를 낸다. ⇒ 그 4행은 **보류 도입 이전 생산자**가 쓴 것이다
+      (전부 2026-08-24 생성). **현재 코드가 그럴 것**이라는 추론을 **측정된 행의 설명으로 단정**했다.
+      ***결론(0이라 통과 못 함)은 맞고 기제가 틀렸다*** — 이 파일이 고치러 온 바로 그 형태다.
+    ★「못 잰다」고 적기 전에 「이 축으로 잴 수 있나」를 물어라(1차 정정의 교훈은 유효하다).
 
   ⇒ 그래서 산문을 고치는 데서 그치지 않고 **계약을 잠갔다**:
     `tests/test_feature_toggle_band_is_reachable.py` — «생산처가 내는 severity ⊆ 소비처가 받는 severity»

@@ -17,8 +17,10 @@
 
     [스냅샷 · GET /api/v1/growth/insights?insight_type=quality_drop · 2026-09-13 · sid=68ed1a1d]
     4건 · 전부 severity=warn · verify_total 38/25/29/29 · **feedback_total 0/0/0/0** · down_pct 0.0
-    ⇒ ★표본 축(`ftotal+vtotal>=10`)은 **이미 4/4 통과**한다. 막는 것은 `down_pct` 축 하나이고
-      그 원인은 **피드백 0행**이다(엄지내림 깔때기 미발화 — 사건 미발생).
+    ⇒ ★표본 축(`ftotal+vtotal>=10`)은 **이미 4/4 통과**한다. ★★그러나 막는 축은 하나가 아니다 —
+      `status='open'` **2/4** · **`created_at>=now-6h` 0/4**(나이 461~479시간) · `down_pct>=40` **0/4**.
+      ⇒ ***`down_pct` 를 100 으로 해도 창 축에서 0행이다.*** 더 상위 사실은
+      **`quality_drop` 이 약 19일째 생산되지 않았다**는 것이다.
     ★대조군 insight_type=fallback_rate → 30건 ⇒ 조회기·필터 생존
 
 ★★**기준을 달아 적는다**(종전엔 *"관측: …4건 전부 down_pct=0.0"* 이 **측정 시각·주체 없이**
