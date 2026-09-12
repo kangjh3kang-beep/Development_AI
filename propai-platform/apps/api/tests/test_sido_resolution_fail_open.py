@@ -1752,6 +1752,59 @@ def test_cap_rate_basis_is_derived_from_the_declared_item() -> None:
     assert f"상업용부동산 {'·'.join(S._CAP_RATE_ITM)} 실측" == "상업용부동산 소득수익률 실측"
 
 
+def test_rejection_is_not_silent(monkeypatch) -> None:
+    """★**로그가 난다**는 것은 동작 주장이다 — 단언이 없으면 지워도 초록이다(전역 §G-30 짝).
+
+    기계 변이(`base: origin/main → ffb74f919521` · 27변이)가 이 자리를 짚었다: 로그 가드
+    `if len(_matched_raw) != _before:` **조건무력화가 생존**했다. MEDIUM-2 의 처방이
+    «사유가 다시 「기본」으로 뭉개지지 않게 로그를 낸다» 였는데, **그 처방을 지키는 단언이 없었다.**
+    ★문구는 잠그지 않는다(표현이라 다듬을 때마다 깨진다) — **발화 여부와 진단 인자**만 본다.
+    """
+    import app.services.external_api.reb_client as RC
+    from app.services.land_intelligence.reb_statistics_service import _CAP_RATE_ITM
+
+    seen: list[dict] = []
+    monkeypatch.setattr(RC.logger, "info", lambda _m, **kw: seen.append(kw))
+
+    rows = [{"CLS_NM": "서울", "CLS_FULLNM": "서울", "ITM_NM": "투자수익률",
+             "DTA_VAL": 6.96, "WRTTIME_IDTFR_ID": "2012"}]
+    # ★공허 방지 — 이 입력이 정말 «선언 밖이라 제외되는» 모집단인가.
+    assert RC.latest_value_from_rows(rows, "서울", itm_allow=_CAP_RATE_ITM) is None
+
+    assert seen, "선언 불일치로 행을 전부 지웠는데 **로그가 한 줄도 없다**"
+    # ★진단에 필요한 인자가 실린다 — «무엇을 허용했고 몇 개를 지웠나».
+    kw = {k: v for d in seen for k, v in d.items()}
+    assert "allow" in kw and "dropped" in kw, kw
+    assert kw["dropped"] >= 1, kw
+
+    # ★대조군 — 아무것도 안 지울 때는 **조용하다**(로그가 항상 나면 진단이 안 된다).
+    seen.clear()
+    ok = [dict(rows[0], ITM_NM="소득수익률")]
+    assert RC.latest_value_from_rows(ok, "서울", itm_allow=_CAP_RATE_ITM) == (6.96, "2012")
+    assert not any("dropped" in d for d in seen), f"지운 것이 없는데 제외 로그가 났다: {seen}"
+
+
+def test_cap_rate_basis_string_is_pinned_across_the_boundary() -> None:
+    """★**계약인 문자열은 리터럴로 못 박는다** — 파생만으로는 값이 안 잠긴다.
+
+    기계 변이가 `basis` f-string 의 **문자열 변경을 생존**시켰다: 파생 단언
+    (`"_CAP_RATE_ITM" in src`)은 **접두·접미 낱말이 바뀌어도 참**이기 때문이다.
+    그런데 이 문자열은 **경계를 건너는 계약**이다 —
+      · 제출 PDF: `report/render/appraisal_adapter.py:200` 가 그대로 인쇄
+      · 화면 락:  `apps/web/components/operations/__tests__/DeskAppraisalReport.render.test.tsx`
+                 가 **정규식으로 이 문자열을 매칭**한다(프론트가 값으로 분기한다)
+    ⇒ 소비처가 **문자열로 분기하면 계약**이다(2026-09-12 에 형제 PR 에서 도출한 규칙).
+      ★그 규칙을 여기 적용하지 않아 **같은 클래스를 옆 파일에서 재발**시켰다.
+    """
+    import app.services.land_intelligence.reb_statistics_service as S
+
+    basis = f"상업용부동산 {'·'.join(S._CAP_RATE_ITM)} 실측"
+    assert basis == "상업용부동산 소득수익률 실측", (
+        f"제출본·화면이 매칭하는 문자열이 바뀌었다: {basis!r} — "
+        "프론트 미러(DeskAppraisalReport.render.test.tsx)도 함께 고쳐야 한다"
+    )
+
+
 @pytest.mark.xfail(
     strict=True,
     reason="★부채(독립 적대 리뷰 MAJOR-3): 형제 축 `jeonse_conversion_rate` 는 항목을 선언하지 "
