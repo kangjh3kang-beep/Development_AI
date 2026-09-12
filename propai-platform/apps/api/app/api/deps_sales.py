@@ -34,7 +34,35 @@ from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
 # ★SSOT(단일 출처): 플랫폼 User.role → sales 폴백 역할 매핑(조직노드 없을 때).
 # deps_sales 가 sales 인증의 최하위 모듈이므로 여기서 1회 정의하고, site_auth 등 상위 모듈은
 # 이 집합을 import 해 재사용한다(과거 deps_sales·site_auth 중복정의로 드리프트 위험이 있었음).
-_SUPERADMIN_ROLES = {"superadmin", "super_admin", "admin", "owner", "총괄관리자", "platform_admin"}
+# ★★**가입 기본값을 담지 않는다**(2026-09-12 · 사용자 결정).
+#
+#   `POST /register`(`routers/auth.py:347`)는 **새 Tenant 를 만들고** 그 사용자에게
+#   `role=UserRole.ADMIN.value`("admin") 를 준다 — 독스트링 그대로 *"Create a **tenant**
+#   admin account"*. `team_service.py:133,246` 도 팀에서 나온 사람을 **자기 개인 테넌트로
+#   복원**할 때 같은 라벨을 쓴다. 즉 `admin`·`owner` 는 **「내 테넌트의 관리자」**라는
+#   **테넌트 스코프 라벨**이다.
+#
+#   그런데 이 집합은 `resolve_site_membership` 에서 **테넌트 검사 없이**
+#   `("", "SUPERADMIN")` 을 내주는 **플랫폼 스코프 게이트**다(아래 :210). 두 스코프가
+#   같은 문자열을 공유하면 **가입한 누구나 플랫폼 전체 현장의 SUPERADMIN** 이 된다.
+#
+#   ★저장소는 이 함정을 **이미 알고 있었다** — `tier=='super_admin'` 로 판별하는 파일이
+#     **8개**이고(`billing_service.is_super_admin` · `routers/growth.py:166` ·
+#     `routers/admin_secrets.py:51` · `routers/admin_sales_rls.py:29` 등), 그 독스트링이
+#     *"role로 판별하면 모든 사용자가 플랫폼 전체를 보는 누출이 된다"* 를 명문으로 적는다.
+#     **`deps_sales` 만 role 게이트였다.**
+#
+#   ★라이브 실측(2026-09-12 · 읽기 전용): `/sales/sites`(테넌트 스코프) **13** vs
+#     `/sales/my-sites` **14** — 추가 1건의 `membership` 이 **`admin`**, 즉 이 게이트로
+#     들어온 **자기 테넌트 밖 현장**이었다.
+#
+#   ★DB 층은 막아 주지 않는다: RLS 정책에 `OR current_setting('app.role')='SUPERADMIN'`
+#     이 있고 이 파일이 **판정된 role 을 그대로 주입**한다. `sales_sites` 는 애초에
+#     정책 대상도 아니다(`site_id` 컬럼 없음).
+#
+#   ⇒ **플랫폼 전역 라벨만 남긴다.** 자기 테넌트 현장은 아래 `owns_site` 가 계속 연다
+#     (실측 13건이 그 경로). 축을 `tier` 로 옮기는 것은 **더 큰 변경이라 별건**이다.
+_SUPERADMIN_ROLES = {"superadmin", "super_admin", "총괄관리자", "platform_admin"}
 _DEVELOPER_ROLES = {"developer", "시행사", "dev"}
 
 # 한 사용자가 같은 현장에 복수의 살아있는 조직노드를 가질 수 있다((site_id,user_id) UNIQUE 부재).
