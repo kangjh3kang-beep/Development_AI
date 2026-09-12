@@ -25,34 +25,51 @@
 #   ***한 곳을 고치면 전역이 따라오게 한다.***
 #
 # 사용: assert_a1_host "$REPO" "<상태를 적는 함수 이름 또는 빈 문자열>"
-#   · A1 이 아니면  → 안내를 stderr 로 내고 **exit 8**
-#   · A1 인데 경로 없음 → **exit 1**(다른 이름의 사건)
-#   · 경로가 있으면 → **아무것도 하지 않는다**(정상 경로에서는 한 줄도 안 돈다)
+#   · `$REPO` 가 있으면              → **아무것도 하지 않는다**(정상 경로에서는 한 줄도 안 돈다)
+#   · `$REPO` 가 없으면 **양쪽을 재서** 무엇이 어긋났는지 말하고 exit 8
+#
+# ★★2026-09-12 R1(독립 리뷰 MAJOR-1) — **초판은 「부재로부터 유도」했다.**
+#   초판 가드는 개발 표식(`$HOME/My_Projects/...`·`$PWD/propai-platform`)이 **없으면**
+#   「그러므로 A1」로 유도했다. 그래서 **표식이 둘 다 없는 기계**에서 실측하면
+#       exit=1 · "★중단 — **A1 로 보이는데** … 실제 경로/체크아웃 문제입니다"
+#   가 나왔다. **A1 인지 한 번도 재지 않고 A1 이라고 말한다.**
+#   ***이 PR 이 고치려던 결함(한 문구가 두 사건을 덮음)을 PR 안에서 재발시킨 것이고,***
+#   더 정확히는 ***«A 의 증거가 없다» 에서 «¬A 가 참이다» 를 유도***한 것이다.
+#
+# ★처방 — **부재를 세지 말고 대응을 만든다**(이 규율은 세션 식별에서도 같은 날 값을 냈다):
+#   이 스크립트가 **실제로 어느 체크아웃에서 실행되고 있는지**를 `BASH_SOURCE` 로 재서
+#   `$REPO` 와 **비교**한다. 둘 다 관측값이므로 유도가 없다.
+#     · 같다  → A1 레이아웃(정상)
+#     · 다르다 → **내가 다른 체크아웃에서 돌고 있다** — 그 사실을 **양쪽 값과 함께** 말한다
 # ════════════════════════════════════════════════════════════════
 assert_a1_host() {
   local repo="${1:?assert_a1_host: repo 경로가 필요하다}"
   local status_fn="${2:-}"
   [ -d "$repo" ] && return 0
 
-  # 여기가 A1 인지 아닌지를 **실제로 가른다** — 개발 워크트리에는 중첩 경로가 있다.
-  if [ -d "$HOME/My_Projects/Development_AI" ] || [ -d "$PWD/propai-platform" ]; then
-    [ -n "$status_fn" ] && "$status_fn" "ABORT wrong-host(A1 아님)"
-    cat >&2 <<'WRONGHOST'
-★중단 — 여기는 배포 서버(A1)가 아닙니다. **경로 상수를 고치지 마십시오.**
+  # ★부재로부터 유도하지 않는다 — **내가 실행되고 있는 저장소**를 직접 잰다.
+  #   이 파일은 <저장소>/propai-platform/scripts/lib/ 에 있으므로 루트는 세 단계 위다.
+  local self_repo
+  self_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd -P)" || self_repo=""
 
-이 스크립트는 A1 에서 돌도록 만들어졌고, A1 에는 $HOME/Development_AI 가 실재합니다.
-지금 보이는 중첩 경로($HOME/My_Projects/Development_AI)는 **개발 워크트리 쪽 사실**입니다.
+  [ -n "$status_fn" ] && "$status_fn" "ABORT wrong-checkout(REPO 부재)"
+  cat >&2 <<WRONGHOST
+★중단 — \$REPO 가 없습니다. **경로 상수를 고치지 마십시오.**
 
-  ✘ REPO 를 My_Projects 경로로 바꾸면  → A1 에서 cd 실패 · 배포/롤백 영구 차단
+  기대한 저장소(\$REPO)        : ${repo}          ← **없음**
+  지금 실행 중인 저장소        : ${self_repo:-(판정 불가)}
+  \$HOME                       : ${HOME}
+
+★두 값이 다르면 **경로가 틀린 것이 아니라 기계(또는 체크아웃)가 다른 것**입니다.
+  이 스크립트는 배포 서버(A1)에서 돌도록 만들어졌고, **그 상수는 호스트 의존**입니다:
+      A1        : \$HOME/Development_AI            **실재**
+      개발 머신 : \$HOME/My_Projects/Development_AI **실재**(A1 경로는 없음)
+  **둘 다 참입니다.** 어느 한쪽 리터럴로 「고치면」 **반대쪽이 영구히 막힙니다.**
+
   ◎ A1 에서 실행하십시오:
-      ssh -i ~/.oci.key ubuntu@<A1> 'bash $HOME/Development_AI/propai-platform/scripts/<이 스크립트>'
+      ssh -i ~/.oci.key ubuntu@<A1> 'bash \$HOME/Development_AI/propai-platform/scripts/<이 스크립트>'
     (★A1 주소는 기억에서 적지 말고 저장소에서 파생하십시오)
+★두 값이 **같은데도** 이 메시지가 보인다면 그때는 진짜 체크아웃 손상입니다(디렉토리가 사라졌습니다).
 WRONGHOST
-    exit 8
-  fi
-
-  # A1 로 보이는데 경로가 없다 = **진짜 경로/체크아웃 문제**(다른 사건이다).
-  [ -n "$status_fn" ] && "$status_fn" "FAIL repo-missing($repo)"
-  echo "★중단 — A1 로 보이는데 $repo 가 없습니다. 이건 실제 경로/체크아웃 문제입니다." >&2
-  exit 1
+  exit 8
 }

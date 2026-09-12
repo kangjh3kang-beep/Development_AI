@@ -69,18 +69,75 @@ def test_script_exists_and_parses() -> None:
     assert subprocess.run(["bash", "-n", str(SCRIPT)]).returncode == 0
 
 
+#: A1 저장소 경로 선언의 **허용된 두 모양**. 값은 하나뿐이고, 기본값 형태만 다르다.
+#: ``REPO="$HOME/Development_AI"``  /  ``REPO="${REPO:-$HOME/Development_AI}"``
+_REPO_DECL = re.compile(r'^REPO(?:_DIR)?="(?:\$\{[A-Z_]+:-)?(\$HOME/[^"}]+)\}?"', re.M)
+
+#: A1 의 저장소 루트. ★이 리터럴을 **양방향으로** 못 박는다 — 이 값은 **호스트 의존**이라
+#: 어느 쪽(A1 / 개발 머신)으로 고쳐도 반대쪽이 영구히 막힌다.
+A1_REPO_ROOT = "$HOME/Development_AI"
+
+
 def test_repo_constant_is_the_a1_path() -> None:
     """★★**경로 상수를 고치지 못하게 한다** — 이 락의 존재 이유다.
 
-    A1 에 실재하는 경로는 ``$HOME/Development_AI`` 다. 개발 워크트리의 중첩 경로로
-    바꾸면 A1 에서 ``FAIL cd-repo`` 가 나서 배포가 영구히 막힌다.
+    ★★2026-09-12 R1(독립 리뷰 MAJOR-2) — **초판은 `safe-deploy.sh` 한 파일만 봤다.**
+    형제 ``rollback-web.sh`` 는 ``REPO="${REPO:-$HOME/Development_AI}"`` 형태라
+    초판 정규식 ``^REPO="([^"]+)"`` 이 **기본값 표현식 통째로** 잡아 비교가 무의미했고,
+    애초에 **그 파일을 읽지도 않았다**. 즉 ***더 위험한 쪽***(장애 중에 집는 스크립트)이
+    **무잠금**이었다. ***손으로 고른 파일 하나는 곧 상한이 된다.***
+
+    → 모집단을 **파생**하고, 선언의 **두 모양**을 다 받는다.
     """
-    src = SCRIPT.read_text(encoding="utf-8")
-    m = re.search(r'^REPO="([^"]+)"', src, re.M)
-    assert m, "REPO 선언을 못 찾았다 — 조회기가 죽었다(이름이 바뀌었나)"
-    assert m.group(1) == "$HOME/Development_AI", (
-        f"REPO 가 {m.group(1)!r} 로 바뀌었다. A1 에는 그 경로가 없다 — "
-        "개발 워크트리에서 본 중첩 경로를 여기 적으면 프로덕션 배포가 막힌다."
+    scripts = _a1_repo_scripts()
+    assert scripts, "모집단이 비었다 — 조회기가 죽었다"
+    checked, bad = 0, []
+    for rel in scripts:
+        src = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        m = _REPO_DECL.search(src)
+        if m is None:
+            continue  # 선언 없이 문자열만 언급하는 파일(아래 공허 가드가 수를 지킨다)
+        checked += 1
+        # ★불변식은 「같다」가 아니라 **「A1 루트에 뿌리내린다」**이다.
+        #   `REPO_DIR="$HOME/Development_AI/propai-platform"` 은 **정당한 다른 변수**다
+        #   (저장소 루트가 아니라 compose 디렉토리를 가리킨다). 「같다」로 걸면 **위양성**이고,
+        #   ★위양성도 결함이다 — 정상 코드를 막는 락은 곧 꺼진다.
+        declared = m.group(1)
+        if declared != A1_REPO_ROOT and not declared.startswith(A1_REPO_ROOT + "/"):
+            bad.append(f"{rel}: {declared!r}")
+    # 공허 진리 가드 — 선언을 하나도 못 찾으면 「위반 0」이 무의미하다.
+    assert checked >= 3, f"선언을 {checked}건만 파싱했다(실측 하한 3) — 정규식이 낡았다: {scripts}"
+    assert not bad, (
+        "A1 저장소 경로 상수가 바뀌었다. 그 값은 **호스트 의존**이라 어느 쪽으로 고쳐도 "
+        f"반대쪽이 영구히 막힌다:\n" + "\n".join(bad)
+    )
+
+
+def test_constant_lock_sees_both_declaration_shapes() -> None:
+    """[판별력] 정규식이 **두 모양을 다 읽는다** — 한쪽만 읽으면 다른 쪽이 무잠금이다.
+
+    ★초판이 정확히 그래서 뚫렸다. 픽스처로 **양쪽을 실제로 태운다**(모집단 하나 금지).
+    """
+    plain = _REPO_DECL.search('REPO="$HOME/Development_AI"\n')
+    defaulted = _REPO_DECL.search('REPO="${REPO:-$HOME/Development_AI}"\n')
+    assert plain and plain.group(1) == A1_REPO_ROOT, "직접 선언형을 못 읽는다"
+    assert defaulted and defaulted.group(1) == A1_REPO_ROOT, "기본값 선언형을 못 읽는다"
+    # 음성 대조 — 개발 머신 경로는 **위반으로 잡혀야** 한다(안 잡히면 락이 장식이다).
+    wrong = _REPO_DECL.search('REPO="${REPO:-$HOME/My_Projects/Development_AI}"\n')
+    assert wrong and wrong.group(1) != A1_REPO_ROOT, "틀린 경로가 통과한다"
+
+    # ★「뿌리내림」 판정의 두 모집단을 갈라 태운다 — 한쪽만 보면 위양성/위음성이 남는다.
+    def rooted(v: str) -> bool:
+        return v == A1_REPO_ROOT or v.startswith(A1_REPO_ROOT + "/")
+
+    assert rooted("$HOME/Development_AI"), "루트 자신이 위반으로 잡힌다"
+    assert rooted("$HOME/Development_AI/propai-platform"), (
+        "하위 디렉토리를 가리키는 정당한 변수가 위반으로 잡힌다 — 위양성도 결함이다"
+    )
+    assert not rooted("$HOME/My_Projects/Development_AI"), "개발 머신 경로가 통과한다"
+    # ★접두사 함정 — 이름이 비슷한 **다른** 디렉토리가 통과하면 안 된다.
+    assert not rooted("$HOME/Development_AI_bizfooter"), (
+        "접두사만 같은 다른 저장소가 통과한다 — `/` 경계를 안 본 것이다"
     )
 
 
@@ -90,7 +147,7 @@ def test_detects_wrong_host_with_dedicated_code(tmp_path: Path) -> None:
     (home / "My_Projects" / "Development_AI").mkdir(parents=True)
     r = _run(str(home), str(REPO_ROOT))
     assert r.returncode == 8, f"기대 8, 실제 {r.returncode}\nstderr={r.stderr[:400]}"
-    assert "wrong-host" in Path("/tmp/deploy_status.txt").read_text(encoding="utf-8")
+    assert "wrong-checkout" in Path("/tmp/deploy_status.txt").read_text(encoding="utf-8")
 
 
 def test_guidance_actually_discourages_editing_the_constant(tmp_path: Path) -> None:
@@ -115,19 +172,37 @@ def test_specificity_does_not_fire_on_an_a1_like_host(tmp_path: Path) -> None:
     home = tmp_path / "home"
     (home / "Development_AI" / "propai-platform").mkdir(parents=True)
     r = _run(str(home), str(home))
-    assert r.returncode != 8, "A1 처럼 보이는데 wrong-host 로 막았다 — 위양성"
+    assert r.returncode != 8, "A1 처럼 보이는데 막았다 — 위양성"
     status = Path("/tmp/deploy_status.txt").read_text(encoding="utf-8")
-    assert "wrong-host" not in status, f"상태가 여전히 wrong-host 다: {status!r}"
+    assert "wrong-checkout" not in status, f"상태가 여전히 wrong-checkout 다: {status!r}"
 
 
-def test_a1_with_missing_repo_is_a_different_event(tmp_path: Path) -> None:
-    """★두 사건이 **다른 이름**을 갖는다 — 같은 이름이면 애초의 결함이 그대로다."""
+def test_marker_less_host_is_not_called_a1(tmp_path: Path) -> None:
+    """★★**부재로부터 A1 을 유도하지 않는다**(독립 리뷰 MAJOR-1 의 잠금).
+
+    초판은 개발 표식이 **없으면** 「그러므로 A1」로 유도해, 표식이 둘 다 없는 기계에서
+    *"★중단 — **A1 로 보이는데** …"* 를 냈다. **A1 인지 한 번도 재지 않고** 말한 것이다.
+    ⇒ 이제는 **양쪽을 재서 비교**한다. 이 테스트가 그 유도를 다시 못 하게 막는다.
+    """
     home = tmp_path / "home"
-    home.mkdir()  # A1 도 아니고 중첩 경로도 없다 → 「진짜 경로 없음」
+    home.mkdir()  # 표식 없음: A1 경로도, 개발 중첩 경로도 없다
     r = _run(str(home), str(home))
+    assert r.returncode == 8, f"기대 8, 실제 {r.returncode}"
+    assert "A1 로 보이는데" not in r.stderr, (
+        "표식이 없을 뿐인데 「A1 로 보인다」고 단정한다 — 부재로부터 유도하고 있다"
+    )
+    # ★양쪽 **관측값**이 실제로 실려 있어야 한다(둘 다 없으면 사람이 판단할 수 없다).
+    assert str(home) in r.stderr, "기대한 $REPO 를 안 보여 준다"
+    assert str(REPO_ROOT) in r.stderr, "지금 실행 중인 저장소를 안 보여 준다"
+
+
+def test_status_names_the_measured_event(tmp_path: Path) -> None:
+    """★상태 문구가 **잰 것**을 말한다 — 「호스트」라고 단정하지 않는다(잰 것은 체크아웃이다)."""
+    home = tmp_path / "home"
+    (home / "My_Projects" / "Development_AI").mkdir(parents=True)
+    _run(str(home), str(REPO_ROOT))
     status = Path("/tmp/deploy_status.txt").read_text(encoding="utf-8")
-    assert "wrong-host" not in status
-    assert "repo-missing" in status, f"경로 부재가 따로 표시되지 않는다: {status!r}"
+    assert "wrong-checkout" in status, f"상태가 잰 것을 말하지 않는다: {status!r}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
