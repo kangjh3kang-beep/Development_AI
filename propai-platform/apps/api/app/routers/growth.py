@@ -490,6 +490,17 @@ class HealLogOut(BaseModel):
     #:   실측 전례가 있다. 별도 배열 + 별도 계수로 둔다(기존 필드 의미 불변).
     blocked: list[HealBlockedOut] = []
     blocked_total: int = 0
+    #: ★사유별 계수 — **합산이 두 상태를 뭉개는 것**을 막는다(2026-09-12 독립 리뷰 MAJOR-2).
+    #:
+    #:   `healing_rules` 는 `CAP_BLOCK_REASONS`(기록용 · global_cap+trigger_cap)와
+    #:   `ESCALATION_COUNT_REASONS`(판정용 · **trigger_cap 하나뿐**)를 **의도적으로** 가른다.
+    #:   그 이유가 같은 파일 주석에 실측과 함께 있다 — *"`global_cap` 은 「이 트리거의 치유가
+    #:   무효」가 아니라 「지금 아픈 서비스가 여럿」이다. 그걸 critical 로 올리면 서사가 거짓말"*
+    #:   (시뮬 실측: `cache_warm` 계수차단 41건이 **전부 global_cap**).
+    #:
+    #: ⇒ `blocked_total` 만 보면 그 구별이 **다시 사라진다.** 침묵을 가르려고 만든 필드가
+    #:   **새 침묵**을 만드는 자리였다. 사유별로 함께 싣는다.
+    blocked_by_reason: dict[str, int] = {}
 
 
 class RollbackResult(BaseModel):
@@ -614,9 +625,22 @@ async def heal_log(
             created_at=br[1],
         ))
 
+    # 사유별 계수 — **같은 필터**로, 합산과 별개로 낸다(MAJOR-2).
+    # ★`bparams` 에는 위에서 `limit`/`offset` 이 들어갔다 — 이 질의는 그것을 참조하지 않으므로
+    #   **필터 키만** 넘긴다(참조 없는 바인드를 보내지 않는다).
+    rparams = {k: v for k, v in bparams.items() if k in ("at", "since")}
+    reason_rows = (await db.execute(text(
+        "SELECT payload->>'reason' AS reason, COUNT(*) AS n FROM platform_events "
+        f"WHERE {bwhere_sql} GROUP BY 1"
+    ), rparams)).fetchall()
+    blocked_by_reason = {
+        (rr[0] or "unknown"): int(rr[1] or 0) for rr in reason_rows
+    }
+
     return HealLogOut(
         actions=actions, active_flags=active_flags, total=int(total),
         blocked=blocked, blocked_total=int(blocked_total),
+        blocked_by_reason=blocked_by_reason,
     )
 
 
