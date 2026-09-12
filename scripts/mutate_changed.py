@@ -363,6 +363,7 @@ def _is_front(test: str) -> bool:
 
 def _audit_counts(
     generated: int, survived: int, undecided: int, skipped: int, truncated: int = 0,
+    scoped_out_files: int = 0, only_out_files: int = 0,
 ) -> dict[str, int]:
     """이 실행의 **분모와 분자**. 순수 함수로 둔다 — 산수는 잠글 수 있어야 한다.
 
@@ -375,6 +376,9 @@ def _audit_counts(
         "generated": generated, "judged": judged, "caught": judged - survived,
         "survived": survived, "undecided": undecided, "skipped": skipped,
         "truncated": truncated,
+        # ★**단위가 다르다 — 이 둘은 「파일 수」다.** 그래서 `judged`(변이 수)에서 빼지 않고
+        #   별도 칸으로 싣는다. 섞으면 항등식이 거짓이 되고, 다음 사람이 단위를 오독한다.
+        "scoped_out_files": scoped_out_files, "only_out_files": only_out_files,
     }
 
 
@@ -390,7 +394,12 @@ def _audit_exit(counts: dict[str, int]) -> int:
     """
     if counts["survived"]:
         return 1
-    if counts["undecided"] or counts["skipped"] or counts["truncated"]:
+    # ★`only_out_files` 는 **선언된 좁히기**라 rc 에 안 싣는다(사용자가 의도를 밝혔다).
+    #   나머지는 전부 «아무도 선언하지 않은 미감사»다.
+    if (
+        counts["undecided"] or counts["skipped"]
+        or counts["truncated"] or counts["scoped_out_files"]
+    ):
         return 3
     return 0
 
@@ -610,11 +619,25 @@ def main() -> int:
         #   (`bash` 를 직접 태우거나 소스를 읽는다). vitest 대상이 될 수 없다.
         or (f.suffix in (".py", ".sh") and want_back)
     ]
+    # ★★**조용한 배제와 선언된 배제를 가른다.**
+    #   · 범위 불일치(`scoped_out`)는 **아무도 선언하지 않았다** — 그 파일의 변경은 한 번도
+    #     변이되지 않는데 종전엔 `rc` 에도 `::AUDIT=` 에도 안 실려, 「전부 감사됨」과
+    #     **구별되지 않는 신호**가 나갔다(독립 리뷰 R3 · 실측: `.ts` 변경이 통째로 빠졌는데 rc=0).
+    #   · `--only`(`only_out`)는 **사용자가 선언한 좁히기**라 rc 에 싣지 않는다
+    #     (형제 도구가 `MUTATE_ALLOW_SHELL` 로 «사유를 남기면 통과» 시키는 것과 같은 자리).
+    #   ★종전엔 이 수를 담던 변수 이름이 아래 `--max` 절단과 **같아서**(`dropped`) 값이
+    #     덮여 사라졌다 — 이름 충돌 자체가 이 결함의 운반체였다.
+    scoped_out = len(files) - len(scoped)
+    if scoped_out:
+        print(f"  ★테스트와 **짝이 맞지 않는 파일 {scoped_out}개**를 제외했다 — "
+              "그 변경은 이 실행에서 **한 번도 변이되지 않는다**(rc 에 실린다).")
+    only_out = 0
     if args.only:
-        scoped = [f for f in scoped if any(pat in str(f) for pat in args.only)]
-    dropped = len(files) - len(scoped)
-    if dropped:
-        print(f"  (테스트와 짝이 맞지 않는 파일 {dropped}개는 대상에서 제외)")
+        narrowed = [f for f in scoped if any(pat in str(f) for pat in args.only)]
+        only_out = len(scoped) - len(narrowed)
+        scoped = narrowed
+        if only_out:
+            print(f"  (`--only` 로 좁혀 {only_out}개 제외 — **선언된 좁히기**라 rc 에는 안 싣는다)")
     files = scoped
 
     muts: list[Mutation] = []
@@ -739,6 +762,7 @@ def main() -> int:
     #   `::AUDIT=generated=` 가 **거짓 분모**를 말한다(실측: 생성 9 · 출력 2).
     counts = _audit_counts(
         total_generated, len(survived), len(undecided), len(skipped), dropped,
+        scoped_out, only_out,
     )
     judged = counts["judged"]
     # ★★**기계 판독 줄** — 사람이 읽는 산문과 분리한다. 형제 `scripts/mutate_manual.sh` 가

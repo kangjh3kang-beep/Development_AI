@@ -559,21 +559,34 @@ def test_audit_counts_removes_unaudited_from_the_denominator(
     assert (
         c["judged"] + c["undecided"] + c["skipped"] + c["truncated"] == c["generated"]
     ), c
+    # ★`*_files` 는 **단위가 다르다**(파일 수) — 위 항등식(변이 수)에 섞이면 안 된다.
+    assert "scoped_out_files" in c and "only_out_files" in c, c
 
 
 @pytest.mark.parametrize(
-    ("surv", "und", "skip", "trunc", "want_rc"),
+    ("surv", "und", "skip", "trunc", "scoped", "only", "want_rc"),
     [
-        (0, 0, 0, 0, 0),   # 전부 걸렸고 감사 안 된 것 없음 → 초록
-        (2, 0, 0, 0, 1),   # 생존 있음
-        (0, 1, 0, 0, 3),   # ★판정 불가만 → **0 이면 안 된다**(전수 CAUGHT 와 같은 신호가 된다)
-        (0, 0, 1, 0, 3),   # ★건너뜀만 → 마찬가지
-        (0, 0, 0, 1, 3),   # ★★`--max` 절단만 → **기본 사용 경로**가 여기 걸린다
-        (2, 5, 5, 5, 1),   # 생존이 우선(가장 시끄러운 신호)
+        (0, 0, 0, 0, 0, 0, 0),   # 전부 걸렸고 감사 안 된 것 없음 → 초록
+        (2, 0, 0, 0, 0, 0, 1),   # 생존 있음
+        (0, 1, 0, 0, 0, 0, 3),   # ★판정 불가만 → **0 이면 안 된다**(전수 CAUGHT 와 같은 신호)
+        (0, 0, 1, 0, 0, 0, 3),   # ★건너뜀만
+        (0, 0, 0, 1, 0, 0, 3),   # ★★`--max` 절단만 → **기본 사용 경로**가 여기 걸린다
+        (0, 0, 0, 0, 1, 0, 3),   # ★★★**범위 불일치로 조용히 빠진 파일** — 네 번째 얼굴
+        (0, 0, 0, 0, 0, 1, 0),   # ★`--only` 는 **선언된 좁히기**라 rc 에 안 싣는다(두 모집단)
+        (2, 5, 5, 5, 5, 5, 1),   # 생존이 우선(가장 시끄러운 신호)
     ],
 )
-def test_audit_exit_puts_unaudited_work_on_the_return_code(surv, und, skip, trunc, want_rc):
-    counts = mc._audit_counts(10, surv, und, skip, trunc)
+def test_audit_exit_puts_unaudited_work_on_the_return_code(
+    surv, und, skip, trunc, scoped, only, want_rc,
+):
+    """★«감사되지 않은 일」은 **얼굴이 넷**이다 — 판정 불가 · 건너뜀 · 상한 절단 ·
+    **범위 불일치**. 하나를 rc 에 실었으면 나머지를 **같은 함수에서** 파생시켜야 한다.
+
+    ★네 번째(범위 불일치)는 R1→R2→R3 세 판을 거쳐서야 나왔다: 매번 «지적된 자리」만
+      고치고 형제 축을 남긴 것이다. 그래서 이 표가 **네 얼굴을 한 자리에** 세운다.
+    ★`only_out_files` 만 예외다 — 사용자가 `--only` 로 **의도를 선언**했다.
+    """
+    counts = mc._audit_counts(10, surv, und, skip, trunc, scoped, only)
     assert mc._audit_exit(counts) == want_rc, counts
 
 
@@ -780,3 +793,54 @@ def test_apply_at_line_preserves_line_endings(src, line_no, new, want):
     body = src.splitlines()[line_no - 1]
     m = mc.Mutation("줄삭제", pathlib.Path("x.sh"), body, new, line_no)
     assert mc._apply_at_line(src, m) == want
+
+
+# ── ⑲ R3 — **범위 불일치로 조용히 빠진 파일**도 rc 에 실린다(네 번째 얼굴) ──────
+def test_files_dropped_by_test_scope_are_not_silently_green(tmp_path):
+    """★변경 파일이 지정 테스트와 종류가 안 맞으면 **조용히 배제**되고, 그 변경은 이 실행에서
+    **한 번도 변이되지 않는다**. 그런데 종전엔 `rc` 에도 `::AUDIT=` 에도 안 실려
+    **「전부 감사됨」과 구별되지 않는 신호**가 나갔다(리뷰 R3).
+
+    ★이 PR 은 §6 에서 *«감사 안 된 일은 rc 에 반드시 실린다»* 를 **스스로 선언**했다 —
+      그 선언을 자기 안에서 어긴 자리다. 그리고 `.sh` 를 그 스코핑 경로에 **새로 편입**시켰다.
+    """
+    repo = tmp_path / "scoped"
+    (repo / "tests").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
+    _git("config", "user.email", "t@t", cwd=repo)
+    _git("config", "user.name", "t", cwd=repo)
+    # ★파일명은 `_run_tool` 이 `--tests` 로 주는 것과 **같아야** 한다 — 처음에 `test_c.py` 로
+    #   만들었다가 기준선이 깨져 도구가 일찍 종료했다(내 픽스처가 틀렸고 도구는 옳았다).
+    (repo / "tests" / "test_g.py").write_text(
+        "import pathlib\n"
+        "def test_g():\n"
+        "    assert 'exit 7' in pathlib.Path('g.sh').read_text(encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    _git("add", "-A", cwd=repo)
+    _git("commit", "-qm", "base", cwd=repo)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    (repo / "g.sh").write_text("#!/usr/bin/env bash\nexit 7\n", encoding="utf-8")
+    (repo / "a.ts").write_text("export const A = 1;\n", encoding="utf-8")
+    _git("add", "g.sh", "a.ts", cwd=repo)
+
+    # ★본판정 — `.ts` 변경이 통째로 빠졌는데 초록이면 안 된다.
+    r = _run_tool(repo, base, "--max", "50")
+    out = r.stdout + r.stderr
+    audit = re.search(r"^::AUDIT=(.+)$", out, re.MULTILINE)
+    assert audit, out
+    fields = dict(kv.split("=", 1) for kv in audit.group(1).split())
+    assert fields["scoped_out_files"] == "1", f"조용히 빠진 파일이 계수에 없다: {fields}"
+    assert r.returncode == 3, f"범위 배제가 있는데 rc={r.returncode}\n{out}"
+
+    # ★대조군 — **같은 저장소**에서 `.ts` 만 없애면 배제 0 · rc=0. 차가 0인 픽스처가 아니다.
+    (repo / "a.ts").unlink()
+    _git("rm", "-q", "--cached", "a.ts", cwd=repo)
+    r2 = _run_tool(repo, base, "--max", "50")
+    out2 = r2.stdout + r2.stderr
+    a2 = re.search(r"^::AUDIT=(.+)$", out2, re.MULTILINE)
+    assert a2 and "scoped_out_files=0" in a2.group(1), out2
+    assert r2.returncode == 0, f"배제가 없는데 rc={r2.returncode}\n{out2}"
