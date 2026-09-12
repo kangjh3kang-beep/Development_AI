@@ -42,7 +42,7 @@ INSIGHT_PROMPT_CANDIDATE = "prompt_candidate"
 # 1배치당 최대 프롬프트 개선후보 생성 수(LLM 비용가드).
 MAX_PROMPT_CANDIDATES_PER_RUN = 3
 
-# 프롬프트 개선후보 버전 레이블 접두(기본 v2 와 구분되는 후보군 표기).
+# 프롬프트 개선후보 버전 레이블 접두(base_interpreter._PROMPT_VERSION 기본값과 구분되는 후보군 표기).
 PROMPT_CANDIDATE_PREFIX = "cand-"
 
 # ── 변경파일 화이트리스트/금지경로(설계 §6.3 가드) ──────────────────────────
