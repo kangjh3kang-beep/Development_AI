@@ -1,0 +1,340 @@
+"""스케줄 축 — ★**「잡만 죽음」과 「틱 루프 죽음」을 가른다.**
+
+종전에는 둘이 **같은 모양**이었다(어느 표면에도 안 나왔다):
+  ① 틱은 도는데 어떤 잡의 실행만 죽음 → 그 잡 워터마크만 영구 지연 · 스냅샷은 **신선**
+  ② 틱 루프 자체가 죽음               → 스냅샷도 **같이 낡음**
+
+★이 파일이 생긴 계기는 **내가 오독한 사건**이다(2026-09-12 13:11Z):
+  `growth_last_run.learn` 9,471분 전을 보고 「6.6일째 멈췄다」고 의심했는데
+  `JOB_SPECS["learn"]` 주기가 **10080분(7일)** 이라 정상이었다.
+  ***측정자가 곧 오독자였다 — 경과만으로는 못 가른다.***
+"""
+
+import ast
+import importlib.util
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+_ROOT = Path(__file__).resolve().parents[1]            # …/propai-platform
+_PROBE = _ROOT / "scripts" / "monitor" / "growth_stale_producer_probe.py"
+_DASH = _ROOT / "scripts" / "monitor" / "integrator_dashboard.sh"
+
+_spec = importlib.util.spec_from_file_location("_probe_sched", _PROBE)
+probe = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(probe)
+
+NOW = datetime(2026, 9, 12, 13, 11, tzinfo=timezone.utc)
+LIVE_JOBS = "analyze_7/60_heal_6/10_correct_6/15_improve_268/1440_learn_9471/10080"
+
+
+def _iso(minutes_ago):
+    return (NOW - timedelta(minutes=minutes_ago)).isoformat()
+
+
+def test_five_populations_give_five_distinct_verdicts():
+    """★하나로 접히면 이 변경은 장식이다 — 다섯 입력이 **서로 다른 사유**를 낸다."""
+    cases = {
+        "정상": (_iso(1), LIVE_JOBS, "-"),
+        "잡만죽음": (_iso(1), LIVE_JOBS, "improve"),
+        "틱죽음": (_iso(30), LIVE_JOBS, "improve"),
+        "스냅샷없음": ("-", "-", "-"),
+        "at불가": ("zzz", LIVE_JOBS, "-"),
+    }
+    out = {k: probe.schedule_verdict(*v, NOW) for k, v in cases.items()}
+    kinds = {k: v[0] for k, v in out.items()}
+    assert kinds["정상"] == "ok"
+    assert kinds["잡만죽음"] == "obs"
+    assert kinds["틱죽음"] == "obs"
+    assert kinds["스냅샷없음"] == "unknown"
+    assert kinds["at불가"] == "unknown"
+    reasons = [v[1] for v in out.values()]
+    assert len(set(reasons)) == len(reasons), (
+        f"사유가 겹친다 — 사람을 같은 곳으로 보낸다: {reasons}"
+    )
+
+
+def test_job_dead_and_tick_dead_are_different_reasons():
+    """★핵심 판별 — 같은 `overdue` 인데 **스냅샷 나이**가 둘을 가른다."""
+    _, why_job = probe.schedule_verdict(_iso(1), LIVE_JOBS, "improve", NOW)
+    _, why_tick = probe.schedule_verdict(_iso(30), LIVE_JOBS, "improve", NOW)
+    assert why_job != why_tick
+    assert "틱은 돌고" in why_job, why_job
+    assert "틱 루프" in why_tick, why_tick
+    # ★★낡은 스냅샷 쪽은 **원인을 단정하지 않는다**(2026-09-12 구조 확인):
+    #   틱 루프는 잡을 **순차 await** 하고 타임아웃이 없어, «틱 사망」과 «긴 잡이 도는 중»이
+    #   **같은 모양**이다. 진단 못 하는 자리에서 진단하면 사람을 틀린 곳으로 보낸다.
+    assert "후보 둘" in why_tick, f"원인을 단정하고 있다: {why_tick}"
+    assert "못 가른다" in why_tick, why_tick
+    assert "멈춘 모양이다" not in why_tick, f"근거 없는 단정이 남아 있다: {why_tick}"
+    # 공허 방지: 두 문장이 실제로 다른 곳을 가리키는가
+    assert "지연된 잡" in why_job and "지연된 잡" not in why_tick
+
+
+def test_learn_at_6_6_days_is_not_flagged_when_producer_says_so():
+    """라이브 그대로(`learn 9471/10080`)면 **정상**이다 — 내가 오독한 그 값."""
+    kind, why = probe.schedule_verdict(_iso(1), LIVE_JOBS, "-", NOW)
+    assert kind == "ok", why
+    assert "9471/10080" in why, "경과/주기를 사유에 싣지 않으면 사람이 또 SSOT 를 찾아간다"
+
+
+def test_missing_snapshot_is_unknown_not_ok():
+    """발행이 끊기면 **초록이 아니라 「확인 불가」** 여야 한다(조용한 초록 금지)."""
+    kind, _ = probe.schedule_verdict("-", "-", "-", NOW)
+    assert kind == "unknown"
+
+
+def test_stale_tolerance_is_not_a_copy_of_an_ssot():
+    """관용치는 **프로브 로컬** 상수다 — SSOT 사본이 아님을 값으로 못 박는다."""
+    assert probe.SCHEDULE_STALE_MIN == 10
+
+
+def test_probe_actually_reads_the_schedule_key():
+    """★**배선** — 순수 함수만 있고 부르는 곳이 없으면 그게 「소비처 0」이다."""
+    tree = ast.parse(_PROBE.read_text(encoding="utf-8"))
+    names = {
+        n.id for n in ast.walk(tree) if isinstance(n, ast.Name)
+    } | {
+        n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)
+    }
+    for need in ("SCHEDULE_SETTING_KEY", "schedule_fields", "schedule_verdict"):
+        assert need in names, f"{need} 가 실행 경로에서 안 불린다(소비처 0)"
+
+
+def test_dashboard_burns_the_probe_verdict_not_a_copy():
+    """★셸이 규칙을 **다시 구현하지 않는다** — 프로브가 낸 `skind` 를 그대로 쓴다.
+
+    산문으로 주면 받는 쪽마다 다르게 구현한다(이 저장소가 이미 값을 치른 형태다).
+    """
+    src = _DASH.read_text(encoding="utf-8")
+    code = "\n".join(
+        ln for ln in src.splitlines() if not ln.lstrip().startswith("#")
+    )
+    assert "skind=" in code, "계기판이 프로브 판정을 안 읽는다"
+    # ★셸이 자체 판정을 만들지 않았는가(재구현 금지)
+    assert "SCHEDULE_STALE_MIN" not in code, "셸이 관용치를 다시 들고 있다 — 두 곳이 갈린다"
+    for forbidden in ('case "$SJOBS"', 'case "$SKIND"'):
+        assert forbidden not in code, f"셸이 자체 분기를 만들었다: {forbidden}"
+    # 공허 방지 대조군 — 이 파일이 실제로 계기판인가
+    assert "통합자 계기판" in src
+
+
+def test_only_obs_raises_observation_unknown_does_not():
+    """★**`obs` 만 관측으로 올린다 — `unknown` 은 안 올린다.**
+
+    `unknown` 의 지배적 원인은 «API 가 아직 스냅샷을 발행 안 하는 버전» 이라,
+    그걸 올리면 **상시 빨강**이 된다(이 저장소가 `#868` 에서 기각한 형태).
+    ★대신 **진짜 고장 둘은 `obs`** 로 온다(틱 사망=낡음 · 잡 사망=overdue) —
+      이 완화가 고장을 가리지 않는다는 것을 아래에서 **값으로** 확인한다.
+    """
+    code = "\n".join(
+        ln for ln in _DASH.read_text(encoding="utf-8").splitlines()
+        if not ln.lstrip().startswith("#")
+    )
+    assert 'if [ "${SKIND:-unknown}" = "obs" ]; then OBS=1; fi' in code, code[-400:]
+    assert '!= "ok"' not in code, "unknown 까지 올리면 배포 전 상시 빨강이 된다"
+    # ★핵심 — 완화가 **고장을 가리지 않는가**(두 고장이 obs 로 오는가)
+    assert probe.schedule_verdict(_iso(30), LIVE_JOBS, "-", NOW)[0] == "obs"       # 틱 사망
+    assert probe.schedule_verdict(_iso(1), LIVE_JOBS, "improve", NOW)[0] == "obs"  # 잡 사망
+    # 그리고 배포 전(스냅샷 없음)은 unknown 이라 조용하다 — 그러나 화면에는 찍힌다
+    assert probe.schedule_verdict("-", "-", "-", NOW)[0] == "unknown"
+    assert "SKIND" in code and "스케줄:" in _DASH.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("bad", [None, "", 123, [], {"jobs": None}])
+def test_schedule_fields_never_raises_on_junk(bad):
+    """스냅샷이 깨져도 **터지지 않고** 부재로 떨어진다(계기판 전체가 죽으면 안 된다)."""
+    sat, sjobs, soverdue = probe.schedule_fields(bad)
+    assert (sat, sjobs, soverdue) == ("-", "-", "-") or sjobs == "-"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★2차 기계 감사(55변이·생존 9)가 짚은 **진짜 구멍 셋**을 닫는다.
+#   나머지 여섯은 사유 **문구**라 잠그지 않는다 — 계약은 `kind` 와 «모집단마다 다른 사유» 이지
+#   문장의 철자가 아니다(문구를 단언하면 다듬을 때마다 깨지는 취약한 락이 된다).
+#   ★그 사실을 여기 적는 이유: **설명 없는 생존만 진짜 구멍**이기 때문이다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_schedule_fields_parses_a_real_producer_payload():
+    """★생존 `:107 if isinstance(srow, dict)` — **정상 dict 경로가 한 번도 안 태워졌다.**
+
+    쓰레기 입력만 넣고 「안 터진다」를 봤더니, 조건을 무력화해 **모든 입력을 부재로
+    만들어도** 초록이었다. 두 모집단을 갈라야 한다: **쓰레기는 부재로, 정상은 값으로.**
+    ★그리고 픽스처를 손으로 짓지 않고 **생산자가 만든 payload** 를 쓴다 —
+      생산자·소비처가 갈리면 그 순간 빨개진다.
+    """
+    import sys
+    sys.path.insert(0, str(_ROOT))
+    from apps.api.app.services.growth.schedule import schedule_snapshot_payload
+
+    produced = schedule_snapshot_payload(
+        [("analyze", NOW - timedelta(minutes=7)), ("learn", NOW - timedelta(minutes=9471))],
+        NOW,
+    )
+    sat, sjobs, soverdue = probe.schedule_fields(produced)
+    from datetime import datetime as _dt
+    assert _dt.fromisoformat(sat.replace("Z", "+00:00")) == NOW, sat
+    assert " " not in sjobs, "공백이 남으면 계기판 grep 이 뒤를 통째로 자른다"
+    # ★생산자가 **잡별 키**로 싣고, 요약은 **소비처(프로브)가** 만든다 —
+    #   한 줄 문자열로 실으면 프론트가 24자에서 잘라 `learn` 이 화면에서 사라진다.
+    assert "analyze_7/60" in sjobs, sjobs
+    assert "learn_9471/10080" in sjobs, sjobs
+    assert soverdue == "-", f"둘 다 주기 안인데 지연으로 찍혔다: {soverdue}"
+    # ★대조군 — 쓰레기는 여전히 부재로 떨어진다(두 모집단이 다른 값을 낸다)
+    assert probe.schedule_fields("zzz") == ("-", "-", "-")
+
+
+def test_naive_at_does_not_crash_the_probe():
+    """★생존 `:141 if at.tzinfo is None` — **naive 시각 경로가 안 태워졌다.**
+
+    내 픽스처가 전부 tz-aware 라 이 분기가 한 번도 안 돌았다. 무력화하면 naive 입력에서
+    `TypeError` 로 **프로브 전체가 죽는다**(계기판이 통째로 사라진다).
+    """
+    naive = NOW.replace(tzinfo=None).isoformat()
+    kind, why = probe.schedule_verdict(naive, LIVE_JOBS, "-", NOW)
+    assert kind == "ok", f"naive 시각을 못 다룬다: {kind} · {why}"
+    # 대조군: 같은 시각을 aware 로 줘도 같은 판정이어야 한다(둘이 갈리면 해석이 달라진다)
+    assert probe.schedule_verdict(NOW.isoformat(), LIVE_JOBS, "-", NOW)[0] == "ok"
+
+
+def test_probe_print_fields_match_what_the_shell_greps():
+    """★생존 `:333` 출력 형식 — **셸이 `grep -oE 'skind=[^ ]+'` 로 뽑는 이름과 한 계약**이다.
+
+    이름이 갈리면 셸 변수가 **빈 값**이 되고 `${SKIND:-unknown}` 이 조용히 `unknown` 을 내
+    관측이 **영원히 발화하지 않는다**(위 락 `only_obs_raises…` 가 무의미해진다).
+    ⇒ 두 파일에서 **각각 파생**해 대조한다(손 목록 금지).
+    """
+    import re
+
+    dash = _DASH.read_text(encoding="utf-8")
+    code = "\n".join(ln for ln in dash.splitlines() if not ln.lstrip().startswith("#"))
+    grepped = set(re.findall(r"grep -oE '([a-z_]+)=\[\^ \]\+'", code))
+    # 공허 방지 — 셸이 실제로 무언가를 뽑고 있는가
+    assert len(grepped) >= 4, f"셸에서 뽑는 필드가 너무 적다(조회기 사망?): {grepped}"
+    assert {"skind", "sjobs"} <= grepped, f"스케줄 축 필드를 안 뽑는다: {sorted(grepped)}"
+
+    tree = ast.parse(_PROBE.read_text(encoding="utf-8"))
+    printed = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            printed |= set(re.findall(r"\b([a-z_]+)=%s", n.value))
+    missing = grepped - printed
+    assert missing == set(), (
+        f"셸이 뽑는데 프로브가 안 찍는 필드: {sorted(missing)} — "
+        "빈 값이 되어 관측이 영원히 발화하지 않는다"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★독립 리뷰 MAJOR-1 — **사유가 화면에 도달하는가**를 「정적 검사」가 아니라 **셸로 태워서** 본다.
+#
+#   종전 정적 락(`assert "skind=" in code`)은 **통과했는데** 프로덕션에서는 사유가
+#   **영영 빈 문자열**이었다: 계기판이 프로브 출력을 `grep -m1 '^PROBE '` 로 받는데
+#   `'^PROBE '`(뒤 공백)는 `PROBE_SCHEDULE`(뒤 `_`)을 매치하지 않고 `-m1` 이라 한 줄뿐이다.
+#   ⇒ **사유 없는 경보**(`OBS=1` → exit 4)가 나갔다. 이 PR 의 존재 이유(잡사망↔틱사망 구별)는
+#     **오직 사유 문장에만** 실리는데(`skind` 는 둘 다 `obs`) 그것이 통째로 안 나갔다.
+#   ★형제 `test_dashboard_idle_vs_dead_scanner.py` 는 처음부터 블록을 bash 로 태우고 있었다 —
+#     **옳은 패턴이 바로 옆에 있었는데 내가 정적 검사를 골랐다.**
+# ─────────────────────────────────────────────────────────────────────────────
+
+import re as _re
+import shlex as _shlex
+import subprocess as _subprocess
+
+
+def _run_schedule_block(probe_line: str) -> str:
+    """계기판의 **스케줄 절 블록을 실제 파일에서 꺼내** bash 로 태운다.
+
+    ★`$G` 를 프로덕션과 **같은 방법으로** 만든다(`grep -m1 '^PROBE '`) — 그게 이 결함의 자리다.
+    """
+    src = _DASH.read_text(encoding="utf-8")
+    # ★블록은 **SKIND/SJOBS 추출부터** 잡아야 한다. 사유 추출 줄부터 자르면 변수가 비어
+    #   `${SKIND:-unknown}` 이 되고, **내 하네스가 만든 가짜 unknown** 을 코드 결함으로 읽게 된다
+    #   (실제로 처음에 그렇게 짜서 락이 울었다 — 락이 제 하네스를 잡아 준 것이다).
+    m = _re.search(r"\n(    # ★스케줄 축 .*?then OBS=1; fi\n)", src, _re.DOTALL)
+    assert m, "★스케줄 절 블록을 못 찾았다 — 락이 낡았다(공허한 초록 방지)"
+    block = m.group(1)
+    script = (
+        f"PROBE_OUT={_shlex.quote(probe_line)}\n"
+        # ↓ 프로덕션과 같은 수집 방식
+        "G=$(printf '%s\\n' \"$PROBE_OUT\" | grep -m1 '^PROBE ')\n"
+        "OBS=0\n" + block + 'echo "OBS=$OBS"\n'
+    )
+    out = _subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+    assert out.returncode == 0, f"★블록 실행 실패: {out.stderr[:200]}"
+    return out.stdout
+
+
+def _probe_line(kind: str, why: str, jobs: str = "analyze_7/60_heal_6/10") -> str:
+    return (
+        "PROBE now=2026-09-12 ctrl_type_total=0 astate=judged aat=- aaxes=- ains=0 alast=- "
+        f"sat=2026-09-12T22:00:00Z sjobs={jobs} soverdue=improve skind={kind} swhy={why}"
+    )
+
+
+def test_reason_actually_reaches_the_screen():
+    """★**사유 없는 경보를 내지 않는다** — 셸 파이프라인을 그대로 태워 확인한다."""
+    why = "틱은 돌고 있는데(스냅샷 1분) **지연된 잡**이 있다: improve — 그 잡의 실행 경로를 보라"
+    out = _run_schedule_block(_probe_line("obs", why))
+    assert "OBS=1" in out, f"obs 인데 관측으로 안 올라갔다:\n{out}"
+    assert why in out, (
+        "사유가 화면에 안 나온다 — 경보만 나가고 «어디를 보라»가 사라진다\n" + out
+    )
+    # ★공허 방지 대조군 — 사유가 **비어 있으면** 이 락이 실제로 운다
+    empty = _run_schedule_block(_probe_line("obs", ""))
+    assert why not in empty, "대조군이 본판정과 같다 — 락이 아무것도 안 본다"
+
+
+def test_job_death_and_tick_death_are_distinguishable_on_screen():
+    """★두 고장이 **화면에서** 갈리는가 — `skind` 는 둘 다 `obs` 라 사유가 유일한 판별자다."""
+    job_why = "틱은 돌고 있는데(스냅샷 1분) **지연된 잡**이 있다: improve — 그 잡의 실행 경로를 보라"
+    tick_why = "스케줄 스냅샷이 30분 낡았다(관용 10분) — **틱 루프**를 보라"
+    a = _run_schedule_block(_probe_line("obs", job_why))
+    b = _run_schedule_block(_probe_line("obs", tick_why))
+    assert "지연된 잡" in a and "지연된 잡" not in b, (a, b)
+    assert "틱 루프" in b and "틱 루프" not in a, (a, b)
+
+
+def test_unknown_is_printed_but_does_not_raise_observation():
+    """`unknown` 은 **찍히되 안 올린다** — 배포 전 상시 빨강을 피하면서 침묵도 안 한다."""
+    out = _run_schedule_block(_probe_line("unknown", "스케줄_스냅샷이_없다"))
+    assert "OBS=0" in out, f"unknown 을 관측으로 올렸다 — 배포 전 상시 빨강이 된다:\n{out}"
+    assert "unknown" in out, f"unknown 을 화면에 안 찍었다 — 조용한 초록이다:\n{out}"
+
+
+def test_probe_emits_the_reason_as_the_last_field():
+    """★**생산자 끝**을 잠근다 — 소비처만 잠그면 「사유를 아예 안 찍는」 변이가 산다.
+
+    실측(2026-09-12): `swhy=%s` 를 출력 형식에서 지우는 변이가 **SURVIVED** 였다.
+    내 픽스처가 프로브 줄을 **손으로 만들어** 실제 출력 형식을 태우지 않았기 때문이다 —
+    독립 리뷰가 «양 끝 모두 무잠금» 이라 부른 그 자리의 나머지 절반이다.
+
+    ★그리고 **마지막 필드**여야 한다: 사유에는 공백이 들어가므로 중간에 두면
+    그 뒤 필드가 전부 `[^ ]+` 파싱에서 밀린다.
+    """
+    tree = ast.parse(_PROBE.read_text(encoding="utf-8"))
+    docs = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            d = ast.get_docstring(n, clean=False)
+            if d:
+                docs.add(d)
+    live = [
+        n.value for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value not in docs
+    ]
+    # 공허 방지 대조군 — 출력 형식 조각을 실제로 읽고 있는가
+    assert any("skind=%s" in s for s in live), (
+        "대조군 실패 — 출력 형식 문자열을 하나도 못 읽었다(파서가 죽었다)"
+    )
+    tail = [s for s in live if "swhy=%s" in s]
+    assert tail, "프로브가 사유를 찍지 않는다 — 계기판은 경보만 내고 «어디를 보라»가 없다"
+    for s in tail:
+        assert s.rstrip().endswith("swhy=%s"), (
+            f"사유가 마지막 필드가 아니다 — 뒤 필드가 공백에서 밀린다: {s!r}"
+        )
+    # 인자에도 실제로 실리는가(형식만 있고 값이 안 가면 `swhy=%s` 가 그대로 찍힌다)
+    src = _PROBE.read_text(encoding="utf-8")
+    assert _re.search(r"skind,\s*swhy\)\)", src), "출력 인자 튜플에 swhy 가 없다"

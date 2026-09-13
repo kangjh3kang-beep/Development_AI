@@ -72,11 +72,111 @@ _AMOUNT_CAP = 1_000_000_000_000
 #   try/except 를 두지 않아 그 ValueError 가 전역 핸들러에서 HTTP500 으로 은폐됐다(친화 메시지 미도달
 #   ·트랜잭션 미정리). actions.py 계약 엔드포인트와 동일하게 ValueError→409(Conflict)+db.rollback()
 #   으로 매핑해, 사용자에게 사유를 정확히 전달하고 트랜잭션 오염을 막는다(상태머신 충돌=409 규약 통일).
+@r5.post("/subscription/{ann_id}/draw/commit")
+async def subscription_draw_commit(ann_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                                   ctx: SalesCtx = Depends(require_role(*_R_SUBSCRIPTION_DRAW))):
+    """★청약 추첨 **공약 게시** — 추첨 전에 한 번만. 반환에 nonce 는 없다."""
+    from app.services.sales.draw.beacon import BeaconError
+    from app.services.sales.draw.commitment_store import commit_draw
+    from app.services.sales.subscription.engine import subscription_binding
+    # ★**공약이 명부와 세대를 함께 묶는다** — 추첨 엔진과 **같은 함수**로 모집단을 만든다.
+    roster, pool = await subscription_binding(db, ctx.site_id, ann_id)
+    try:
+        return await commit_draw(db, ctx.site_id, "subscription", ann_id,
+                                 participants=roster, pool_ids=pool,
+                                 by=getattr(ctx.user, "id", None))
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(409, str(e)) from e
+    except BeaconError as e:
+        # ★공약 단계에서 비콘을 못 잡으면 **공약을 만들지 않는다** — 라운드 없는 공약을 남기면
+        #   그것이 곧 「비콘을 쓴다고 해 놓고 안 쓰는」 조용한 경로가 된다.
+        await db.rollback()
+        raise HTTPException(503, f"공개 비콘을 가져오지 못해 공약을 게시하지 않았습니다 — {e}") from e
+
+
+@r5.get("/subscription/{ann_id}/draw/commitment")
+async def subscription_draw_commitment(ann_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                                       ctx: SalesCtx = Depends(sales_ctx)):
+    """공약 조회 — `commit_hash`·`committed_at`·`beacon_round`·명부/세대 지문(★nonce 미포함).
+
+    ★한계는 형제 엔드포인트(`actions.draw_group_commitment`) 독스트링에 적었다 —
+      **nonce 공개 미구현 · 멤버십 필요**. 「제3자 독립 검증」은 아직 성립하지 않는다.
+    """
+    from app.services.sales.draw.commitment_store import public_commitment
+    got = await public_commitment(db, "subscription", ann_id)
+    if got is None:
+        raise HTTPException(404, "아직 공약이 게시되지 않았습니다")
+    return got
+
+
+@r5.post("/subscription/{ann_id}/commit/void")
+async def subscription_draw_void(ann_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
+                    ctx: SalesCtx = Depends(require_role(*_R_SUBSCRIPTION_DRAW))):
+    """★공약 **무효화** — 재공약을 가능하게 하는 **유일한** 경로. `body.reason` 필수.
+
+    공약은 명부·대상 세대를 묶는다. 그런데 **정상 업무**(선착순 청약·예비 승계·계약 체결/해지·
+    세대 추가)가 그것을 바꾸면 추첨이 거부되고, `UNIQUE(scope, ref_id)` 때문에 **다시 공약할 수도
+    없어** 그 대상이 **벽돌**이 된다(R2 리뷰 MAJOR-7).
+
+    ★**막지 않고 보이게 한다**: 무효화는 `sales_draw_commitment_voids` 에 **영구 기록**되고
+      반환에 **누적 횟수**가 실린다. 재공약하면 `commit_hash` 가 달라져, 앞선 값을 받아 둔
+      대상자·입회인은 **즉시 안다.** ***이 설계의 한계를 숨기지 않는다 — 무효화 자체는 막지 못한다.***
+    """
+    from app.services.sales.draw.commitment_store import void_commitment
+    try:
+        return await void_commitment(db, ctx.site_id, "subscription", ann_id,
+                                     by=getattr(ctx.user, "id", None),
+                                     reason=str(body.get("reason") or ""))
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(400, str(e)) from e
+
+
+@r5.get("/subscription/{ann_id}/commit/voids")
+async def subscription_draw_voids(ann_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                     ctx: SalesCtx = Depends(sales_ctx)):
+    """무효화 이력 조회 — ★**「몇 번 다시 공약했나」가 보이지 않으면 기록은 무의미하다.**"""
+    from app.services.sales.draw.commitment_store import void_history
+    return {"voids": await void_history(db, "subscription", ann_id)}
+
+# ══ ★제3자 **공개 검증** — 인증 없음. 최종화된 추첨만. ════════════════════
+#
+#   **왜 무인증인가**: 이 PR 은 *"검증기는 운영자가 자료를 손으로 건네줄 때만 돈다 — 그건
+#   정의상 독립 검증이 아니다"* 라는 지적을 받았다. 조회에 **현장 멤버십**이 필요하면
+#   대상자·입회인·감사인은 `commit_hash` 조차 못 받는다. ⇒ 그 손을 없앤다.
+#
+#   **노출 범위를 좁혀서 연다**(설계 결정 — 숨기지 않고 적는다):
+#     · **최종화된 추첨만**. 진행 중이면 404 — ***중간에 nonce 를 열면 남은 대상자의 결과가
+#       즉시 계산된다.***
+#     · 개인정보는 **한 글자도** 싣지 않는다(이름·연락처 없음 — 락이 단언한다).
+#     · 남는 것은 해시·라운드·시각·세대 id·seed — **동·호 배정 결과는 어차피 공고되는 값**이다.
+#     · 식별자는 UUID 라 열거가 안 된다.
+#   ★그럼에도 «누가 볼 수 있는가» 는 사업 판단이다 — 닫으려면 이 두 라우트에
+#     `Depends(sales_ctx)` 를 붙이면 되고, 그때 **제3자 독립 검증은 다시 성립하지 않는다.**
+
+@r5.get("/subscription/{ann_id}/verify", tags=["public-verification"])
+async def subscription_draw_verify(ann_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """추첨 **공개 검증 번들** — 인증 없음. 추첨이 끝난 뒤에만 응답한다."""
+    from app.services.sales.draw.commitment_store import verification_bundle
+    got = await verification_bundle(db, "subscription", ann_id)
+    if got is None:
+        raise HTTPException(404, "공약이 없습니다")
+    if not got.get("finalized_at"):
+        raise HTTPException(
+            404,
+            "아직 추첨이 끝나지 않았습니다 — 진행 중에 nonce 를 공개하면 남은 대상자의 결과가 "
+            "즉시 계산됩니다. 끝난 뒤 다시 조회하십시오")
+    return got
+
 @r5.post("/subscription/{ann_id}/draw")
 async def draw(ann_id: uuid.UUID, body: dict | None = None, db: AsyncSession = Depends(get_db),
                ctx: SalesCtx = Depends(require_role(*_R_SUBSCRIPTION_DRAW))):
+    from app.services.sales.draw.beacon import BeaconError, BeaconNotReadyError
     try:
-        n = await run_draw(db, ctx.site_id, ann_id, (body or {}).get("seed"))
+        # ★**호출자 seed 를 더는 받지 않는다**(2026-09-13). 종전엔 body.seed 가 그대로
+        #   추첨 키가 돼 **호출자가 결과를 고를 수 있었다**. seed 는 사전 공약된 nonce 에서만 온다.
+        n = await run_draw(db, ctx.site_id, ann_id)
     except NotFoundError as e:
         # ★[IDOR·iter-5 HIGH] 미존재/타현장 공고(NotFoundError)는 404 — IDOR 차단(run_draw 가
         #   공고를 site_id 로 스코프). NotFoundError 가 ValueError 하위라 아래 409 분기보다 먼저 둔다
@@ -86,6 +186,16 @@ async def draw(ann_id: uuid.UUID, body: dict | None = None, db: AsyncSession = D
     except ValueError as e:
         await db.rollback()
         raise HTTPException(409, str(e)) from e
+    except BeaconNotReadyError as e:
+        # ★**425(Too Early)** — 장애가 아니라 **설계된 대기**다. 503 으로 뭉치면 운영자가
+        #   기다리면 되는 상황에서 장애 대응을 시작한다(한 신호가 두 사건을 덮는 클래스).
+        await db.rollback()
+        raise HTTPException(425, str(e), headers={"Retry-After": str(e.seconds_remaining)}) from e
+    except BeaconError as e:
+        # ★비콘을 못 가져오면 **뽑지 않는다**(fail-closed) — 조용히 비콘 없이 뽑으면
+        #   「쓴다고 해 놓고 안 쓰는」 경로가 되고, 그건 이 저장소가 반복해 데인 거짓 주장이다.
+        await db.rollback()
+        raise HTTPException(503, f"공개 비콘을 가져오지 못해 추첨하지 않았습니다 — {e}") from e
     await db.commit()
     return {"winners": n}
 

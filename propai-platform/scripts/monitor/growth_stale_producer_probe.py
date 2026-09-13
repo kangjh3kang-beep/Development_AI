@@ -45,13 +45,22 @@ def is_stale_stack(spans):
 ANALYSIS_SETTING_KEY = "growth_analysis"
 #: 「돌았다」만 말하는 워터마크(TTL 없음). `state` 와 **다른 명제**라 둘 다 읽는다.
 ANALYZE_WATERMARK_KEY = "growth_last_run.analyze"
+#: 스케줄 스냅샷. ★`schedule.py` 의 `SCHEDULE_SNAPSHOT_KEY` 와 **같은 값**이다.
+#:   잡별 «경과/주기» 를 싣는다 — 이것이 없으면 **「7일 전」이 정상인지 장애인지 못 가른다**
+#:   (실측 2026-09-12: `learn` 9,471분 경과가 **정상**이었고 나는 장애로 의심했다).
+SCHEDULE_SETTING_KEY = "growth_schedule"
 
 #: 프로브가 이 필드를 **아예 안 준다**(옛 사본)는 것을 나타내는 표식.
 #: ★`"idle"` 이나 `""` 로 두면 «안 재 봤다»가 «축이 없다»로 읽힌다.
 ASTATE_MISSING = "(필드없음)"
-#: 설정 행 자체가 없다. ★analyze 주기 60분 · TTL 180분이라 **정상 동작 중에는
-#:   만료되지 않는다**(매 실행이 만료를 앞으로 민다). 행이 없으면 **3회 연속 미실행**이다.
-#:   이 산수는 `analyzer.py` 의 `_ANALYSIS_TTL_MIN` 주석이 근거다.
+#: 설정 행 자체가 없다. ★정상 동작 중에는 **매 실행이 만료를 앞으로 민다** — 그러므로
+#:   행 부재는 「유휴」가 아니라 **연속 미실행**이다.
+#:   ★★**횟수를 여기서 단정하지 않는다**(2026-09-12 정정). 종전엔 «TTL(180분) > 주기(60분)
+#:     이므로 3회» 라고 적었는데 그 **두 수가 손으로 복사**돼 있었다 — `schedule.py` 의
+#:     주기나 `analyzer.py` 의 TTL 이 바뀌면 **사용자에게 나가는 사유가 조용히 거짓**이 된다
+#:     (주기 60→90 이면 180/90=2 인데 문장은 여전히 «3회» 라고 말한다).
+#:     주기는 이제 스냅샷에서 **파생**하고, TTL 은 이 프로브가 읽을 수 없으므로
+#:     **횟수를 말하지 않는다** — 진단 못 하는 자리에서 진단하지 않는다.
 ASTATE_ABSENT = "(행없음)"
 
 
@@ -81,6 +90,84 @@ def analysis_fields(arow, watermark):
         astate, aat, aaxes, ains = ASTATE_ABSENT, "-", "-", "-"
     alast = str(watermark).strip('"') if watermark else "-"
     return astate, aat, aaxes, ains, alast
+
+
+#: 스냅샷이 **얼마나 낡으면** 「스케줄러가 안 돈다」고 볼 것인가.
+#: ★이 값은 SSOT 의 사본이 **아니다** — 틱(60초)에 대한 **프로브의 관용치**다.
+#:   그래서 손복사 금지 규율에 걸리지 않는다. 10분이면 틱 10회 연속 실패를 뜻한다.
+SCHEDULE_STALE_MIN = 10
+
+
+def schedule_fields(srow):
+    """스케줄 스냅샷 행 → 계기판이 뽑는 **세 값**.
+
+    반환: `(sat, sjobs, soverdue)` — 전부 문자열이고 **공백이 없다**
+      (형제 `analysis_fields` 와 같은 이유: 계기판이 `[^ ]+` 로 공백 경계에서 뽑는다).
+    """
+    if isinstance(srow, dict):
+        sat = str(srow.get("at") or "-").replace(" ", "_")
+        soverdue = str(srow.get("overdue") or "-").replace(" ", "_")
+        # ★생산자는 **잡별 키**로 싣는다(`analyze: "7/60"` …). 한 줄 요약 문자열로 실으면
+        #   프론트(`GrowthDashboard.summarizeParams`)가 **24자에서 자른다** — 그러면
+        #   이 PR 이 생긴 계기인 `learn 9471/10080` 이 **화면에서 사라진다**(독립 리뷰 MEDIUM-1).
+        #   요약은 **여기서** 만든다(소비처 하나가 만들고, 생산자는 값만 싣는다).
+        jobs = [
+            "%s_%s" % (k, v)
+            for k, v in sorted(srow.items())
+            if k not in ("at", "overdue") and isinstance(v, str)
+        ]
+        sjobs = "_".join(jobs) if jobs else "-"
+    else:
+        sat, sjobs, soverdue = "-", "-", "-"
+    return sat, sjobs, soverdue
+
+
+def schedule_verdict(sat, sjobs, soverdue, now):
+    """스케줄이 건강한가 — ★**두 고장을 가른다.**
+
+    이 함수가 있기 전에는 둘이 **같은 모양**이었다:
+      ① 틱 루프는 도는데 **어떤 잡의 실행만 죽음** → 그 잡의 워터마크가 영구 지연.
+         스냅샷 자신은 **신선**하다(매 틱 갱신되므로).
+      ② **틱 루프 자체가 죽음** → 스냅샷도 같이 낡는다.
+    ①은 종전에 **어떤 표면에도 나오지 않았다**(프론트는 ISO 문자열을 표시만 하고,
+    이 프로브는 `analyze` 워터마크 하나만 읽었다).
+
+    ★그리고 이 함수가 생긴 계기는 **내가 오독한 사건**이다(2026-09-12 13:11Z):
+      `growth_last_run.learn` 9,471분 전을 보고 「6.6일째 멈췄다」고 의심했는데
+      `learn` 주기가 **10080분(7일)** 이라 정상이었다. **경과만으로는 못 가른다.**
+
+    반환: `("ok"|"obs"|"unknown", 사유)` — 형제 `analysis_verdict` 와 같은 어휘.
+    """
+    if sjobs == "-":
+        return "unknown", (
+            "스케줄 스냅샷이 없다 — 스케줄러가 도는지 **이 자리에서 못 가른다**"
+            "(구버전 API 이거나 틱이 한 번도 안 돌았다)"
+        )
+    try:
+        at = datetime.fromisoformat(str(sat).strip('"').replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return "unknown", "스케줄 스냅샷의 `at` 을 읽지 못했다 — 나이를 못 재면 판정 불가"
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    age_min = int((now - at).total_seconds() // 60)
+    if age_min >= SCHEDULE_STALE_MIN:
+        # ★**여기서 원인을 단정하지 않는다**(독립 리뷰 MINOR-3 · 2026-09-12 구조 확인).
+        #   종전엔 «스케줄러 자신이 멈춘 모양이다» 라고 적었는데, 그건 이 값으로 알 수 없다:
+        #   `main.py` 틱 루프는 잡을 **순차 `await`** 하고 `_growth_run_locked` 에 **타임아웃이 없다**.
+        #   따라서 «틱 루프 사망」과 «긴 잡이 도는 중»이 **같은 모양**이다(스냅샷이 낡는다).
+        #   ***진단 못 하는 자리에서 진단하면 사람을 틀린 곳으로 보낸다*** — 관측만 적고
+        #   후보를 **복수로** 남긴다.
+        return "obs", (
+            "스케줄 스냅샷이 %d분 낡았다(관용 %d분). 후보 둘: 틱 루프가 멈췄거나, "
+            "긴 잡(learn/improve)이 도는 중이다 — 둘은 이 값으로 못 가른다. "
+            "직전 잡 워터마크와 컨테이너 로그를 함께 보라" % (age_min, SCHEDULE_STALE_MIN)
+        )
+    if soverdue != "-":
+        return "obs", (
+            "틱은 돌고 있는데(스냅샷 %d분) **지연된 잡**이 있다: %s — "
+            "그 잡의 실행 경로를 보라(경과/주기: %s)" % (age_min, soverdue, sjobs)
+        )
+    return "ok", "스케줄러가 돌고 모든 잡이 주기 안이다(경과/주기: %s)" % sjobs
 
 
 def parse_axes(aaxes):
@@ -116,7 +203,7 @@ def parse_axes(aaxes):
 #:   상태 어휘를 새로 내보내려면 **소비처(계기판 표시·기계 판독)를 같은 커밋에** 만들어야 한다.
 
 
-def analysis_verdict(astate, insights_24h, aaxes=None):
+def analysis_verdict(astate, insights_24h, aaxes=None, analyze_period_min=None):
     """계기판 ③ 이 인사이트 24h 창 **0** 을 만났을 때 무엇이라 불러야 하는가.
 
     ★**순수 함수다** — DB 없이 태울 수 있고, 셸이 규칙을 다시 구현하지 않는다
@@ -139,8 +226,14 @@ def analysis_verdict(astate, insights_24h, aaxes=None):
     if astate == ASTATE_MISSING:
         return "unknown", "프로브에 분석상태 필드가 없다 — 컨테이너의 프로브가 옛 사본이다"
     if astate == ASTATE_ABSENT:
-        # ★행 부재를 「유휴」로 읽지 않는다. TTL 산수상 부재는 **3회 연속 미실행**이다.
-        return "obs", "분석상태 행이 없다 — TTL(180분) > 주기(60분) 이므로 **3회 연속 미실행**"
+        # ★행 부재를 「유휴」로 읽지 않는다 — 정상 동작 중엔 매 실행이 만료를 앞으로 민다.
+        #   ★**횟수는 말하지 않는다**: 그러려면 TTL 이 필요한데 이 프로브는 못 읽는다.
+        #     종전 문장의 `180`·`60` 은 **손으로 복사한 상수**였다(위 `ASTATE_ABSENT` 주석 참조).
+        per = "" if not analyze_period_min else " · analyze 주기 %s분" % analyze_period_min
+        return "obs", (
+            "분석상태 행이 없다 — 만료됐다는 뜻이고 정상 동작 중엔 그럴 수 없다"
+            "(연속 미실행%s · 횟수는 TTL 을 못 읽어 확정 불가)" % per
+        )
     if astate == "starved":
         # ★★`starved` 는 **두 사실을 덮는다**(독립 리뷰 2026-09-12 · 라이브 실측이 그 증거):
         #     axes = "fal 0/0 lat 0/0 pay 0/1 qua 0/0"
@@ -237,7 +330,13 @@ async def main():
         wm = (await s.execute(text(
             "select value from platform_settings where key = :k"),
             {"k": ANALYZE_WATERMARK_KEY})).scalar()
+        srow = (await s.execute(text(
+            "select value from platform_settings where key = :k "
+            "  and (ttl_expires_at is null or ttl_expires_at > now())"),
+            {"k": SCHEDULE_SETTING_KEY})).scalar()
         astate, aat, aaxes, ains, alast = analysis_fields(arow, wm)
+        sat, sjobs, soverdue = schedule_fields(srow)
+        skind, swhy = schedule_verdict(sat, sjobs, soverdue, now)
         # ★**변이 생존 기록**(2026-09-12 · 2차 감사): 아래 `now.strftime` 의 **표시 형식**과
         #   워터마크 질의의 **문자열**을 바꾸는 변이는 생존한다. 구멍이 아니다 —
         #   전자는 사람이 읽는 표시이고(계약이 아니다), 후자는 «TTL 필터가 **없어야** 한다»
@@ -246,9 +345,21 @@ async def main():
         print("PROBE now=%s ctrl_type_total=%s ctrl_type_alltime=%s "
               "impossible_post=%s impossible_pre=%s "
               "engine_alive=%s builds=%s overlap=%s "
-              "astate=%s aat=%s aaxes=%s ains=%s alast=%s"
+              "astate=%s aat=%s aaxes=%s ains=%s alast=%s "
+              "sat=%s sjobs=%s soverdue=%s skind=%s swhy=%s"
               % (now.strftime("%Y-%m-%d %H:%M"), ctrl, ctrl_all, post, pre, alive, bs, ov,
-                 astate, aat, aaxes, ains, alast))
+                 astate, aat, aaxes, ains, alast,
+                 sat, sjobs, soverdue, skind, swhy))
+        # ★★**사유를 별도 줄로 내지 않는다**(독립 리뷰 MAJOR-1 · 2026-09-12).
+        #   종전엔 `print("PROBE_SCHEDULE …")` 로 둘째 줄을 냈는데, 계기판은 프로브 출력을
+        #   `grep -m1 '^PROBE '` 로 받는다 — `'^PROBE '`(뒤에 **공백**)는 `PROBE_SCHEDULE`
+        #   (뒤에 `_`)을 **매치하지 않고**, `-m1` 이라 애초에 **한 줄뿐**이다.
+        #   ⇒ 사유가 화면에 **영영 도달하지 않았고**(실측: `SWHY` 길이 0 · 대조군 57),
+        #     그런데도 `OBS=1`(exit 4)은 올라갔다 — **사유 없는 경보**다.
+        #   ★이 PR 의 존재 이유(「잡 사망」↔「틱 사망」 구별)는 **오직 사유 문장에만** 실린다
+        #     (`skind` 는 둘 다 `obs`). 즉 헤드라인 가치가 통째로 안 나가고 있었다.
+        #   ⇒ 줄을 하나로 합치고 **사유를 마지막 필드**로 둔다. 앞 필드들은 여전히
+        #     `[^ ]+` 로 뽑히고, 사유는 `sed 's/.* swhy=//'` 로 줄 끝까지 가져간다.
 
 if __name__ == "__main__":  # ★임포트만으로 DB 에 붙지 않는다(테스트가 순수 함수를 태운다)
     asyncio.run(main())
