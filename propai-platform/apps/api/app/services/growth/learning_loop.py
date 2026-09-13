@@ -295,6 +295,11 @@ async def build_dataset_jsonl(db, *, service: str | None = None,
     excluded_no_rights = 0
     # ★`None` = **못 쟀다**(쿼리 실패). `0` = **세었고 0건**이다. 둘을 뭉치면 소비처가
     #   「모집단이 비었다」와 「모집단을 모른다」를 구별하지 못한다 — 다음 행동이 다르다.
+    # ★★**이 선언은 아래 계수 블록의 `except: total = None` 과 「이중 가드」다**(기계 변이 실측
+    #   2026-09-13): **둘 중 하나만 지우면 SURVIVED**, **둘 다 지우면 CAUGHT** 다.
+    #   점수를 부풀리지 않으려고 적어 둔다 — 이 생존은 **구멍이 아니라 중복**이다.
+    #   남겨 두는 이유는 둘이다: ①타입 주석(`int | None`)이 **계약을 말한다**
+    #   ②계수 블록이 나중에 옮겨지거나 앞에 분기가 생기면 그때 `NameError` 를 막는다.
     total: int | None = None
     try:
         # content_hash·tenant_id 를 함께 조회(학습게이트 키 — asset_rights 는 (asset_key, tenant) 키).

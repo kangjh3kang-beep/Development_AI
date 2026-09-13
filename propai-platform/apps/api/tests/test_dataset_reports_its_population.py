@@ -178,3 +178,42 @@ async def test_summary_carries_the_total_not_just_the_count():
     assert "active_pairs_total" in keys, (
         f"요약이 **모집단**을 안 싣는다 — 소비처가 count 를 모집단으로 읽게 된다: {sorted(keys)}")
     assert "truncated" in keys, f"요약이 절단 여부를 안 싣는다: {sorted(keys)}"
+
+
+def _audit_detail_keys() -> set[str]:
+    """데이터셋 다운로드 라우트의 `audit_admin_action(detail={...})` **키**를 AST 로 뽑는다.
+
+    ★기계 변이가 이 자리를 **생존**으로 짚었다(2026-09-13): 감사기록에 `total`·`truncated` 를
+      실어 놓고 **아무도 그것을 단언하지 않았다.** 반출 추적은 «얼마나 나갔나」뿐 아니라
+      «전체 중 얼마인가」까지 남아야 하는데, 락이 없으면 그 줄은 **조용히 사라질 수 있다.**
+    """
+    import ast
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parents[1]
+           / "app" / "routers" / "growth.py").read_text(encoding="utf-8")
+    keys: set[str] = set()
+    for node in ast.walk(ast.parse(src)):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "audit_admin_action"):
+            continue
+        for kw in node.keywords:
+            if kw.arg == "detail" and isinstance(kw.value, ast.Dict):
+                keys |= {k.value for k in kw.value.keys
+                         if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+    return keys
+
+
+def test_audit_record_says_how_much_of_the_whole_went_out():
+    """★감사기록이 **반출량과 모집단**을 함께 남기는가 — 기계 변이 생존을 닫는다."""
+    keys = _audit_detail_keys()
+
+    # ★대조군 먼저 — AST 가 실제로 감사 호출을 찾았는가
+    assert "count" in keys, f"조회기 사망 — audit_admin_action(detail=...) 을 못 찾았다: {sorted(keys)}"
+    # ★역대조군 — 없는 키가 잡히면 파서가 아무거나 집고 있다
+    assert "zzz_nope_sentinel" not in keys
+
+    assert "total" in keys, (
+        f"감사기록이 **모집단**을 안 남긴다 — 「전체 중 얼마가 나갔나」를 못 되짚는다: {sorted(keys)}")
+    assert "truncated" in keys, f"감사기록이 절단 여부를 안 남긴다: {sorted(keys)}"
