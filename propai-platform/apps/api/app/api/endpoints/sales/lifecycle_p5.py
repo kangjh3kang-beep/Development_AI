@@ -76,7 +76,9 @@ _AMOUNT_CAP = 1_000_000_000_000
 async def draw(ann_id: uuid.UUID, body: dict | None = None, db: AsyncSession = Depends(get_db),
                ctx: SalesCtx = Depends(require_role(*_R_SUBSCRIPTION_DRAW))):
     try:
-        n = await run_draw(db, ctx.site_id, ann_id, (body or {}).get("seed"))
+        # ★**호출자 seed 를 더는 받지 않는다**(2026-09-13). 종전엔 body.seed 가 그대로
+        #   추첨 키가 돼 **호출자가 결과를 고를 수 있었다**. seed 는 사전 공약된 nonce 에서만 온다.
+        n = await run_draw(db, ctx.site_id, ann_id)
     except NotFoundError as e:
         # ★[IDOR·iter-5 HIGH] 미존재/타현장 공고(NotFoundError)는 404 — IDOR 차단(run_draw 가
         #   공고를 site_id 로 스코프). NotFoundError 가 ValueError 하위라 아래 409 분기보다 먼저 둔다

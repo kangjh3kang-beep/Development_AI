@@ -1,6 +1,8 @@
 """청약 배정 엔진 — 가점/추첨/특공 + 예비순번 + 선착순/무순위. 추첨은 시드 고정(감사 가능)."""
 
 import hashlib
+
+from app.services.sales.draw import vrng
 import logging
 from datetime import UTC, datetime, timedelta
 from itertools import groupby
@@ -68,7 +70,7 @@ async def _available_units(db, site_id, type_id, *, lock: bool = False):
     return list((await db.execute(stmt.order_by(SalesUnitInventory.id))).scalars())
 
 
-async def run_draw(db: AsyncSession, site_id, announcement_id, seed: str | None = None) -> int:
+async def run_draw(db: AsyncSession, site_id, announcement_id) -> int:
     # 공고 행을 FOR UPDATE 로 잠가, 동시에 두 번 들어온 추첨 요청을 직렬화한다.
     # ★[IDOR·security 전역스윕·iter-5 HIGH] 과거엔 공고를 id 로만 조회(site_id 미스코프)하고
     #   scalar_one() 이라 두 가지 결함이 있었다.
@@ -90,7 +92,27 @@ async def run_draw(db: AsyncSession, site_id, announcement_id, seed: str | None 
     #   (재추첨이 필요하면 별도의 '추첨 취소→재오픈' 흐름을 둬야 한다 — 여기서 임의 재실행 금지.)
     if ann.status == "DRAWN":
         return 0
-    seed = seed or ann.announce_no or str(announcement_id)
+    # ★★**호출자 seed 와 공고번호 폴백을 없앤다**(2026-09-13 · 실측 결함 둘).
+    #   종전: `seed = seed or ann.announce_no or str(announcement_id)`
+    #     ①-a **호출자가 seed 를 보낼 수 있었다** — 오프라인에서 원하는 당첨자가 나올 때까지
+    #          굴린 뒤 제출하면 **결과를 고를 수 있다**(동점자 순서가 seed 로 정해진다).
+    #     ①-b 미지정 시 seed 가 **공고번호**였다 — 공개·예측 가능한 값이라
+    #          ***누구나 추첨 전에 당첨자를 계산할 수 있었다.***
+    #   ⇒ seed 는 **사전 공약된 nonce** 에서만 온다. 공약이 없으면 **추첨하지 않는다**
+    #     (fail-closed — 조용히 예측 가능한 값으로 떨어지지 않는다).
+    #   공약/공개 절차: `rules["draw_commit"]` 에 sha256(nonce) 를 **미리** 게시하고,
+    #   추첨 시 `draw_nonce` 를 넣어 대조한다. 서버가 뽑아 보고 nonce 를 갈아치우면 해시가 어긋난다.
+    commit_hex = str((ann.rules or {}).get("draw_commit") or "")
+    nonce_hex = str((ann.rules or {}).get("draw_nonce") or "")
+    if not commit_hex or not nonce_hex:
+        raise ValueError(
+            "추첨 공약이 없습니다 — 추첨 전에 공약(draw_commit)을 게시하고 "
+            "추첨 시 draw_nonce 를 함께 두어야 합니다(사전 공약 없는 추첨은 재추첨을 막을 수 없습니다)"
+        )
+    if not vrng.verify_commitment(nonce_hex, commit_hex):
+        raise ValueError("추첨 공약이 일치하지 않습니다 — nonce 가 공약 이후 바뀌었습니다")
+    # 명부를 키에 섞는다 — 명부가 확정되기 전에는 결과를 고를 수 없다(서버 단독 결정 배제).
+    seed = vrng.seed_key(nonce_hex, str(announcement_id)).hex()
     rules = ann.rules or {}
     special_ratio = rules.get("special_ratio", {})  # {type_id: 0~1} 파라미터
     apps = list((await db.execute(select(SalesSubscriptionApplication).where(

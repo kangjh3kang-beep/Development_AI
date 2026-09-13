@@ -20,6 +20,8 @@ import asyncio
 import os
 import sys
 import uuid as uuid_mod
+
+from app.services.sales.draw import vrng as _vrng
 from datetime import UTC, datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -574,7 +576,12 @@ class _DrawAnn:
         self.id = uuid_mod.uuid4()
         self.status = "OPEN"            # ★DRAWN 이 아니어야 실제 추첨 경로(zip 라인)로 진입
         self.announce_no = "2026-RUN"
-        self.rules = {}
+        # ★**사전 공약**이 없으면 추첨이 거부된다(2026-09-13 계약 변경).
+        #   종전엔 seed 가 `announce_no`(=공개값)로 떨어져 **당첨자를 사전 계산할 수 있었다.**
+        #   픽스처를 새 계약에 맞춘다 — 약화가 아니라 **계약이 엄격해진 것**이고,
+        #   「공약 없는 추첨은 거부된다」는 별도 락이 태운다(test_draw_requires_commitment).
+        _nonce = "5a" * 32
+        self.rules = {"draw_commit": _vrng.commitment(_nonce), "draw_nonce": _nonce}
         self.round_id = None
         self.contract_end = None
 
