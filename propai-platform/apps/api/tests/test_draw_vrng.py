@@ -178,3 +178,68 @@ def test_vrng_does_not_use_python_random():
     }
     assert "hmac" in imported, "대조군 실패 — 임포트를 하나도 못 읽었다"
     assert "random" not in imported, f"random 을 임포트한다: {sorted(imported)}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★독립 적대 리뷰(2026-09-13)가 **SURVIVED 로 실증한** 자리들 — 전부 내 분모 밖이었다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_documented_audit_command_actually_runs():
+    """★★**독스트링에 적은 「감사 사양」을 그대로 셸에 태운다**(리뷰 D-3).
+
+    나는 `openssl … <<< -n "draw:0"` 이라 적고 *"이 주석이 곧 감사 사양이다"* 라고 선언했는데
+    ***그 명령은 실행되지 않는다***(`draw:0: No such file or directory` — `<<<` 가 인자를
+    **파일명**으로 읽는다). 내 테스트는 `subprocess(input=...)` 라는 **다른 형태**를 태워서
+    그 오류를 **한 번도 보지 못했다.**
+    ⇒ 이 저장소의 선례(`test_sw_cache_name_derivation_contract.py`)처럼 **문서의 명령 자체**를 태운다.
+    """
+    import pathlib
+    import re
+
+    if not shutil.which("openssl"):
+        pytest.skip("openssl 부재 — ★이 실행에서는 「감사 사양이 돈다」가 검증되지 않았다")
+    src = pathlib.Path(vrng.__file__).read_text(encoding="utf-8")
+    m = re.search(r"^\s{8}(printf .*openssl [^\n]*)$", src, re.MULTILINE)
+    assert m, "독스트링에서 감사 명령을 못 찾았다 — 사양이 사라졌거나 형식이 바뀌었다"
+    cmd = m.group(1).replace("<KEY_HEX>", KEY.hex())
+    out = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, check=False)
+    assert out.returncode == 0, f"문서의 명령이 실패한다: {out.stderr[:200]}"
+    digest_hex = out.stdout.strip().split("= ")[-1]
+    assert int(digest_hex[:8], 16) == vrng._block(KEY, "draw", 0), (
+        f"문서 명령의 결과({digest_hex[:8]})가 구현과 다르다 — 감사자가 재현하면 갈린다"
+    )
+
+
+def test_weak_nonce_is_rejected_but_strong_one_passes():
+    """★**두 모집단**(리뷰 D-2) — 짧은 nonce 는 거부, 32바이트는 통과."""
+    weak = "00"
+    assert vrng.verify_commitment(weak, vrng.commitment(weak)) is False, (
+        "8비트 nonce 가 통과한다 — 공약에서 nonce 를 전수탐색할 수 있다"
+    )
+    strong = "3f" * 32
+    assert vrng.verify_commitment(strong, vrng.commitment(strong)) is True
+    assert vrng.is_strong_nonce("zz" * 32) is False, "16진이 아닌데 통과한다"
+    assert vrng.is_strong_nonce("ab" * 31) is False, "31바이트가 통과한다"
+
+
+def test_shuffle_is_uniform_not_just_a_permutation():
+    """★**균등성**(리뷰 D-1) — Fisher–Yates 경계를 `i+1`→`i` 로 바꿔도 종전 락은 초록이었다.
+
+    순열 보존·순서 독립·비항등은 **편향된 변형에서도 참**이라 아무것도 못 본다.
+    ⇒ 마지막 원소가 **모든 자리에 고르게** 가는지를 본다(편향되면 한 자리가 비거나 몰린다).
+    """
+    n = 5
+    items = [f"x{i}" for i in range(n)]
+    pos_counts = [0] * n
+    trials = 600
+    for i in range(trials):
+        out, _ = vrng.shuffle(bytes([i % 256]) * 16, "seq", items)
+        pos_counts[out.index("x4")] += 1
+    expect = trials / n
+    # 공허 방지 — 실제로 섞였는가(한 자리에 전부 몰리면 아래 단언이 의미를 갖는다)
+    assert sum(pos_counts) == trials
+    for idx, c in enumerate(pos_counts):
+        assert 0.6 * expect < c < 1.4 * expect, (
+            f"자리 {idx} 의 빈도가 {c}(기대 {expect:.0f}) — 순번 배정이 편향됐다: {pos_counts}"
+        )

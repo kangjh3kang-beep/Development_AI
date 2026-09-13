@@ -36,6 +36,10 @@ import hmac
 #:   버그가 생겼을 때 추첨이 응답하지 않는다). 상한에 닿으면 **조용히 값을 내지 않고 예외**다.
 _MAX_TRIES = 64
 
+#: nonce 최소 길이(바이트). ★**공약을 사전 공개하는 모델에서는 nonce 가 곧 비밀**이라
+#:   짧으면 commit 으로부터 **전수탐색**이 가능하다(독립 리뷰 D-2: `"00"` 도 검증을 통과했다).
+_MIN_NONCE_BYTES = 32
+
 #: ★**변이 생존 기록**(2026-09-13 기계 감사 · 23변이/생존 5 → 보강 후 4).
 #:   남은 생존 넷은 전부 **예외 메시지 문구**다(`below` 의 두 ValueError · `RuntimeError` 두 줄).
 #:   **구멍이 아니다** — 계약은 «예외를 던진다」이지 그 문장의 철자가 아니고, 문구를 단언하면
@@ -54,9 +58,13 @@ def _block(key: bytes, domain: str, counter: int) -> int:
 
     ★검증자가 재현할 형태를 여기 적는다(이 주석이 곧 감사 사양이다):
 
-        openssl dgst -sha256 -mac HMAC -macopt hexkey:<KEY_HEX> <<< -n "draw:0"
+        printf 'draw:0' | openssl dgst -sha256 -mac HMAC -macopt hexkey:<KEY_HEX> -hex
 
-    메시지는 `f"{domain}:{counter}"` 의 **UTF-8 바이트**이고 개행을 붙이지 않는다.
+    메시지는 `f"{domain}:{counter}"` 의 **UTF-8 바이트**이고 **개행을 붙이지 않는다**
+    (그래서 `echo` 가 아니라 `printf` 다 — `<<<` 는 개행을 붙이고 인자를 **파일명으로** 읽는다).
+    ★2026-09-13 정정: 종전에 적어 둔 `openssl … <<< -n "draw:0"` 은 **실행되지 않는다**
+      (`draw:0: No such file or directory`). ***「감사 사양」이라 선언해 놓고 그 명령을 한 번도
+      돌려 보지 않았다*** — 그래서 아래 락이 **이 주석의 명령을 그대로 셸에 태운다.**
     """
     msg = f"{domain}:{counter}".encode()
     digest = hmac.new(key, msg, hashlib.sha256).digest()
@@ -138,6 +146,28 @@ def commitment(nonce_hex: str) -> str:
     return hashlib.sha256(bytes.fromhex(nonce_hex)).hexdigest()
 
 
+def is_strong_nonce(nonce_hex: str) -> bool:
+    """nonce 가 **전수탐색을 버틸 만큼** 긴가(그리고 16진인가).
+
+    ★독립 리뷰 D-2 실측: 종전에는 `draw_nonce="00"`(8비트)도 공약 검증을 통과했다.
+      공약을 미리 공개하는 모델에서 그건 **commit 에서 nonce 를 되찾을 수 있다**는 뜻이고,
+      그러면 추첨 전에 결과가 계산된다 — 이 모듈이 없애려던 바로 그 성질이다.
+    """
+    s = (nonce_hex or "").strip()
+    if len(s) % 2 or len(s) < _MIN_NONCE_BYTES * 2:
+        return False
+    try:
+        bytes.fromhex(s)
+    except ValueError:
+        return False
+    return True
+
+
 def verify_commitment(nonce_hex: str, commit_hex: str) -> bool:
-    """공약 검증. ★`==` 가 아니라 `compare_digest` — 타이밍 차이로 정보를 흘리지 않는다."""
+    """공약 검증. ★`==` 가 아니라 `compare_digest` — 타이밍 차이로 정보를 흘리지 않는다.
+
+    ★**약한 nonce 는 검증 이전에 거부**한다 — 해시가 맞아도 그 nonce 로는 공정성이 성립하지 않는다.
+    """
+    if not is_strong_nonce(nonce_hex):
+        return False
     return hmac.compare_digest(commitment(nonce_hex), (commit_hex or "").lower())

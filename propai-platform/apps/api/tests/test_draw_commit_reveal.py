@@ -147,3 +147,173 @@ def test_matching_commitment_passes_the_gate():
         assert "공약" not in str(e.value), f"옳은 공약인데 게이트에서 막혔다: {e}"
     except Exception:
         pass  # DB 가짜로 인한 다른 실패 — 이 테스트의 관심사가 아니다
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★독립 리뷰 M-4 — 내가 「고쳤다」고 선언한 **그 줄이 무잠금**이었다.
+#   `seed = vrng.seed_key(nonce, ann_id).hex()` → `seed = str(announcement_id)` 로 바꿔도
+#   **락 전부 초록**(SURVIVED). 내 락이 `announce_no` 라는 **이름의 부재**만 봤기 때문이다 —
+#   결함(«공개값이 추첨 키가 된다»)은 **다른 공개값**으로 그대로 재현됐다.
+#   ***「이름이 불리는가」가 아니라 「그 값을 누가 만드는가」를 잠근다.***
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _ordered_ids(nonce: str, ids: list[str]) -> list[str]:
+    """`run_draw` 가 쓰는 것과 **같은 정렬 키**로 동점자 순서를 만든다.
+
+    ★프로덕션 함수(`_rank_pick`)를 그대로 태운다 — 사본을 만들면 그 사본의 동작을 단언하게 된다.
+    """
+    class _A:
+        def __init__(self, i):
+            self.id = i
+            self.rank = 1
+            self.gajeom_score = 10.0
+    seed = vrng.seed_key(nonce, "ann-fixed").hex()
+    win, _rest = sub_engine._rank_pick([_A(i) for i in ids], len(ids), seed)
+    return [a.id for a in win]
+
+
+def test_nonce_actually_determines_the_outcome():
+    """★**두 모집단** — nonce 가 다르면 순서가 **달라지고**, 같으면 **같아야** 한다.
+
+    이 단언이 없으면 seed 를 **공개값 아무거나**로 바꿔도 초록이다(리뷰 M-4 가 그것을 실증했다).
+    """
+    ids = [f"app-{i:03d}" for i in range(24)]
+    a1 = _ordered_ids("11" * 32, ids)
+    a2 = _ordered_ids("11" * 32, ids)
+    b = _ordered_ids("22" * 32, ids)
+    assert a1 == a2, "같은 nonce 인데 결과가 흔들린다 — 재현 불가"
+    assert a1 != b, "nonce 를 바꿔도 순서가 같다 — nonce 가 결과를 만들지 않는다"
+    # 공허 방지 — 실제로 섞이고 있는가(정렬만 하면 항상 같은 순서다)
+    assert a1 != sorted(ids), "동점자 순서가 입력 정렬과 같다 — 추첨이 아니다"
+
+
+def test_public_values_alone_cannot_reproduce_the_order():
+    """★**공개값만으로는 못 맞힌다** — 공고번호·공고 id 로 만든 순서와 달라야 한다.
+
+    ①-b 의 본질은 «공개값이 키였다» 이므로, 그 공개값으로 만든 순서가 실제 순서와 같으면
+    고친 것이 아니다.
+    """
+    ids = [f"app-{i:03d}" for i in range(24)]
+    real = _ordered_ids("ab" * 32, ids)
+
+    class _A:
+        def __init__(self, i):
+            self.id = i
+            self.rank = 1
+            self.gajeom_score = 10.0
+    for public in ("2026-PUBLIC", "ann-fixed"):
+        guess = [a.id for a in sub_engine._rank_pick(
+            [_A(i) for i in ids], len(ids), public)[0]]
+        assert guess != real, f"공개값 {public!r} 만으로 순서를 맞혔다 — 사전 계산 가능하다"
+
+
+def test_run_draw_feeds_the_nonce_derived_seed_into_ranking(monkeypatch):
+    """★★**배선을 태운다** — `run_draw` 가 실제로 넘기는 seed 를 가로채 확인한다.
+
+    ★앞의 두 락은 `_rank_pick` 을 **직접** 불렀다. 그래서 `run_draw` 안의
+      `seed = vrng.seed_key(...)` 줄을 `seed = str(announcement_id)` 로 바꿔도 **초록**이었다
+      (리뷰 M-4 · 보강 뒤에도 **두 번 더** SURVIVED — 한 번은 순수 함수만 태워서,
+       한 번은 가짜 DB 가 신청서를 안 줘서 `_rank_pick` 이 **불리지 않아 skip** 됐다).
+      ***순수 함수를 잠그는 것과 그것을 부르는 줄을 잠그는 것은 다른 일이고,
+      「태웠다」와 「그 줄에 도달했다」도 다른 일이다.***
+    """
+    import asyncio
+    import uuid
+
+    seen: list[str] = []
+    failures: list[str] = []
+    real = sub_engine._rank_pick
+
+    def _spy(apps, n, seed):
+        seen.append(seed)
+        return real(apps, n, seed)
+
+    class _App:
+        def __init__(self, i):
+            self.id = f"app-{i:03d}"
+            self.rank = 1
+            self.gajeom_score = 10.0
+            self.unit_type_id = "T1"
+            self.supply_class = "GENERAL"
+            self.eligibility = "OK"
+            self.status = "APPLIED"
+            self.announcement_id = None
+
+    class _Unit:
+        def __init__(self, i):
+            self.id = f"u-{i}"
+            self.status = "AVAILABLE"
+
+    apps = [_App(i) for i in range(6)]
+
+    class _Res:
+        def __init__(self, payload, scalar=None):
+            self._p = payload
+            self._s = scalar
+
+        def scalar_one_or_none(self):
+            return self._s
+
+        def scalars(self):
+            return list(self._p)
+
+        def first(self):
+            return None
+
+    class _DB:
+        def __init__(self):
+            self.n = 0
+
+        async def execute(self, *_a, **_k):
+            self.n += 1
+            # 1번째: 공고(FOR UPDATE) · 그 다음: 신청서 목록
+            return _Res(apps if self.n > 1 else [], ann if self.n == 1 else None)
+
+        async def flush(self):
+            return None
+
+        async def commit(self):
+            return None
+
+        def add(self, *_a, **_k):
+            return None
+
+    async def _fake_units(_db, _site, _type, *, lock=False):
+        return [_Unit(i) for i in range(3)]
+
+    monkeypatch.setattr(sub_engine, "_rank_pick", _spy)
+    monkeypatch.setattr(sub_engine, "_available_units", _fake_units)
+
+    ann = _Ann({})
+    ann.id = uuid.UUID("00000000-0000-0000-0000-0000000000aa")
+
+    def _run(nonce):
+        seen.clear()
+        ann.rules = {"draw_commit": vrng.commitment(nonce), "draw_nonce": nonce}
+        try:
+            asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+                sub_engine.run_draw(_DB(), object(), ann.id))
+        except Exception as exc:          # noqa: BLE001 — 사유를 **남긴다**
+            # ★`except: pass` 로 삼키지 않는다. 처음에 그렇게 했다가 가짜 객체의
+            #   속성 이름 오타(`supply_type` ↔ `supply_class`)가 조용히 먹혀
+            #   `_rank_pick` 이 **안 불리는데 원인을 모르는** 상태가 됐다.
+            #   가짜 DB 로 인한 후속 실패는 관심사가 아니지만 **무엇이었는지는 남긴다.**
+            failures.append(repr(exc))
+        return list(seen)
+
+    n1 = "11" * 32
+    got1 = _run(n1)
+    # ★공허 방지 — 이 단언이 없으면 「불리지 않아서 통과」가 된다(실제로 한 번 그랬다)
+    assert got1, (
+        "★_rank_pick 이 불리지 않았다 — 배선 축이 검증되지 않은 채 초록이 될 뻔했다. "
+        f"중간 실패: {failures[:2]}"
+    )
+    expect1 = vrng.seed_key(n1, str(ann.id)).hex()
+    assert got1[0] == expect1, (
+        f"run_draw 가 nonce 유래 seed 를 안 넘긴다: {got1[0]!r} != {expect1!r}"
+    )
+    n2 = "22" * 32
+    got2 = _run(n2)
+    assert got2 and got2[0] != got1[0], "nonce 를 바꿔도 같은 seed 가 간다"
+    assert got2[0] != str(ann.id), "공고 id 가 그대로 seed 로 간다 — 공개값이 키다"
