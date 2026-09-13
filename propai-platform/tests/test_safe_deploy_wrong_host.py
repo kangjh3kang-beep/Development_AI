@@ -938,7 +938,11 @@ def test_canonical_script_is_never_executed_outside_the_sandbox() -> None:
 #: ★★R1 MAJOR-3 — 종전엔 `${VAR:-` 만 금지하는 **모양 블랙리스트**였고, 실측으로
 #:   `${VAR:=...}` 와 `${VAR-...}` 가 **둘 다 통과**했다(그리고 둘 다 bash 에서 실제로
 #:   env 로 덮인다). ***금지 목록은 한 글자 차이로 샌다 — 허용된 모양을 요구하라.***
-_CLOSED_LITERAL = re.compile(r'^"[^"]*"$')
+#: ★R2 위양성 — 종전엔 닫는 따옴표 **뒤에 아무것도 없어야** 통과해서, 안전한 선언에
+#:   **후행 주석**을 다는 정당한 리팩토링(`REPO="$HOME/x"  # note`)이 «열렸다» 로 신고됐다.
+#:   ***정상 코드를 막는 락은 곧 꺼진다*** — 후행 주석을 허용한다(따옴표 **안**의 `#` 는
+#:   값의 일부라 건드리지 않는다).
+_CLOSED_LITERAL = re.compile(r'^"[^"]*"\s*(?:#.*)?$')
 
 
 def _declaration_rhs_all(src: str, var: str) -> list[str]:
@@ -1001,6 +1005,15 @@ def test_closed_literal_detector_discriminates() -> None:
     """
     closed = '"$HOME/Development_AI"'
     assert _declares_closed_literal(closed), "닫힌 리터럴을 위반으로 잡는다(위양성)"
+    # ★위양성 회귀(R2) — 안전한 선언에 후행 주석을 다는 것은 정당한 리팩토링이다.
+    assert _declares_closed_literal('"$HOME/Development_AI"  # note'), (
+        "후행 주석이 달린 안전한 선언을 위반으로 잡는다 — 위양성도 결함이다"
+    )
+    assert _declares_closed_literal('"/tmp/a#b"'), "따옴표 **안**의 # 는 값의 일부다"
+    # ★그래도 열린 선언은 주석을 달아도 잡혀야 한다(주석이 탈출구가 되면 안 된다).
+    assert not _declares_closed_literal('"${REPO:-$HOME/Development_AI}"  # note'), (
+        "후행 주석을 붙이면 열린 선언이 통과한다 — 주석이 탈출구가 됐다"
+    )
     for spelling in (
         '"${REPO:-$HOME/Development_AI}"',     # 종전 판이 잡던 유일한 모양
         '"${REPO:=$HOME/Development_AI}"',     # ★종전 SURVIVED
