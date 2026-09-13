@@ -626,9 +626,6 @@ def _redirect_side_effects(src: str, rel: str, tmp_path: Path) -> str:
       사본이 **진짜 `/tmp`** 를 가리키게 되고, 그대로 실행하면 통합자의 배포 락·로그·
       상태를 건드린다. 그래서 **조용히 진행하지 않고 시끄럽게 실패**한다.
     """
-    # ★정본을 쓴다(사본 금지 — 한계가 갈린다)
-    from tests import _scan_guard as sg
-
     out = src
     for var in ("LOCKDIR", "STATUS", "LOG"):
         pat = re.compile(rf'^{var}=.*$', re.MULTILINE)
@@ -767,6 +764,11 @@ def test_guard_library_absence_actually_exits_nonzero(rel: str, tmp_path: Path) 
     status = tmp_path / "status"
     if "STATUS=" in (REPO_ROOT / rel).read_text(encoding="utf-8"):
         assert status.exists(), f"{rel}: 상태 파일을 안 썼다 — 가드가 사건을 기록하지 않았다"
+        # ★**기계 표식**을 잡는다 — 사람이 읽는 안내 **산문**은 일부러 안 잠근다.
+        #   산문까지 단언하면 문구를 다듬을 때마다 깨지는 **취약한 락**이 된다(§G-30).
+        #   실측: 안내 두 줄을 지우는 변이는 `SURVIVED` 다 — 그건 **표현 축**이고,
+        #   이 사건의 **계약 축**(상태가 사건을 이름 짓는다)은 아래 단언이 잠근다
+        #   (그 변이는 `::VERDICT=CAUGHT`). 독립 리뷰 MEDIUM-3·7 의 처방 그대로다.
         assert "guard-lib" in status.read_text(encoding="utf-8"), (
             f"{rel}: 상태가 **이 사건의 이름**을 말하지 않는다: "
             f"{status.read_text(encoding='utf-8')!r}"
