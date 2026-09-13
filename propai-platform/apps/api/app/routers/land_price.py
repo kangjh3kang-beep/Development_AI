@@ -159,9 +159,16 @@ async def rone_status(keyword: str = "지가변동"):
         "지가변동률": ("RONE_LANDPRICE_STATBL_ID", "지가변동률"),
         "주택 매매가격지수": ("RONE_HOUSING_STATBL_ID", "매매가격지수"),
         # ★표시명은 **우리가 쓰는 항목**(소득수익률=자본환원율)을 말하고,
-        #   검색어는 **R-ONE 표 이름**을 찾는 기능값이라 그대로 둔다 — 그 표는
-        #   「투자수익률」 이름으로 등재돼 있고 그 안의 항목 중 소득수익률을 고른다.
-        #   ★검색어를 재보지 않고 바꾸면 통계표 탐색이 조용히 0건이 된다.
+        #   검색어는 **R-ONE 표 이름**을 찾는 기능값이라 그대로 둔다.
+        #   실측(2026-09-13 · `GET /land-price/rone-status` · 무인증):
+        #     keyword="투자수익률" → 후보 **2건**
+        #       「임대동향 투자수익률(분기/연간)(2002년~2012년)_오피스 / _중대형 상가」
+        #     ⇒ 표 이름에 **「소득수익률」이 없다** — 검색어를 바꾸면 탐색이 0건이 된다.
+        # ★★그리고 **찾은 표가 쓸 수 있다는 뜻이 아니다**: 그 표의 항목은
+        #   `distinct_ITM_NM=['투자수익률']` 뿐이라 `_CAP_RATE_ITM`(소득수익률) 가드가 거부한다.
+        #   그 부채는 strict xfail 로 선언돼 있다 —
+        #   `tests/test_sido_resolution_fail_open.py::test_commercial_yield_table_publishes_a_cap_rate_item`.
+        #   ⇒ **검색어는 「표를 찾는 것」이고, 찾은 표의 쓸모는 별개다.**
         "상업용 소득수익률(자본환원율)": ("RONE_COMMYIELD_STATBL_ID", "투자수익률"),
         "전월세전환율": ("RONE_JEONSE_CONV_STATBL_ID", "전월세전환율"),
     }

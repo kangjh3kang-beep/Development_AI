@@ -37,6 +37,11 @@ _STAT_REGISTRY = {
         # ★MINOR-2(독립 리뷰): 이 `keyword` 는 **프로덕션 소비처가 0**인데(레지스트리에서 읽는
         #   코드 없음 · `/rone-status` 는 인자를 받는다) 다음 사람이 «이 표를 찾으라» 로 읽는다.
         #   `_CAP_RATE_ITM`(소득수익률)과 어긋나므로 함께 고친다.
+        # ★★이 값은 **검색어로 쓰면 0건**이다(실측 2026-09-13: 그 표 이름은
+        #   「임대동향 투자수익률(분기/연간)(2002년~2012년)_…」이라 "소득수익률" 을 안 담는다).
+        #   소비처가 0이므로 기능 영향은 없지만, **다음 사람이 검색어로 읽지 않게** 적어 둔다 —
+        #   이것은 «우리가 필요로 하는 항목» 이지 «그 표를 찾는 문자열» 이 아니다.
+        #   표를 찾는 문자열은 `routers/land_price.py` 의 `stat_envs` 에 있다(그쪽이 기능값).
         "keyword": "상업용부동산 소득수익률", "kind": "level",  # 최신 수익률(%)
         "sane": (1.0, 12.0),
     },
@@ -243,7 +248,7 @@ async def get_market_stats(address: str = "", base_year: int | None = None) -> d
         "land_time_adjust": land_ta,                 # 토지 시점수정(지가변동률)
         "land_price_trend": trend,                   # 월별/연도별 통계분석(시계열)
         "housing_time_adjust": housing,              # 건물/주택 시점수정(주택가격지수)
-        "cap_rate": cap,                             # 상업용 투자수익률(자본환원율)
+        "cap_rate": cap,                             # 상업용 소득수익률(자본환원율)
         "jeonse_conversion_rate": jeonse,            # 전월세전환율
         "rone_available": any([
             (land_ta or {}).get("source") == "R-ONE", housing, cap, jeonse, trend,
