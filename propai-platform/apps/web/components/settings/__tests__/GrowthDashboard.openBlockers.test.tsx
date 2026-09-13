@@ -125,6 +125,22 @@ describe("InsightBlockers — 네 상태가 각각 다른 출력을 낸다", () 
     expect(screen.getByTestId("insight-blocker-brand_new_code_2027").textContent)
       .toBe("brand_new_code_2027");
   });
+
+  // ★★두 모집단 — 이 짝이 없으면 `BLOCKER_LABELS` 가 **장식**이 된다.
+  //   기계 변이가 잡았다: 맵에서 한 줄을 지워도 위 테스트는 초록이었다(화면은 원시 코드로
+  //   떨어지는데 아무도 안 물었다). *등록된 코드가 사람 말로 나오는가* 를 따로 잠근다.
+  //   ★코드 문자열 자체를 단언하지 않고 **「코드와 다르다」**를 단언한다 — 문구를 다듬을 때마다
+  //     깨지는 취약한 락을 만들지 않으면서 «라벨이 실제로 쓰인다»는 계약만 잡는다.
+  it.each(["type_not_handled", "window_expired", "action_not_healable"])(
+    "★등록된 코드 %s 는 **사람 말**로 나온다(원시 코드가 아니다)",
+    (code) => {
+      renderBlockers([code]);
+      const shown = screen.getByTestId(`insight-blocker-${code}`).textContent!;
+      expect(shown.length).toBeGreaterThan(0);          // 공허 방지
+      expect(shown).not.toBe(code);                      // ★본판정 — 맵이 실제로 쓰인다
+      expect(shown).not.toContain("_");                  // 원시 코드 모양이 아니다
+    },
+  );
 });
 
 describe("★배선 — 대시보드 렌더 결과에서 사유가 나온다", () => {

@@ -330,7 +330,10 @@ export function fmtAge(iso: string | null, now: number = Date.now()): string | n
  * 이 그 상태였다 — 2026-08-25). 렌더 결과를 봐야만 잡힌다(규율 §A-1·A-3).
  */
 /** 차단 코드 → 사람이 읽는 짧은 라벨. ★**모르는 코드는 코드 그대로** 낸다 —
- *  목록이 상한이 되어 새 코드가 화면에서 **사라지는** 것을 막는다. */
+ *  목록이 상한이 되어 새 코드가 화면에서 **사라지는** 것을 막는다.
+ *  ★락: `GrowthDashboard.openBlockers.test.tsx` 가 **두 모집단**으로 잡는다 —
+ *    등록된 코드는 «코드와 다른 문자열», 미등록 코드는 «코드 그대로». 한쪽만 있으면
+ *    이 맵을 지워도 초록이다(기계 변이가 실제로 그렇게 생존했다). */
 const BLOCKER_LABELS: Record<string, string> = {
   type_not_handled: "치유기에 이 타입 분기 없음",
   window_expired: "후보 창 경과",
@@ -383,6 +386,10 @@ export function InsightBlockers({ insight }: { insight: GrowthInsight }) {
   return (
     <div data-testid="insight-blockers-list" className="mt-2 text-xs text-[var(--text-hint)]">
       <span className="font-bold text-[var(--text-secondary)]">아직 열려 있는 이유</span>{" "}
+      {/* ★설명 가능한 변이 생존(점수 부풀리기 방지): 아래 `key`·`className` 을 지우거나 바꾸는
+          변이는 **생존한다**. `key` 는 React 조정 힌트라 렌더 결과가 같고, `className` 은
+          표현이다. 둘 다 **계약이 아니다** — 단언하면 다듬을 때마다 깨지는 취약한 락이 된다.
+          이 블록의 계약은 «코드 라벨이 나오고 사유 전문이 잘리지 않는다» 이고 그것은 잠겨 있다. */}
       {blockers.map((code) => (
         <span
           key={code}
