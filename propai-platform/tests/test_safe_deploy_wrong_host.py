@@ -50,17 +50,43 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "propai-platform" / "scripts" / "safe-deploy.sh"
+_SCRIPT_REL = "propai-platform/scripts/safe-deploy.sh"
+SCRIPT = REPO_ROOT / _SCRIPT_REL
 
 
 def _run(home: str, cwd: str) -> subprocess.CompletedProcess[str]:
+    """`safe-deploy.sh` 를 **정본 위치에서** 돌린다(가드가 `dirname $BASH_SOURCE` 로 lib 을 찾는다).
+
+    ★★**주석을 정직하게 고친다.** 종전에 *"상태 파일이 전역 경로(/tmp)라 다른 세션과 겹치지
+      않게 격리한다"* 고 적혀 있었는데 **거짓이다** — 바꾸는 것은 `HOME` 뿐이고
+      `LOCKDIR`·`STATUS`·`LOG` 는 스크립트에 **하드코딩**이라 그대로 `/tmp` 를 쓴다.
+      실측(2026-09-13): 이 파일을 한 번 돌리면 `/tmp/deploy_status.txt` 가
+      `ABORT …($REPO=/tmp/pytest-of-…)` 로 덮이고 `/tmp/deploy.log` 가 **비워지며**
+      `/tmp/propai_deploy.lock` 을 **잠깐 점유**한다(그 락은 `safe-deploy.sh:83` 의 동시배포
+      차단과 **같은 경로** — 겹치면 상대가 `exit 9`).
+    ★**면역을 거짓 주장하지 마라**(§C-11). 고칠 수 있는 자리는 **스크립트 쪽**이고
+      아래 `test_side_effect_paths_should_be_overridable` 이 그 부채를 초록 안에 세운다.
+    ★영향 범위(정직): 오염되는 것은 **이 머신의 `/tmp`** 다. 실배포는 A1 에서 돌고 CI 는
+      GitHub 러너라 별개다 — **A1 에서 이 파일이 도는지는 미측정**이다.
+    """
     env = dict(os.environ)
     env["HOME"] = home
-    # 상태 파일이 전역 경로(/tmp)라 다른 세션과 겹치지 않게 격리한다.
     return subprocess.run(
         ["bash", str(SCRIPT), "web"],
         cwd=cwd, env=env, capture_output=True, text=True, timeout=120,
     )
+
+
+#: `safe-deploy.sh` 가 쓰는 **운영 상태 파일**. ★지금은 하드코딩이라 테스트도 여기를 본다 —
+#: 그 부채는 `test_side_effect_paths_should_be_overridable` 이 초록 안에 세워 둔다.
+STATUS_PATH = "/tmp/deploy_status.txt"
+
+
+def _status_text(home: str) -> str:   # noqa: ARG001 — 시그니처 유지(호출부 다수)
+    """`_run` 이 쓴 상태 파일. ★**한 곳에서만** 경로를 선언한다(사본 금지)."""
+    p = Path(STATUS_PATH)
+    assert p.exists(), f"상태 파일이 없다: {p} — `_run` 이 안 돌았나"
+    return p.read_text(encoding="utf-8")
 
 
 def test_script_exists_and_parses() -> None:
@@ -158,7 +184,7 @@ def test_detects_wrong_host_with_dedicated_code(tmp_path: Path) -> None:
     (home / "My_Projects" / "Development_AI").mkdir(parents=True)
     r = _run(str(home), str(REPO_ROOT))
     assert r.returncode == GUARD_EXIT, f"기대 {GUARD_EXIT}, 실제 {r.returncode}\nstderr={r.stderr[:400]}"
-    assert "wrong-checkout" in Path("/tmp/deploy_status.txt").read_text(encoding="utf-8")
+    assert "wrong-checkout" in _status_text(str(home))
 
 
 def test_guidance_actually_discourages_editing_the_constant(tmp_path: Path) -> None:
@@ -184,7 +210,7 @@ def test_specificity_does_not_fire_on_an_a1_like_host(tmp_path: Path) -> None:
     (home / "Development_AI" / "propai-platform").mkdir(parents=True)
     r = _run(str(home), str(home))
     assert r.returncode != GUARD_EXIT, "A1 처럼 보이는데 막았다 — 위양성"
-    status = Path("/tmp/deploy_status.txt").read_text(encoding="utf-8")
+    status = _status_text(str(home))
     assert "wrong-checkout" not in status, f"상태가 여전히 wrong-checkout 다: {status!r}"
 
 
@@ -212,7 +238,7 @@ def test_status_names_the_measured_event(tmp_path: Path) -> None:
     home = tmp_path / "home"
     (home / "My_Projects" / "Development_AI").mkdir(parents=True)
     _run(str(home), str(REPO_ROOT))
-    status = Path("/tmp/deploy_status.txt").read_text(encoding="utf-8")
+    status = _status_text(str(home))
     assert "wrong-checkout" in status, f"상태가 잰 것을 말하지 않는다: {status!r}"
 
 
@@ -405,7 +431,7 @@ def test_kind_is_derived_from_the_measured_value(tmp_path: Path) -> None:
     home = tmp_path / "home"
     (home / "My_Projects" / "Development_AI").mkdir(parents=True)
     _run(str(home), str(REPO_ROOT))
-    status = Path("/tmp/deploy_status.txt").read_text(encoding="utf-8")
+    status = _status_text(str(home))
     assert "wrong-checkout" in status, f"측정값으로 안 갈랐다: {status!r}"
     # ★상태 문구가 **잰 값을 싣는다** — 두 입력이 같은 kind 여도 사람이 구별할 수 있어야 한다.
     assert str(home) in status, f"어떤 $REPO 를 기대했는지 상태에 없다: {status!r}"
@@ -562,8 +588,9 @@ def test_guard_self_location_constants_match_the_real_tree() -> None:
 #   그래서 ①치환이 실제로 일어났는지 ②사본의 **실행 줄**에 공유 경로가 남지 않았는지를
 #   **실행 전에** 단언한다. 못 돌렸으면 **시끄럽게 실패**하지, 조용히 진행하지 않는다.
 
+#: ★한 곳에서만 선언한다 — 두 목록이 갈리면 한쪽만 잠긴다.
 _GUARDED_SCRIPTS = [
-    "propai-platform/scripts/safe-deploy.sh",
+    _SCRIPT_REL,
     "propai-platform/scripts/rollback-web.sh",
 ]
 
@@ -602,10 +629,16 @@ def _redirect_side_effects(src: str, rel: str, tmp_path: Path) -> str:
     return out
 
 
-def _sandbox(tmp_path: Path, rel: str, *, with_lib: bool) -> Path:
+def _sandbox(tmp_path: Path, rel: str, *, lib: str) -> Path:
     """스크립트 사본을 만든다 — **부작용 경로를 전부 임시 경로로 돌린 뒤**.
 
-    `with_lib=False` 면 `lib/assert-a1-host.sh` 가 없어 `source` 가 실패한다(결함 조건).
+    ``lib`` 는 셋이다. **스텁과 정본을 섞지 않는다**:
+
+    ``"none"``  `lib/` 가 없어 `source` 가 실패한다(가드 결함 조건).
+    ``"real"``  **정본** `scripts/lib/assert-a1-host.sh` 를 그대로 복사한다 —
+                호스트 판정(`exit 11`)까지 **진짜 동작**을 태울 때 쓴다.
+    ``"stub"``  아무것도 안 하는 `assert_a1_host` — *「가드를 통과했다」* 만 보고 싶을 때.
+                ★스텁으로 정본 동작을 검증하면 **스텁이 버리는 층이 통째로 무잠금**이 된다.
     """
     src = (REPO_ROOT / rel).read_text(encoding="utf-8")
     box = tmp_path / Path(rel).stem
@@ -615,10 +648,17 @@ def _sandbox(tmp_path: Path, rel: str, *, with_lib: bool) -> Path:
     dst = box / Path(rel).name
     dst.write_text(out, encoding="utf-8")
     dst.chmod(0o755)
-    if with_lib:
-        lib = box / "lib"
-        lib.mkdir(exist_ok=True)
-        (lib / "assert-a1-host.sh").write_text("assert_a1_host() { :; }\n", encoding="utf-8")
+    assert lib in ("none", "real", "stub"), f"알 수 없는 lib 모드: {lib}"
+    if lib != "none":
+        libdir = box / "lib"
+        libdir.mkdir(exist_ok=True)
+        target = libdir / "assert-a1-host.sh"
+        if lib == "real":
+            real = REPO_ROOT / "propai-platform" / "scripts" / "lib" / "assert-a1-host.sh"
+            assert real.is_file(), f"정본 가드 라이브러리가 없다: {real}"
+            target.write_text(real.read_text(encoding="utf-8"), encoding="utf-8")
+        else:
+            target.write_text("assert_a1_host() { :; }\n", encoding="utf-8")
     return dst
 
 
@@ -645,7 +685,7 @@ def test_guard_library_absence_actually_exits_nonzero(rel: str, tmp_path: Path) 
     종전 락은 `assert "guard-lib" in src or "exit 12" in src` 였다. 소스 텍스트였고,
     **`or` 라 두 토큰이 서로를 덮어** 하나씩은 지워도 통과했다. *「죽는가」를 안 태웠다.*
     """
-    script = _sandbox(tmp_path, rel, with_lib=False)
+    script = _sandbox(tmp_path, rel, lib="none")
     # ★★**호출부 잠금** — 함수를 잠그는 것과 **그 함수가 불리는 것**은 다르다.
     #   `_sandbox` 가 안전 검사를 안 부르게 바꿔도 위 호출은 성공하므로, 여기서
     #   **실제로 쓰인 사본**을 직접 본다.
@@ -674,7 +714,7 @@ def test_guard_passes_when_the_library_is_present(rel: str, tmp_path: Path) -> N
     이 짝이 없으면 «항상 12 로 죽는 스크립트» 도 위 테스트를 통과한다
     (한 모집단만 보는 단언은 고친 것과 망가진 것을 구별하지 못한다).
     """
-    script = _sandbox(tmp_path, rel, with_lib=True)
+    script = _sandbox(tmp_path, rel, lib="stub")
     r = _run_guard(script, tmp_path)
     assert r.returncode != 12, (
         f"{rel}: lib 가 있는데도 rc=12 — 가드가 **항상** 죽는다면 위 본판정은 공허하다.\n"
@@ -702,3 +742,21 @@ def test_the_sandbox_refuses_when_substitution_misses(tmp_path: Path) -> None:
     # ★위양성 방지 — **주석 안**의 같은 경로는 위험이 아니다(정상 스크립트를 막지 않는다).
     commented = '# LOCK=/tmp/propai_deploy.lock 참고\nLOCKDIR="/tmp/propai_deploy.lock"\n'
     _redirect_side_effects(commented, "fake.sh", tmp_path)   # 예외 없이 통과해야 한다
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="★부채(2026-09-13 실측): `safe-deploy.sh` 의 `LOCKDIR`·`STATUS`·`LOG` 가 "
+           "**하드코딩**이라 이 파일을 한 번 돌리면 `/tmp/deploy_status.txt` 가 덮이고 "
+           "`/tmp/deploy.log` 가 비워지며 동시배포 락을 잠깐 점유한다. 형제 "
+           "`rollback-web.sh` 는 **이미** `${LOCKDIR:-…}` 로 덮어쓸 수 있다 — 두 스크립트가 "
+           "이 점에서 갈려 있다. ★고치면 이 테스트가 초록으로 뒤집히며 알려 준다. "
+           "★단 **배포 스크립트 변경**이라 이 PR 범위 밖이다(별건·리뷰 필요).",
+)
+def test_side_effect_paths_should_be_overridable() -> None:
+    """부작용 경로가 **env 로 덮어쓸 수 있어야** 테스트가 운영 표면을 안 건드린다."""
+    src = SCRIPT.read_text(encoding="utf-8")
+    for var in ("LOCKDIR", "STATUS", "LOG"):
+        assert re.search(rf'^{var}="\$\{{{var}:-', src, re.MULTILINE), (
+            f"{var} 가 env 로 덮어쓸 수 없다 — 테스트가 운영 경로를 쓴다"
+        )
