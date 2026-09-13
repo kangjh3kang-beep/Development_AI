@@ -5,8 +5,16 @@
   2) 그룹 동·호판(unit pool) 지정(set_pool) — 그룹이 추첨할 대상 세대 집합
   3) 대상자 순번대로 추첨(draw_for_candidate): 남은 가용 세대 중 seed 기반 무작위 1개 배정
      - 배정 시 세대 상태 HOLD 전이 + 이벤트 원장 DRAW_ASSIGN(seed·group·candidate) 기록(감사)
-  공정성: seed=secrets, 선택 = random.Random(seed).choice(sorted(remaining)) → seed·remaining·결과를
-  원장에 남겨 누구나 재현·검증(부정 재추첨 방지). content_hash 체인으로 변조탐지.
+  공정성(2026-09-13 v2): **사전 공약된 nonce** + **HMAC-SHA256 기반 VRNG**(`vrng.pick`).
+    · 공약은 `sales_draw_commitments`(CRUD 밖·append-only·`UNIQUE(scope,ref_id)`)에서 온다 —
+      **재공약 불가**라 「뽑아 보고 다시 뽑기」가 막힌다.
+    · 선택은 **언어·버전 독립**이라 감사자가 파이썬 없이도 재현한다.
+    · pool 을 **전문 저장**하고 해시는 **절단하지 않는다**(종전 64비트 절단).
+    ★종전 판(v1)은 `random.Random(secrets.token_hex(8)).choice(...)` 였다. 그 방식은
+      **①사전 공약 없음 ②CPython 구현 종속 ③pool 절단** 셋이 겹쳐, 원장에 seed 가 남아도
+      «그 seed 가 공정하게 뽑혔다»를 증명하지 못했다.
+    ★**v1 배정은 그대로 재현된다** — 「신규 공고부터」 적용이라 그룹 생성 시점의
+      `algo_version` 이 경로를 못 박는다(옛 행은 기록 부재 = v1).
 
 지정모드와 공존: 지정모드는 lifecycle_actions(직접 배정), 추첨모드는 본 엔진(무작위). 모드는 프론트 토글.
 """
@@ -14,13 +22,14 @@ from __future__ import annotations
 
 import hashlib
 import io
-import random
-import secrets
+import json as _json
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.sales.draw import vrng
+from app.services.sales.draw.commitment_store import reveal_nonce
 from app.services.sales.units.event_ledger import append_event
 
 _DDL_GROUPS = (
@@ -58,6 +67,22 @@ async def _ensure(db: AsyncSession) -> None:
     await db.execute(text(_DDL_GROUPS))
     await db.execute(text(_DDL_CAND))
     await db.execute(text("CREATE INDEX IF NOT EXISTS ix_draw_cand_group ON sales_draw_candidates(group_id, seq)"))
+    # ★**v1/v2 공존**(2026-09-13 · 「신규 공고부터」 적용). 옛 배정은 **그 알고리즘으로 재현**돼야
+    #   하므로 v1 경로를 지울 수 없다. 그런데 지우지 않으면 신규가 실수로 v1 을 탄다 —
+    #   그래서 **그룹 생성 시점에 못 박고**(아래 `create_group` 은 항상 'v2'),
+    #   **기록 부재 = v1** 로 읽는다(옛 행에는 컬럼이 없었다).
+    await db.execute(text(
+        "ALTER TABLE sales_draw_groups ADD COLUMN IF NOT EXISTS algo_version varchar(8) "
+        "NOT NULL DEFAULT 'v1'"))
+    # ★`draw_seed varchar(32)` 는 VRNG 키(64 hex)를 못 담는다 — 넓히지 않으면 **조용히 잘린다.**
+    await db.execute(text(
+        "ALTER TABLE sales_draw_candidates ALTER COLUMN draw_seed TYPE varchar(128)"))
+    # ★pool 을 **전문 저장**한다. 종전엔 `sha256(...)[:16]`(64비트 절단)만 남겨
+    #   감사자가 그 시점의 pool 을 복원할 수 없었다.
+    await db.execute(text(
+        "ALTER TABLE sales_draw_candidates ADD COLUMN IF NOT EXISTS draw_pool jsonb"))
+    await db.execute(text(
+        "ALTER TABLE sales_draw_candidates ADD COLUMN IF NOT EXISTS algo_version varchar(8)"))
     await db.commit()
     _READY = True
 
@@ -67,7 +92,10 @@ async def create_group(db: AsyncSession, site_id, name: str) -> dict[str, Any]:
     if not (name or "").strip():
         raise ValueError("추첨그룹 이름을 입력하세요")
     row = (await db.execute(text(
-        "INSERT INTO sales_draw_groups (site_id, name) VALUES (:s,:n) RETURNING id"),
+        # ★신규 그룹은 **항상 v2**(검증 가능 난수 + 사전 공약). 「v1 로도 만들 수 있다」를
+        #   남기면 그것이 곧 나중의 서식지가 된다.
+        "INSERT INTO sales_draw_groups (site_id, name, algo_version) "
+        "VALUES (:s,:n,'v2') RETURNING id"),
         {"s": str(site_id), "n": name.strip()})).first()
     await db.commit()
     return {"id": str(row[0]), "name": name.strip(), "status": "OPEN"}
@@ -233,19 +261,36 @@ async def draw_for_candidate(db: AsyncSession, site_id, group_id, candidate_id, 
     # ★HOLD 선점은 'RETURNING id' 로 원자 확정한다(이중배정 방지). 동시 추첨/지정 경합으로 방금 선점된
     #   세대(0행)면 그 세대를 빼고 남은 가용 세대를 재조회해 재추첨한다. 모든 후보가 소진되면 명확한 에러.
     # 공정 추첨: 매 시도마다 secrets seed → 결정적 선택(재현·검증 가능). sorted 로 입력 순서 영향 제거.
+    # ★**v2 로 전환**(2026-09-13). 종전에는 이랬다:
+    #     seed = secrets.token_hex(8);  random.Random(seed).choice(sorted(remaining))
+    #   결함 셋이 있었다 —
+    #     ① **사전 공약이 없다**: 뽑아 보고 롤백 후 재시도(grinding)해도 원장엔 **성공분 하나만**
+    #        남아 그 사실이 보이지 않는다.
+    #     ② **재현이 CPython 구현 종속**: `random.Random(str)` 의 시딩과 `choice` 내부는 구현
+    #        세부라 파이썬 버전이 바뀌면 결과가 달라질 수 있고 **다른 언어로는 재현 불가**다.
+    #     ③ pool 을 **해시 앞 16자(64비트)** 로만 남겨 감사자가 그 시점 pool 을 복원할 수 없다.
+    #   ⇒ 공약된 nonce 로 **HMAC-SHA256 기반 VRNG**(`vrng.pick`)를 쓰고, pool 을 **전문 저장**한다.
+    #   ★카운터는 **대상자 순번**으로 도메인 분리한다 — 같은 그룹 안에서 두 사람이 같은 스트림을
+    #     쓰면 결과가 상관된다.
+    nonce_hex, commit_hex = await reveal_nonce(db, "dongho", group_id)
+    domain = f"dongho:{group_id}:{candidate_id}"
+    key = vrng.seed_key(nonce_hex, str(group_id), str(candidate_id))
+    seed = key.hex()
+
     chosen: str | None = None
-    seed = ""
     pool_sorted: list[str] = []
     pool_hash = ""
+    counter = 0
     excluded: set[str] = set()  # 이번 호출에서 선점 실패해 제외한 세대(재조회 후에도 중복 시도 방지).
     while True:
         remaining = [u for u in await _remaining_units(db, site_id, group_id) if u not in excluded]
         if not remaining:
             raise ValueError("남은 가용 세대가 없습니다(추첨 종료)")
-        seed = secrets.token_hex(8)
         pool_sorted = sorted(remaining)
-        candidate_unit = random.Random(seed).choice(pool_sorted)
-        pool_hash = hashlib.sha256(",".join(pool_sorted).encode()).hexdigest()[:16]
+        # ★재시도(선점 경합)마다 **카운터를 이어받는다** — seed 를 새로 뽑지 않는다.
+        #   새로 뽑으면 그게 곧 grinding 통로다(공약이 무의미해진다).
+        candidate_unit, counter = vrng.pick(key, domain, pool_sorted, start=counter)
+        pool_hash = hashlib.sha256(",".join(pool_sorted).encode()).hexdigest()
         # HOLD 선점(원자 조건부 UPDATE) — 0행이면 이미 다른 곳에서 선점됨 → 재추첨.
         won = (await db.execute(text(
             "UPDATE sales_unit_inventory SET status='HOLD' WHERE id=:u AND status='AVAILABLE' RETURNING id"),
@@ -259,15 +304,18 @@ async def draw_for_candidate(db: AsyncSession, site_id, group_id, candidate_id, 
     u = (await db.execute(text(
         "SELECT dong, ho FROM sales_unit_inventory WHERE id=:u"), {"u": chosen})).first()
     await db.execute(text(
-        "UPDATE sales_draw_candidates SET assigned_unit_id=:u, draw_seed=:seed, drawn_at=now() WHERE id=:c"),
-        {"u": chosen, "seed": seed, "c": str(candidate_id)})
+        "UPDATE sales_draw_candidates SET assigned_unit_id=:u, draw_seed=:seed, "
+        "draw_pool=CAST(:pool AS jsonb), algo_version='v2', drawn_at=now() WHERE id=:c"),
+        {"u": chosen, "seed": seed, "c": str(candidate_id),
+         "pool": _json.dumps(pool_sorted, ensure_ascii=False)})
 
     # 감사: 이벤트 원장에 추첨 배정 기록(seed·group·candidate·pool_hash → 사후 검증).
     # HOLD UPDATE + candidate UPDATE + 이벤트 원장을 한 트랜잭션으로 묶어 한 번에 커밋(원자성).
     ev = await append_event(db, site_id, chosen, "DRAW_ASSIGN", from_status="AVAILABLE", to_status="HOLD",
                             message=f"추첨 배정: {cand[1]}(순번 {cand[0]})", by=by,
                             meta={"group_id": str(group_id), "candidate_id": str(candidate_id),
-                                  "seed": seed, "pool_hash": pool_hash, "pool_size": len(pool_sorted)},
+                                  "seed": seed, "pool_hash": pool_hash, "pool_size": len(pool_sorted),
+                                  "algo_version": "v2", "commit_hash": commit_hex},
                             do_commit=False)
     await db.commit()
     return {

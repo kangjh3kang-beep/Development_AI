@@ -5,15 +5,15 @@
 솔직하게 적는다(독립 리뷰 M-3):
 
   · ①`subscription/engine.py::run_draw` — **`seed_key`·`verify_commitment` 만** 쓴다.
-  · ②`draw/draw_engine.py::draw_for_candidate`(**동·호 즉석추첨**) — **아직 이 모듈을 안 쓴다.**
-    `random.Random(secrets.token_hex(8)).choice(...)` 가 그대로 살아 있고 pool 해시도
-    **64비트로 절단**된 채다.
-  · 그래서 `below`·`pick`·`shuffle` 은 지금 **테스트만 부른다**(프로덕션 소비처 0).
+  · ②`draw/draw_engine.py::draw_for_candidate`(**동·호 즉석추첨**) — **`pick` 으로 전환됨**
+    (2026-09-13). 공약도 `commitment_store` 에서 오고 pool 은 **전문 저장**된다.
+  · `shuffle` 은 **아직 프로덕션 소비처 0** 이다 — 추첨 **순번(seq)** 배정에 쓸 자리인데
+    지금은 등록 순서(`MAX(seq)+1`)가 순번이다. 그 부채는
+    `test_draw_seq_still_insertion_order.py` 가 **초록 안에서 보이게**(xfail) 들고 있다.
 
-★***계획서가 ②를 「주 사용처」라 불렀는데 고친 것은 ①이다.*** 이 사실을 여기 적어 두지 않으면
-  다음 사람이 「동·호 추첨에 VRNG 가 적용됐다」로 읽는다 — **그것이 허위 완결성이다.**
-  ②의 전환은 별도 작업이고, 그 부채는 `test_draw_engine_still_unmigrated.py` 가
-  **초록 안에서 보이게**(xfail) 들고 있다.
+★한때 이 자리에 *"②는 아직 안 옮겼다"* 고 적혀 있었다. 독립 리뷰가 **허위 완결성**(제목은
+  「동·호 추첨」인데 고친 건 ①뿐)을 지적해 그 사실을 적었고, 이제 ②가 옮겨져 그 문장을 지운다.
+  ***적용 범위를 적어 두지 않으면 다음 사람이 제목만 보고 오독한다.***
 
 ## 왜 `random.Random` 을 쓰지 않는가 (실측 2026-09-13)
 
