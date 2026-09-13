@@ -346,10 +346,14 @@ def test_guard_library_absence_is_not_fail_open() -> None:
     두 스크립트에 ``set -e`` 가 없어, ``.`` source 실패가 그냥 흘러가
     ``cd "$REPO"`` 로 도달해 **``FAIL cd-repo``** 를 냈다 — ***이 PR 이 없애려는 그 문구다.***
     """
-    for rel in ["propai-platform/scripts/safe-deploy.sh", "propai-platform/scripts/rollback-web.sh"]:
+    for rel in _GUARDED_SCRIPTS:
         src = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        # ★구조 카나리아 — **이것이 락은 아니다.** 진짜 판정은 아래 행위 테스트가 한다.
+        #   종전엔 여기 `assert "guard-lib" in src or "exit 12" in src` 가 있었는데,
+        #   **`or` 라 두 토큰이 서로를 덮어 개별로는 무잠금**이었다(2026-09-12 실측:
+        #   `exit 12` 만 지우면 `::VERDICT=SURVIVED` · 둘 다 지워야 CAUGHT).
+        #   그리고 소스 텍스트 검사라 **「0 이 아닌 코드로 죽는가」를 한 번도 안 태웠다.**
         assert "if ! . " in src, f"{rel}: source 실패를 검사하지 않는다(fail-open)"
-        assert "guard-lib" in src or "exit 12" in src, f"{rel}: source 실패에 전용 처리가 없다"
 
 
 
@@ -541,3 +545,160 @@ def test_guard_self_location_constants_match_the_real_tree() -> None:
         f"루트 표식이 실제 트리({marker})와 다르다 — 판정이 항상 unknown 으로 퇴화한다"
     )
     assert (REPO_ROOT / marker).is_dir(), f"표식 경로 {marker} 가 트리에 없다 — 파생이 낡았다"
+
+
+# ── ★가드를 **행위로** 태운다 — 소스 텍스트가 아니라 종료코드 ─────────────────────
+#
+# 【왜 이 하네스가 이렇게 복잡한가 — 그냥 돌리면 안 된다】
+#   `safe-deploy.sh` 는 **가드(108줄)보다 먼저** 공유 상태를 건드린다:
+#     · `mkdir /tmp/propai_deploy.lock`  → 통합자의 **진행 중 배포를 막는다**
+#     · `: > /tmp/deploy.log`            → 통합자의 **배포 로그를 통째로 비운다**
+#     · `status "PREFLIGHT"`             → **계기판이 읽는 상태 파일**을 덮어쓴다
+#   ⇒ 배포 가드를 시험하려고 **보호 대상(운영 상태)을 대가로 지불**하게 된다.
+#   그래서 **사본을 만들고 부작용 경로만 임시 경로로 돌린다.** 가드 블록은 손대지 않는다.
+#
+# 【안전 잠금 — 이 테스트가 스스로를 지킨다】
+#   sed 대상 변수명이 바뀌면 치환이 빗나가 **진짜 `/tmp` 를 건드리게 된다.**
+#   그래서 ①치환이 실제로 일어났는지 ②사본의 **실행 줄**에 공유 경로가 남지 않았는지를
+#   **실행 전에** 단언한다. 못 돌렸으면 **시끄럽게 실패**하지, 조용히 진행하지 않는다.
+
+_GUARDED_SCRIPTS = [
+    "propai-platform/scripts/safe-deploy.sh",
+    "propai-platform/scripts/rollback-web.sh",
+]
+
+#: 이 경로들이 사본의 **실행 줄**에 남아 있으면 실행을 거부한다.
+_SHARED_SIDE_EFFECTS = (
+    "/tmp/propai_deploy.lock",
+    "/tmp/deploy_status.txt",
+    "/tmp/deploy.log",
+)
+
+
+def _redirect_side_effects(src: str, rel: str, tmp_path: Path) -> str:
+    """부작용 경로를 임시 경로로 돌린 텍스트. **못 돌렸으면 예외로 거부한다.**
+
+    ★이 함수가 이 하네스의 **안전 잠금**이다. 변수명이 바뀌어 치환이 빗나가면
+      사본이 **진짜 `/tmp`** 를 가리키게 되고, 그대로 실행하면 통합자의 배포 락·로그·
+      상태를 건드린다. 그래서 **조용히 진행하지 않고 시끄럽게 실패**한다.
+    """
+    from tests import _scan_guard as sg   # ★정본을 쓴다(사본 금지 — 한계가 갈린다)
+
+    out = src
+    for var in ("LOCKDIR", "STATUS", "LOG"):
+        pat = re.compile(rf'^{var}=.*$', re.MULTILINE)
+        if not pat.search(out):
+            continue                      # 그 스크립트에 없는 변수는 건너뛴다
+        out, n = pat.subn(f'{var}="{tmp_path / var.lower()}"', out, count=1)
+        assert n == 1, f"{rel}: {var} 치환 실패 — 변수명이 바뀌었나"
+
+    # ★★실행 전 안전 단언 — 주석은 걷어내고 **실행 줄**만 본다.
+    exec_only = sg.code_lines(out)
+    for danger in _SHARED_SIDE_EFFECTS:
+        assert danger not in exec_only, (
+            f"{rel}: 사본의 실행 줄에 공유 경로 {danger} 가 남았다. "
+            "이대로 실행하면 통합자의 배포 락·로그·상태를 건드린다 — 실행을 거부한다."
+        )
+    return out
+
+
+def _sandbox(tmp_path: Path, rel: str, *, with_lib: bool) -> Path:
+    """스크립트 사본을 만든다 — **부작용 경로를 전부 임시 경로로 돌린 뒤**.
+
+    `with_lib=False` 면 `lib/assert-a1-host.sh` 가 없어 `source` 가 실패한다(결함 조건).
+    """
+    src = (REPO_ROOT / rel).read_text(encoding="utf-8")
+    box = tmp_path / Path(rel).stem
+    box.mkdir(parents=True, exist_ok=True)
+    out = _redirect_side_effects(src, rel, tmp_path)
+
+    dst = box / Path(rel).name
+    dst.write_text(out, encoding="utf-8")
+    dst.chmod(0o755)
+    if with_lib:
+        lib = box / "lib"
+        lib.mkdir(exist_ok=True)
+        (lib / "assert-a1-host.sh").write_text("assert_a1_host() { :; }\n", encoding="utf-8")
+    return dst
+
+
+def _run_guard(script: Path, tmp_path: Path) -> subprocess.CompletedProcess[str]:
+    """가드까지만 도달하고 **그 뒤로는 못 가게** 돌린다.
+
+    `REPO` 는 `$HOME/Development_AI` 라서 `HOME` 을 없는 경로로 주면 `cd` 에서 멈춘다
+    — 가드가 깨져 있어도 **배포가 나가지 않는다**(그게 이 프로브의 안전 여백이다).
+    """
+    env = dict(os.environ)
+    env["HOME"] = str(tmp_path / "fakehome")
+    env["REPO"] = str(tmp_path / "fakehome" / "Development_AI")   # rollback-web 은 env 를 본다
+    env["LOCKDIR"] = str(tmp_path / "lockdir")
+    return subprocess.run(
+        ["bash", str(script), "web", "main"],
+        capture_output=True, text=True, env=env, timeout=120, check=False,
+    )
+
+
+@pytest.mark.parametrize("rel", _GUARDED_SCRIPTS)
+def test_guard_library_absence_actually_exits_nonzero(rel: str, tmp_path: Path) -> None:
+    """★**행위 단언** — 가드 라이브러리를 못 읽으면 **0 이 아닌 코드로 죽는다**.
+
+    종전 락은 `assert "guard-lib" in src or "exit 12" in src` 였다. 소스 텍스트였고,
+    **`or` 라 두 토큰이 서로를 덮어** 하나씩은 지워도 통과했다. *「죽는가」를 안 태웠다.*
+    """
+    script = _sandbox(tmp_path, rel, with_lib=False)
+    # ★★**호출부 잠금** — 함수를 잠그는 것과 **그 함수가 불리는 것**은 다르다.
+    #   `_sandbox` 가 안전 검사를 안 부르게 바꿔도 위 호출은 성공하므로, 여기서
+    #   **실제로 쓰인 사본**을 직접 본다.
+    from tests import _scan_guard as sg
+    written = sg.code_lines(script.read_text(encoding="utf-8"))
+    for danger in _SHARED_SIDE_EFFECTS:
+        assert danger not in written, f"{rel}: 실행할 사본에 공유 경로 {danger} 가 남았다"
+    r = _run_guard(script, tmp_path)
+
+    # ★공허 방지 — 스크립트가 아예 못 돌았으면(예: bash 없음) 아래 단언이 무의미하다.
+    assert r.returncode is not None
+    assert (r.stdout + r.stderr).strip(), f"{rel}: 아무 출력도 없다 — 스크립트가 안 돌았다"
+
+    # ★본판정 — **전용 종료코드 12**. 이 저장소는 가드 종료코드가 다른 사건과 겹치지
+    #   않아야 한다고 이미 잠갔다(같은 파일의 종료코드 충돌 테스트) — 그러니 12 는 **계약**이다.
+    assert r.returncode == 12, (
+        f"{rel}: lib 없이 돌렸는데 rc={r.returncode} (기대 12). "
+        f"가드가 fail-open 이면 그대로 흘러가 배포 경로로 간다.\n{r.stdout}\n{r.stderr}"
+    )
+
+
+@pytest.mark.parametrize("rel", _GUARDED_SCRIPTS)
+def test_guard_passes_when_the_library_is_present(rel: str, tmp_path: Path) -> None:
+    """★★대조군 — **같은 실행 형태**인데 lib 만 있으면 12 가 **아니어야** 한다.
+
+    이 짝이 없으면 «항상 12 로 죽는 스크립트» 도 위 테스트를 통과한다
+    (한 모집단만 보는 단언은 고친 것과 망가진 것을 구별하지 못한다).
+    """
+    script = _sandbox(tmp_path, rel, with_lib=True)
+    r = _run_guard(script, tmp_path)
+    assert r.returncode != 12, (
+        f"{rel}: lib 가 있는데도 rc=12 — 가드가 **항상** 죽는다면 위 본판정은 공허하다.\n"
+        f"{r.stdout}\n{r.stderr}"
+    )
+
+
+def test_the_sandbox_refuses_when_substitution_misses(tmp_path: Path) -> None:
+    """★안전 잠금을 **그 함수로** 태운다 — 의미가 아니라 **거부 행위**를.
+
+    ★종전 판은 `code_lines` 의 의미만 단언했다. 그건 **함수를 잠그고 호출부는 두는 것**이라,
+      `_redirect_side_effects` 에서 안전 단언을 통째로 지워도 초록이었다.
+    """
+    # ① 변수명이 바뀌어 치환이 빗나간 상황 — **거부해야 한다**.
+    renamed = 'LOCK_DIR="/tmp/propai_deploy.lock"\necho hi\n'
+    with pytest.raises(AssertionError, match="공유 경로"):
+        _redirect_side_effects(renamed, "fake.sh", tmp_path)
+
+    # ★★대조군 — 정상 모양은 **통과하고**, 실제로 임시 경로를 가리킨다.
+    ok = 'LOCKDIR="/tmp/propai_deploy.lock"\necho hi\n'
+    out = _redirect_side_effects(ok, "fake.sh", tmp_path)
+    assert str(tmp_path) in out
+    assert "/tmp/propai_deploy.lock" not in out
+
+    # ★위양성 방지 — **주석 안**의 같은 경로는 위험이 아니다(정상 스크립트를 막지 않는다).
+    commented = '# LOCK=/tmp/propai_deploy.lock 참고\nLOCKDIR="/tmp/propai_deploy.lock"\n'
+    _redirect_side_effects(commented, "fake.sh", tmp_path)   # 예외 없이 통과해야 한다
