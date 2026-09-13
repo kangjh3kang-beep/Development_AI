@@ -41,6 +41,7 @@ A1 실측(2026-09-12)::
 """
 from __future__ import annotations
 
+import ast
 import os
 import re
 import subprocess
@@ -64,8 +65,19 @@ def _run(home: str, cwd: str) -> subprocess.CompletedProcess[str]:
       `ABORT …($REPO=/tmp/pytest-of-…)` 로 덮이고 `/tmp/deploy.log` 가 **비워지며**
       `/tmp/propai_deploy.lock` 을 **잠깐 점유**한다(그 락은 `safe-deploy.sh:83` 의 동시배포
       차단과 **같은 경로** — 겹치면 상대가 `exit 9`).
-    ★**면역을 거짓 주장하지 마라**(§C-11). 고칠 수 있는 자리는 **스크립트 쪽**이고
-      아래 `test_side_effect_paths_should_be_overridable` 이 그 부채를 초록 안에 세운다.
+    ★★**2026-09-13 정정 — 윗 문단은 참인데 그 결론이 거짓이었다.**
+      종전엔 *"고칠 수 있는 자리는 **스크립트 쪽**"* 이라 적었다. **틀렸다.**
+      같은 파일 `_redirect_side_effects` 가 `^VAR=.*$` 를 **줄 통째로** 치환하므로
+      `${VAR:-}` 형태를 **요구하지 않는다** — 하드코딩 상태의 스크립트를 이미 중화한다
+      (실측 2026-09-13: LOCKDIR·STATUS·LOG **3/3 치환** · 실행 줄 잔존 **0**).
+      ⇒ 고칠 자리는 **이 하네스**다. 아래
+      `test_canonical_script_is_never_executed_outside_the_sandbox` 가 그 부채를 세운다.
+    ★★**그리고 `safe-deploy.sh` 의 경로 상수를 env 로 열지 마라 — 그 처방은 위험하다.**
+      `REPO` 를 열면 `lib/assert-a1-host.sh:57` 의 `[ -d "$repo" ] && return 0` 이
+      **존재하는 아무 디렉토리로 첫 줄에서 통과**하고, 곧바로 `safe-deploy.sh:117 cd "$REPO"`
+      → `:125 git reset --hard FETCH_HEAD` 다(= 임의 저장소의 **비가역 파괴**).
+      그 가드 자신이 `:95` 에서 **"경로 상수를 고치지 마십시오"** 라고 적고 있다.
+      아래 `test_safe_deploy_path_constants_are_not_env_overridable` 이 잠근다.
     ★영향 범위(정직): 오염되는 것은 **이 머신의 `/tmp`** 다. 실배포는 A1 에서 돌고 CI 는
       GitHub 러너라 별개다 — **A1 에서 이 파일이 도는지는 미측정**이다.
     """
@@ -77,8 +89,10 @@ def _run(home: str, cwd: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-#: `safe-deploy.sh` 가 쓰는 **운영 상태 파일**. ★지금은 하드코딩이라 테스트도 여기를 본다 —
-#: 그 부채는 `test_side_effect_paths_should_be_overridable` 이 초록 안에 세워 둔다.
+#: `safe-deploy.sh` 가 쓰는 **운영 상태 파일**. ★`_run` 계열이 정본 스크립트를 돌리므로
+#: 여기를 본다 — 그 부채(하네스 미이관)는
+#: `test_canonical_script_is_never_executed_outside_the_sandbox` 가 초록 안에 세워 둔다.
+#: ★이 경로가 하드코딩인 것은 **결함이 아니다**(위 `_run` 독스트링의 정정을 보라).
 STATUS_PATH = "/tmp/deploy_status.txt"
 
 
@@ -818,21 +832,136 @@ def test_the_sandbox_refuses_when_substitution_misses(tmp_path: Path) -> None:
     _redirect_side_effects(commented, "fake.sh", tmp_path)   # 예외 없이 통과해야 한다
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  진짜 부채와, **하지 않기로 한 것**의 잠금
+#  ★2026-09-13: 종전 `test_side_effect_paths_should_be_overridable` 은 사유가 거짓이라
+#    지웠다. 그 xfail(strict) 은 다음 사람에게 «경로 상수를 env 로 열어라» 는 **상시 처방
+#    지시**로 읽혔는데, 그 처방은 `git reset --hard` 를 임의 저장소로 보낸다.
+#    ***거짓 사유는 다음 사람에게 처방을 지시한다 — 그 처방이 안전장치 완화일 때 특히.***
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _canonical_script_runs() -> list[int]:
+    """이 파일에서 **정본 `SCRIPT` 를 실행**하는 `subprocess.run` 의 줄번호.
+
+    ★소스 grep 이 아니라 **AST** 로 센다 — 이 저장소는 주석·독스트링에 뚫린 전례가 많다.
+    ★`bash -n`(문법 검사)은 **부작용이 없으므로** 제외한다. 그것까지 막으면 위양성이고,
+      **위양성도 결함이다**(정상 코드를 막는 락은 곧 꺼진다).
+    """
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    hits: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        if not (isinstance(f, ast.Attribute) and f.attr == "run"
+                and isinstance(f.value, ast.Name) and f.value.id == "subprocess"):
+            continue
+        argv = node.args[0] if node.args else None
+        if not isinstance(argv, ast.List):
+            continue
+        src = ast.unparse(argv)
+        if "SCRIPT" not in src:
+            continue
+        if "'-n'" in src or '"-n"' in src:
+            continue          # 문법 검사 — 부작용 없음
+        hits.append(node.lineno)
+    return hits
+
+
+def test_canonical_script_execution_is_detectable() -> None:
+    """[조회기 생존] 탐지기가 **실제로 무언가를 본다** — 아니면 아래 부채 단언이 공허하다."""
+    # 양성 대조군: 탐지 대상과 같은 모양을 만들어 실제로 잡히는지 본다.
+    probe = ast.parse('subprocess.run(["bash", str(SCRIPT), "web"])')
+    found = [n for n in ast.walk(probe)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and n.func.attr == "run"]
+    assert found, "탐지기가 자기 모양조차 못 읽는다 — 조회기 사망"
+    # 음성 대조군: `bash -n` 은 잡히면 안 된다(위양성 방지).
+    assert "-n" in ast.unparse(ast.parse('subprocess.run(["bash", "-n", str(SCRIPT)])'))
+
+
 @pytest.mark.xfail(
     strict=True,
-    reason="★부채(2026-09-13 실측): `safe-deploy.sh` 의 `LOCKDIR`·`STATUS`·`LOG` 가 "
-           "**하드코딩**이라 이 파일을 한 번 돌리면 `/tmp/deploy_status.txt` 가 덮이고 "
-           "`/tmp/deploy.log` 가 비워지며 동시배포 락을 잠깐 점유한다. 형제 "
-           "`rollback-web.sh` 는 **이미** `${LOCKDIR:-…}` 로 덮어쓸 수 있다 — 두 스크립트가 "
-           "이 점에서 갈려 있다. ★고치면 `XPASS(strict)` 로 **빨갛게** 뒤집힌다 — 그때 이 "
-           "마커를 같이 지워라(«초록으로 뒤집힌다»고 적었던 초판은 **거짓**이었다 · "
-           "독립 리뷰 MEDIUM-5). "
-           "★단 **배포 스크립트 변경**이라 이 PR 범위 밖이다(별건·리뷰 필요).",
+    reason="★부채(2026-09-13 실측 · **하네스** 부채이지 스크립트 부채가 아니다): "
+           "**실행 지점은 1곳**(`_run` 안의 `subprocess.run`)이고 그것을 부르는 **호출부가 6곳**이다 "
+           "— 이 단언이 세는 것은 **실행 지점**이다. 정본 `safe-deploy.sh` 를 그대로 돌려 **이 머신의** "
+           "`/tmp/deploy_status.txt`·`deploy.log`·`propai_deploy.lock` 을 건드린다. "
+           "고칠 자리는 **이 파일**이다 — `_sandbox(lib='real')` 로 이관하면 된다. "
+           "`_redirect_side_effects` 가 `^VAR=.*$` 를 줄 통째로 치환하므로 "
+           "**스크립트 변경은 불필요하다**(실측: 3/3 치환 · 실행 줄 잔존 0). "
+           "★★`safe-deploy.sh` 의 `REPO`/`LOCKDIR`/`STATUS`/`LOG` 를 env 로 열어 고치지 마라 — "
+           "`REPO` 는 `lib/assert-a1-host.sh:57` 의 `[ -d \"$repo\" ] && return 0` 을 "
+           "**첫 줄에서 통과**시켜 `safe-deploy.sh:125 git reset --hard` 를 임의 저장소로 보낸다. "
+           "이관이 끝나면 이 마커를 지워라(XPASS(strict) 로 **빨갛게** 뒤집힌다).",
 )
-def test_side_effect_paths_should_be_overridable() -> None:
-    """부작용 경로가 **env 로 덮어쓸 수 있어야** 테스트가 운영 표면을 안 건드린다."""
+def test_canonical_script_is_never_executed_outside_the_sandbox() -> None:
+    """정본 스크립트를 **격리 사본 밖에서** 실행하지 않는다."""
+    hits = _canonical_script_runs()
+    assert not hits, (
+        f"정본 {_SCRIPT_REL} 를 격리 밖에서 실행하는 자리 {len(hits)}건(줄 {hits}) — "
+        "`_sandbox(lib='real')` 를 경유하라"
+    )
+
+
+#: 선언 우변이 **env 로 열린 모양**(`"${VAR:-...}"`)인가. ★락과 판별력 테스트가 **같은 것**을
+#: 쓴다 — 사본을 두면 판별력 테스트는 자기 사본만 검사하고 **락은 무잠금**이 된다.
+_ENV_OPEN_DECL = re.compile(r'^"\$\{[A-Z_]+:-')
+
+
+def _declaration_rhs(src: str, var: str) -> str | None:
+    """`VAR=<우변>` 의 우변. 선언이 없으면 None."""
+    m = re.search(rf'^{var}=(.*)$', src, re.MULTILINE)
+    return None if m is None else m.group(1)
+
+
+def _is_env_overridable(rhs: str) -> bool:
+    return bool(_ENV_OPEN_DECL.match(rhs))
+
+
+def test_safe_deploy_path_constants_are_not_env_overridable() -> None:
+    """★**하지 않기로 한 것을 잠근다** — `safe-deploy.sh` 의 경로 상수는 env 로 열지 않는다.
+
+    ★★이것은 `test_repo_constant_is_the_a1_path` 와 **다른 축**이다. 저쪽은 상수의 **값**이
+      A1 루트에 뿌리내리는지를 보고 `${REPO:-…}` 형태를 **정당하다고 승인**한다
+      (형제 `rollback-web.sh` 가 그 형태를 쓰므로 옳다). 그래서 `safe-deploy.sh` 가
+      그 형태로 바뀌어도 **저쪽은 초록이다** — 즉 이 축은 무잠금이었다.
+
+    ★**왜 이 스크립트만인가 — 비대칭이 폭발반경에 비례한다**(실측 2026-09-13):
+      · `safe-deploy.sh:117 cd "$REPO"` → `:125 git reset --hard FETCH_HEAD`
+        = 임의 저장소의 **비가역 파괴**
+      · `rollback-web.sh` 의 파괴적 동작은 **docker 이미지/컨테이너**이고
+        `git reset --hard` 를 하지 않는다(그 파일 `:97-99` 가 스스로 적어 둔다)
+      ⇒ 형제가 `${REPO:-…}` 인 것은 **고칠 불일치가 아니다.** 여기에 같은 것을 적용하지 마라.
+    """
     src = SCRIPT.read_text(encoding="utf-8")
-    for var in ("LOCKDIR", "STATUS", "LOG"):
-        assert re.search(rf'^{var}="\$\{{{var}:-', src, re.MULTILINE), (
-            f"{var} 가 env 로 덮어쓸 수 없다 — 테스트가 운영 경로를 쓴다"
-        )
+    guarded = ("REPO", "LOCKDIR", "STATUS", "LOG")
+    declared, opened = [], []
+    for var in guarded:
+        rhs = _declaration_rhs(src, var)
+        if rhs is None:
+            continue
+        declared.append(var)
+        if _is_env_overridable(rhs):
+            opened.append(f"{var}={rhs}")
+    # 공허 진리 가드 — 선언을 못 찾으면 「열린 것 0」이 무의미하다.
+    assert len(declared) == len(guarded), (
+        f"선언을 {declared} 만 찾았다(기대 {list(guarded)}) — 정규식이 낡았다"
+    )
+    assert not opened, (
+        "safe-deploy.sh 의 경로 상수가 env 로 열렸다. `REPO` 는 호스트 가드를 "
+        "`[ -d \"$repo\" ] && return 0` 에서 통과시켜 `git reset --hard` 를 "
+        "임의 저장소로 보낸다:\n  " + "\n  ".join(opened)
+    )
+
+
+def test_env_override_detector_actually_fires() -> None:
+    """[판별력] 위 락의 탐지식이 **열린 모양을 실제로 잡는다** — 아니면 장식이다."""
+    opened = 'REPO="${REPO:-$HOME/Development_AI}"'
+    closed = 'REPO="$HOME/Development_AI"'
+    # ★락이 쓰는 **바로 그 함수**를 태운다(사본 금지 — 사본이면 re 모듈을 시험하는 꼴이다).
+    assert _is_env_overridable(_declaration_rhs(opened, "REPO")), "열린 모양을 못 잡는다"
+    assert not _is_env_overridable(_declaration_rhs(closed, "REPO")), "닫힌 모양을 위반으로 잡는다"
+    # 다른 변수 이름에도 같은 판정이 서는지(축이 REPO 전용이 아니다)
+    assert _is_env_overridable(_declaration_rhs('LOG="${LOG:-/tmp/deploy.log}"', "LOG"))
+    assert _declaration_rhs('OTHER="x"', "REPO") is None, "없는 선언에 값을 지어낸다"
