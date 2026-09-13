@@ -24,9 +24,32 @@ import pytest
 
 from app.services.sales.draw import commitment_store as cs
 from app.services.sales.draw import vrng
+from app.services.sales.draw import vrng as _vrng_mod
 from app.services.sales.subscription import engine as sub_engine
 
 NONCE = "7c" * 32
+
+
+#: ★새 계약(`Revealed` 에 명부·pool 이 들어간다) 이후의 테스트용 공약 생성기.
+#:   ***이 헬퍼는 바인딩 검사를 「통과」시키려고 있는 것이지 「검증」하는 것이 아니다*** —
+#:   바인딩이 실제로 결과를 바꾸는지는 `test_draw_binding_effect_locks.py` 가 태운다.
+_FAKE_ROSTER = ["app-1", "app-2", "app-3"]
+_FAKE_POOL = ["unit-1", "unit-2", "unit-3"]
+
+
+def _fake_revealed(nonce: str, *, beacon_round: int = 900):
+    from app.services.sales.draw import binding as _b
+    return cs.Revealed(nonce, _vrng_mod.commitment(nonce), beacon_round,
+                       _b.normalize(_FAKE_ROSTER), _b.normalize(_FAKE_POOL),
+                       _b.roster_hash(_FAKE_ROSTER), _b.pool_hash(_FAKE_POOL))
+
+
+def _patch_binding(monkeypatch, mod):
+    """`subscription_binding` 과 비콘을 고정한다(네트워크·DB 없이 태우기 위해)."""
+    async def _bind(_db, _site, _ann):
+        return list(_FAKE_ROSTER), list(_FAKE_POOL)
+    monkeypatch.setattr(mod, "subscription_binding", _bind)
+    monkeypatch.setattr(mod.beacon, "randomness_for", lambda *a, **k: "aa" * 32)
 
 
 def test_caller_cannot_supply_a_seed():
@@ -115,16 +138,24 @@ def _run_with(rules, *, commitment=None, monkeypatch=None):
         nonce, commit_hash = commitment
         if not vrng.verify_commitment(nonce, commit_hash):
             raise ValueError("추첨 공약이 일치하지 않습니다 — 저장된 nonce 가 공약과 다릅니다")
-        # ★비콘 라운드 `None` — **Phase 0 시기 공약**을 흉내 낸다. 네트워크를 안 탄다.
-        return cs.Revealed(nonce, commit_hash, None)
+        return _fake_revealed(nonce)
+
+    async def _bind(_db, _site, _ann):
+        return list(_FAKE_ROSTER), list(_FAKE_POOL)
 
     orig = sub_engine.reveal_commitment
+    orig_bind = sub_engine.subscription_binding
+    orig_beacon = sub_engine.beacon.randomness_for
     sub_engine.reveal_commitment = _fake_reveal
+    sub_engine.subscription_binding = _bind
+    sub_engine.beacon.randomness_for = lambda *a, **k: "aa" * 32
     try:
         return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
             sub_engine.run_draw(_DB(), object(), ann.id))
     finally:
         sub_engine.reveal_commitment = orig
+        sub_engine.subscription_binding = orig_bind
+        sub_engine.beacon.randomness_for = orig_beacon
 
 
 def test_draw_without_commitment_is_refused():
@@ -310,8 +341,9 @@ def test_run_draw_feeds_the_nonce_derived_seed_into_ranking(monkeypatch):
     def _run(nonce):
         seen.clear()
         async def _rev(_db, _s, _r):
-            return cs.Revealed(nonce, vrng.commitment(nonce), None)
+            return _fake_revealed(nonce)
         monkeypatch.setattr(sub_engine, "reveal_commitment", _rev)
+        _patch_binding(monkeypatch, sub_engine)
         try:
             asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
                 sub_engine.run_draw(_DB(), object(), ann.id))
@@ -330,7 +362,12 @@ def test_run_draw_feeds_the_nonce_derived_seed_into_ranking(monkeypatch):
         "★_rank_pick 이 불리지 않았다 — 배선 축이 검증되지 않은 채 초록이 될 뻔했다. "
         f"중간 실패: {failures[:2]}"
     )
-    expect1 = vrng.seed_key(n1, str(ann.id)).hex()
+    # ★기대값을 **프로덕션과 같은 순서**로 파생한다 — 공약이 묶는 명부·pool 지문과 비콘이
+    #   키에 들어간다(순서가 곧 계약이다). 손으로 적은 값이면 순서 변경을 못 본다.
+    from app.services.sales.draw import binding as _b
+    expect1 = vrng.seed_key(n1, str(ann.id),
+                            _b.roster_hash(_FAKE_ROSTER), _b.pool_hash(_FAKE_POOL),
+                            "drand:900:" + "aa" * 32).hex()
     assert got1[0] == expect1, (
         f"run_draw 가 nonce 유래 seed 를 안 넘긴다: {got1[0]!r} != {expect1!r}"
     )

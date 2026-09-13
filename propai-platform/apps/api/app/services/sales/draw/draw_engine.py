@@ -28,7 +28,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.sales.draw import beacon, vrng
+from app.services.sales.draw import beacon, binding, vrng
 from app.services.sales.draw.commitment_store import reveal_commitment
 from app.services.sales.units.event_ledger import append_event
 
@@ -223,6 +223,28 @@ async def from_winners(db: AsyncSession, site_id, group_id, announcement_id) -> 
     return await add_candidates(db, site_id, group_id, cands)
 
 
+async def committable_pool(db: AsyncSession, site_id, group_id) -> list[str]:
+    """★**공약 시점에 못 박을 대상 세대** — 그룹 동·호판(`unit_pool`)이 정본이다.
+
+    판이 지정돼 있지 않으면 **현장 전체 가용 세대**로 떨어지는데, 그 상태로 공약하면
+    *"무엇을 대상으로 뽑았는지"* 가 라이브 상태에 의존한다 ⇒ **판을 먼저 지정하라**고 거부한다.
+    (`_remaining_units` 는 추첨 중 「남은 것」을 보는 함수라 축이 다르다 — 이름을 나눈 이유다.)
+    """
+    import json
+    g = (await db.execute(text(
+        "SELECT unit_pool FROM sales_draw_groups WHERE id=:g AND site_id=:s"),
+        {"g": str(group_id), "s": str(site_id)})).first()
+    raw = g[0] if g else None
+    pool = (raw if isinstance(raw, list) else json.loads(raw)) if raw else []
+    if not pool:
+        raise ValueError(
+            "동·호판(추첨 대상 세대)이 지정되지 않았습니다 — 공약 전에 "
+            "`POST /draw/groups/{id}/pool` 로 대상을 확정하십시오. "
+            "★판 없이 공약하면 「무엇을 대상으로 뽑았는지」가 추첨 시점 상태에 따라 달라집니다"
+        )
+    return [str(u) for u in pool]
+
+
 async def _remaining_units(db: AsyncSession, site_id, group_id) -> list[str]:
     """그룹 동·호판에서 아직 배정되지 않은(AVAILABLE) 세대 목록."""
     import json
@@ -279,8 +301,25 @@ async def draw_for_candidate(db: AsyncSession, site_id, group_id, candidate_id, 
     rev = await reveal_commitment(db, "dongho", group_id)
     commit_hex = rev.commit_hash
     beacon_parts, beacon_label = beacon.seed_contributions(rev.beacon_round)
+    # ★★**명부가 공약 이후에 바뀌었으면 뽑지 않는다**(독립 적대 리뷰 2026-09-13 MAJOR-1).
+    #   종전에는 키의 자유변수가 `candidate_id` **뿐**이라, 운영자가 같은 사람을 여러 번 등록해
+    #   각 id 의 결과를 오프라인 계산하고 **원하는 동·호가 나오는 행만 누를 수 있었다**
+    #   (실측: 30세대 중 지정 1세대를 얻는 데 등록 75회 · 원장·공약·비콘 무변화 · 검증기 ✔).
+    #   ***nonce grinding 을 막았더니 식별자 grinding 으로 자리를 옮겼던 것이다.***
+    live_roster = [str(r[0]) for r in (await db.execute(text(
+        "SELECT id FROM sales_draw_candidates WHERE group_id=:g AND site_id=:s"),
+        {"g": str(group_id), "s": str(site_id)})).all()]
+    if binding.roster_hash(live_roster) != rev.participants_hash:
+        raise ValueError(
+            f"공약 이후 **명부가 바뀌었습니다**(공약 {len(rev.participants)}명 ↔ 현재 "
+            f"{len(set(live_roster))}명) — 추첨하지 않습니다. 명부를 바꾸려면 "
+            "추첨을 취소하고 **다시 공약**해야 합니다"
+        )
     domain = f"dongho:{group_id}:{candidate_id}"
-    key = vrng.seed_key(rev.nonce, str(group_id), str(candidate_id), *beacon_parts)
+    # ★지문을 **seed 에도 섞는다**(이중 방어): 게이트만 두면 게이트를 우회하는 경로가 생기지만,
+    #   seed 에 들어가면 명부·세대를 바꾸는 순간 **결과가 바뀌어** 제3자 검증에서 드러난다.
+    key = vrng.seed_key(rev.nonce, str(group_id), str(candidate_id),
+                        rev.participants_hash, rev.pool_hash, *beacon_parts)
     seed = key.hex()
 
     chosen: str | None = None
@@ -288,13 +327,25 @@ async def draw_for_candidate(db: AsyncSession, site_id, group_id, candidate_id, 
     pool_hash = ""
     counter = 0
     excluded: set[str] = set()  # 이번 호출에서 선점 실패해 제외한 세대(재조회 후에도 중복 시도 방지).
+    start_counter = 0           # ★당첨을 만든 시도의 **시작 카운터** — 원장에 남긴다(아래 사유).
+    # ★★**모집단은 「공약된 pool」이다 — 라이브 `AVAILABLE` 을 다시 조회하지 않는다**
+    #   (독립 적대 리뷰 2026-09-13 MAJOR-2). 종전에는 매 시도마다 실시간 조회라, 추첨 직전에
+    #   세대를 HOLD 로 빼는 것만으로 결과를 고를 수 있었다(실측: **3건만 빼면 30세대 중 10세대**
+    #   도달). 통로는 최소 셋이었다 — `POST …/pool` · `HOLD_REQUEST` · 범용 CRUD `units`.
+    #   이미 배정된 세대만 빼고 **공약된 목록 그대로** 돈다. 세대가 실제로 못 쓰는 상태면
+    #   아래 조건부 UPDATE 가 0행을 돌려주므로 **그때 제외**된다(원자적 · 선점 경합과 같은 경로).
+    committed_pool = set(rev.pool_ids)
+    assigned = {str(r[0]) for r in (await db.execute(text(
+        "SELECT assigned_unit_id FROM sales_draw_candidates "
+        "WHERE group_id=:g AND assigned_unit_id IS NOT NULL"), {"g": str(group_id)})).all()}
     while True:
-        remaining = [u for u in await _remaining_units(db, site_id, group_id) if u not in excluded]
+        remaining = sorted(committed_pool - assigned - excluded)
         if not remaining:
             raise ValueError("남은 가용 세대가 없습니다(추첨 종료)")
-        pool_sorted = sorted(remaining)
+        pool_sorted = remaining
         # ★재시도(선점 경합)마다 **카운터를 이어받는다** — seed 를 새로 뽑지 않는다.
         #   새로 뽑으면 그게 곧 grinding 통로다(공약이 무의미해진다).
+        start_counter = counter
         candidate_unit, counter = vrng.pick(key, domain, pool_sorted, start=counter)
         pool_hash = hashlib.sha256(",".join(pool_sorted).encode()).hexdigest()
         # HOLD 선점(원자 조건부 UPDATE) — 0행이면 이미 다른 곳에서 선점됨 → 재추첨.
@@ -322,7 +373,16 @@ async def draw_for_candidate(db: AsyncSession, site_id, group_id, candidate_id, 
                             meta={"group_id": str(group_id), "candidate_id": str(candidate_id),
                                   "seed": seed, "pool_hash": pool_hash, "pool_size": len(pool_sorted),
                                   "algo_version": "v2", "commit_hash": commit_hex,
-                                  "beacon_round": rev.beacon_round, "beacon": beacon_label},
+                                  "beacon_round": rev.beacon_round, "beacon": beacon_label,
+                                  # ★공약이 **무엇을 묶었는지**. 위 `pool_hash` 는 «이번 시도의 남은
+                                  #   pool», 아래는 «공약된 전체 pool» — **다른 값이라 이름도 다르다.**
+                                  "participants_hash": rev.participants_hash,
+                                  "committed_pool_hash": rev.pool_hash,
+                                  # ★**시작 카운터를 남긴다.** 선점 경합이 나면 프로덕션은 카운터를
+                                  #   이어받는데, 이 값이 없으면 **검증기가 `start=0` 으로 재계산해
+                                  #   「결과가 다르다」= 조작 의심을 낸다**(리뷰 MED-5 실측).
+                                  #   ***정직한 추첨을 조작으로 신고하는 것이 가장 나쁜 거짓 신고다.***
+                                  "start_counter": start_counter},
                             do_commit=False)
     await db.commit()
     return {
@@ -331,6 +391,8 @@ async def draw_for_candidate(db: AsyncSession, site_id, group_id, candidate_id, 
         "seed": seed, "pool_hash": pool_hash, "pool_size": len(pool_sorted), "remaining_after": len(remaining) - 1,
         # ★비콘을 **썼는지 안 썼는지**를 응답이 말한다 — 침묵하면 「썼다고 해 놓고 안 쓰는」 경로가 보이지 않는다.
         "beacon_round": rev.beacon_round, "beacon": beacon_label,
+        "participants_hash": rev.participants_hash, "committed_pool_hash": rev.pool_hash,
+        "start_counter": start_counter,
         "event": ev,
     }
 

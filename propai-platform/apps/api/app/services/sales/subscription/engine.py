@@ -8,7 +8,7 @@ from itertools import groupby
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.sales.draw import beacon, vrng
+from app.services.sales.draw import beacon, binding, vrng
 from app.services.sales.draw.commitment_store import reveal_commitment
 from app.services.sales.harness.outbox import emit_outbox
 from apps.api.database.models.sales.subscription import (
@@ -70,6 +70,23 @@ async def _available_units(db, site_id, type_id, *, lock: bool = False):
     return list((await db.execute(stmt.order_by(SalesUnitInventory.id))).scalars())
 
 
+async def subscription_binding(db, site_id, announcement_id) -> tuple[list[str], list[str]]:
+    """★공약 시점에 못 박을 **(신청 명부, 대상 세대)**.
+
+    명부는 `eligibility='OK'` 인 신청의 id, 세대는 그 공고가 뽑을 수 있는 **현재 가용 세대 전체**다.
+    ***공약 엔드포인트와 추첨 엔진이 같은 함수로 모집단을 만든다*** — 둘이 따로 계산하면
+    「공약한 것」과 「뽑은 것」이 조용히 갈린다(그 갈림이 곧 결함이다).
+    """
+    apps = list((await db.execute(select(SalesSubscriptionApplication).where(
+        SalesSubscriptionApplication.announcement_id == announcement_id,
+        SalesSubscriptionApplication.eligibility == "OK"))).scalars())
+    units = list((await db.execute(select(SalesUnitInventory).where(
+        SalesUnitInventory.site_id == site_id,
+        SalesUnitInventory.status == "AVAILABLE",
+        SalesUnitInventory.deleted_at.is_(None)))).scalars())
+    return [str(a.id) for a in apps], [str(u.id) for u in units]
+
+
 async def run_draw(db: AsyncSession, site_id, announcement_id) -> int:
     # 공고 행을 FOR UPDATE 로 잠가, 동시에 두 번 들어온 추첨 요청을 직렬화한다.
     # ★[IDOR·security 전역스윕·iter-5 HIGH] 과거엔 공고를 id 로만 조회(site_id 미스코프)하고
@@ -113,18 +130,41 @@ async def run_draw(db: AsyncSession, site_id, announcement_id) -> int:
     #     비콘을 못 가져오면 **추첨을 거부**한다(fail-closed).
     rev = await reveal_commitment(db, "subscription", announcement_id)
     beacon_parts, beacon_label = beacon.seed_contributions(rev.beacon_round)
-    # ★청약 추첨은 당첨자 수(int)만 돌려주므로 **어떤 공약·어떤 비콘으로 뽑았는지가 반환에 실릴
-    #   자리가 없다.** 그 사실을 침묵으로 두지 않고 원장에 남긴다 — 사후 감사자가 `public_commitment`
-    #   의 `commit_hash`·`beacon_round` 와 이 줄을 대조할 수 있다.
-    logger.info("run_draw 공약 공개: ann=%s commit=%s 비콘=%s", announcement_id, rev.commit_hash, beacon_label)
-    # 명부를 키에 섞는다 — 명부가 확정되기 전에는 결과를 고를 수 없다(서버 단독 결정 배제).
-    seed = vrng.seed_key(rev.nonce, str(announcement_id), *beacon_parts).hex()
     rules = ann.rules or {}
     special_ratio = rules.get("special_ratio", {})  # {type_id: 0~1} 파라미터
     apps = list((await db.execute(select(SalesSubscriptionApplication).where(
         SalesSubscriptionApplication.announcement_id == announcement_id,
         SalesSubscriptionApplication.eligibility == "OK"))).scalars())
     apps.sort(key=lambda a: str(a.unit_type_id))
+    # ★★**명부가 공약 이후에 바뀌었으면 뽑지 않는다**(독립 적대 리뷰 2026-09-13 MAJOR-1).
+    #   종전 주석은 *"명부를 키에 섞는다"* 라고 적었는데 **거짓이었다** — 실제 키는
+    #   `seed_key(nonce, announcement_id, 비콘)` 뿐이었고 당락은 `_tiebreak(seed, a.id)` 로 갈렸다.
+    #   그런데 `SalesSubscriptionApplication` 은 **범용 CRUD** 에 등록돼 있어(`sales/__init__.py`)
+    #   운영자가 신청을 **삭제·재생성**해 `application_id` 를 굴릴 수 있었다.
+    #   ***공약을 CRUD 밖으로 뺐지만, 공약이 묶어야 할 명부는 여전히 CRUD 안에 있었다.***
+    live_roster, live_pool = await subscription_binding(db, site_id, announcement_id)
+    if binding.roster_hash(live_roster) != rev.participants_hash:
+        raise ValueError(
+            f"공약 이후 **신청 명부가 바뀌었습니다**(공약 {len(rev.participants)}건 ↔ 현재 "
+            f"{len(set(live_roster))}건) — 추첨하지 않습니다. 명부를 바꾸려면 **다시 공약**해야 합니다"
+        )
+    # ★**세대도 같이 묶는다.** 명부만 묶으면 세대를 빼서 결과를 고르는 경로가 남는다
+    #   (동·호 경로에서 실측: 3건만 빼도 30세대 중 10세대 도달).
+    if binding.pool_hash(live_pool) != rev.pool_hash:
+        raise ValueError(
+            f"공약 이후 **대상 세대가 바뀌었습니다**(공약 {len(rev.pool_ids)}세대 ↔ 현재 "
+            f"{len(set(live_pool))}세대) — 추첨하지 않습니다. **다시 공약**해야 합니다"
+        )
+    # ★명부 지문을 **seed 에 섞는다** — 이제 주석이 참이다(게이트 + seed 이중 방어).
+    seed = vrng.seed_key(rev.nonce, str(announcement_id),
+                         rev.participants_hash, rev.pool_hash, *beacon_parts).hex()
+    # ★**원장에 남긴다.** 종전엔 `logger.info` 였는데 주석은 *"원장에 남긴다"* 라고 적고 있었다 —
+    #   외부 감사자는 서버 로그를 못 본다. 형제 경로(`draw_engine`)는 처음부터 진짜 원장을 쓴다.
+    await emit_outbox(db, site_id, "DrawCommitmentRevealed", {
+        "announcement_id": str(announcement_id), "commit_hash": rev.commit_hash,
+        "beacon_round": rev.beacon_round, "beacon": beacon_label,
+        "participants_hash": rev.participants_hash, "pool_hash": rev.pool_hash,
+    })
     total_win = 0
     for type_id, grp in groupby(apps, key=lambda a: a.unit_type_id):
         group = list(grp)

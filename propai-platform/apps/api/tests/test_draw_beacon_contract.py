@@ -147,10 +147,13 @@ def test_no_beacon_and_beacon_give_different_seeds():
     nonce = "ab" * 32
     with_parts, label_on = beacon.seed_contributions(
         90, (_API, _CF), _canned({_API: "11" * 32, _CF: "11" * 32}))
-    without, label_off = beacon.seed_contributions(None)
-    assert vrng.seed_key(nonce, "g", *with_parts) != vrng.seed_key(nonce, "g", *without)
-    assert "미사용" in label_off, "★비콘을 안 쓰면 **그렇게 말해야** 한다(침묵 금지)"
+    assert vrng.seed_key(nonce, "g", *with_parts) != vrng.seed_key(nonce, "g")
     assert "미사용" not in label_on and "90" in label_on, label_on
+    # ★비콘 없는 공약은 **말하는 것으로 끝내지 않고 거부**한다(리뷰 M-5/M-6):
+    #   라벨만 바꾸면 `UPDATE … SET beacon_round=NULL` 한 줄이 곧 우회로다.
+    with pytest.raises(beacon.BeaconError) as e:
+        beacon.seed_contributions(None)
+    assert "비콘 없이는 추첨하지 않습니다" in str(e.value), str(e.value)
 
 
 # ── ⑥ 공약 시점에 라운드는 **미래**여야 한다 ────────────────────────────────
@@ -181,13 +184,21 @@ def test_commit_refuses_a_past_round():
             return None
 
     f = _canned({_API: "a" * 64, _CF: "a" * 64}, latest=100)
+    kw = {"participants": ["c1", "c2"], "pool_ids": ["u1", "u2"], "fetch": f}
     with pytest.raises(ValueError) as e:
         asyncio.new_event_loop().run_until_complete(
-            cs.commit_draw(_DB(), "s", "dongho", "r", beacon_round=99, fetch=f))
+            cs.commit_draw(_DB(), "s", "dongho", "r", beacon_round=99, **kw))
     assert "이미 공개된" in str(e.value), str(e.value)
-    # 대조군 — 미래 라운드는 통과하고 **공개 반환에 라운드가 실린다**(검증자가 재현하려면 필요)
+    # ★**등호 경계도 태운다** — `beacon_round == latest` 는 «지금 공개돼 있는» 라운드다.
+    #   종전 락은 99(과거)와 101(미래)만 봐서 `<=` → `<` 변이가 **생존**했다(리뷰 MED-3).
+    with pytest.raises(ValueError) as e2:
+        asyncio.new_event_loop().run_until_complete(
+            cs.commit_draw(_DB(), "s", "dongho", "r", beacon_round=100, **kw))
+    assert "이미 공개된" in str(e2.value), str(e2.value)
+    # 대조군 — 미래 라운드는 통과하고 **공개 반환에 라운드·지문이 실린다**(제3자 재현에 필요)
     got = asyncio.new_event_loop().run_until_complete(
-        cs.commit_draw(_DB(), "s", "dongho", "r", beacon_round=101, fetch=f))
+        cs.commit_draw(_DB(), "s", "dongho", "r", beacon_round=101, **kw))
+    assert got["participants_hash"] and got["pool_hash"], got
     assert got["beacon_round"] == 101, got
     assert "nonce" not in got, f"★공개 반환에 nonce 가 실리면 누구나 사전 계산한다: {got}"
 

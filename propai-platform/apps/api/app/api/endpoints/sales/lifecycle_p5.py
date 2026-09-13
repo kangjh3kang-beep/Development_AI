@@ -78,8 +78,12 @@ async def subscription_draw_commit(ann_id: uuid.UUID, db: AsyncSession = Depends
     """★청약 추첨 **공약 게시** — 추첨 전에 한 번만. 반환에 nonce 는 없다."""
     from app.services.sales.draw.beacon import BeaconError
     from app.services.sales.draw.commitment_store import commit_draw
+    from app.services.sales.subscription.engine import subscription_binding
+    # ★**공약이 명부와 세대를 함께 묶는다** — 추첨 엔진과 **같은 함수**로 모집단을 만든다.
+    roster, pool = await subscription_binding(db, ctx.site_id, ann_id)
     try:
         return await commit_draw(db, ctx.site_id, "subscription", ann_id,
+                                 participants=roster, pool_ids=pool,
                                  by=getattr(ctx.user, "id", None))
     except ValueError as e:
         await db.rollback()
@@ -94,7 +98,11 @@ async def subscription_draw_commit(ann_id: uuid.UUID, db: AsyncSession = Depends
 @r5.get("/subscription/{ann_id}/draw/commitment")
 async def subscription_draw_commitment(ann_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                                        ctx: SalesCtx = Depends(sales_ctx)):
-    """공약 공개 조회 — `commit_hash`·`committed_at` 만(★nonce 미포함)."""
+    """공약 조회 — `commit_hash`·`committed_at`·`beacon_round`·명부/세대 지문(★nonce 미포함).
+
+    ★한계는 형제 엔드포인트(`actions.draw_group_commitment`) 독스트링에 적었다 —
+      **nonce 공개 미구현 · 멤버십 필요**. 「제3자 독립 검증」은 아직 성립하지 않는다.
+    """
     from app.services.sales.draw.commitment_store import public_commitment
     got = await public_commitment(db, "subscription", ann_id)
     if got is None:

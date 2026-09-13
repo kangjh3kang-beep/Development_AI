@@ -117,3 +117,65 @@
 
 `mutate_changed.py` + **`base:` 줄** 인용 · 「생존 0」 검산. ★네트워크 의존 테스트는
 **주입 가능한 fetcher** 로 만들어 오프라인에서도 태운다(그러지 않으면 CI 에서 조용히 skip 된다).
+
+---
+
+# §7 ★독립 적대 리뷰 2건 — **둘 다 REQUEST CHANGES** (2026-09-13)
+
+렌즈를 둘로 나눠 **각각 독립**으로 돌렸다(저자와 심사자를 분리한다). 둘 다 반려했고,
+***가장 아픈 숫자는 「내가 넣은 변이 7건 중 7건이 생존」*** 이었다.
+
+## 무엇이 틀렸나 — 한 문장
+
+> **나는 잘못된 축을 잠갔다.** 공약은 `nonce` 하나만 묶었고, **명부·pool·식별자는 하나도 안 묶었다.**
+> nonce grinding 을 막았더니 grinding 이 **사라진 게 아니라 자리를 옮겼다.**
+
+| # | 지적 | 실측 | 처방 |
+|---|---|---|---|
+| **A** | 공약이 **명부를 안 묶는다** — 키의 자유변수가 `candidate_id` 뿐 | 같은 사람을 반복 등록해 **30세대 중 지정 1세대**를 얻는 데 **75회**. 원장·공약·비콘 무변화, 검증기 ✔ | `participants` 를 공약에 **못 박고** 추첨 시 **다르면 거부** + 지문을 **seed 에도** 섞음 |
+| **B** | **pool 도 안 묶인다**(추첨이 `AVAILABLE` 실시간 조회) | HOLD **3건**으로 30세대 중 **10세대** 도달 | 모집단을 **공약된 pool** 로 — `_remaining_units` 재조회 제거(AST 락) |
+| **C** | **「제3자 독립 검증」이 거짓** | nonce 공개 엔드포인트 **0건**(실행 식별자 기준) · `commitment` 조회도 **현장 멤버십** 필요 | ★**주장을 철회**하고 독스트링에 «아직 불가능한 것» 을 명시. 구현은 남은 과제(§8) |
+| **D** | `latest_round` **단일 출처** | 첫 엔드포인트만 1000라운드 뒤처지게 하면 공약이 **이미 8시간 전 공개된 라운드**를 못 박음 | **운영자 2곳 대조 + 허용오차 2 + max** — ***틀릴 수밖에 없으면 안전한 쪽으로*** |
+| **E** | `beacon_round=NULL` → 비콘 **통째 우회** | `UPDATE … SET beacon_round=NULL` 한 줄 | `seed_contributions(None)` **거부**. 옛 형식 공약도 `reveal` 에서 거부 |
+| **F** | **커밋 뒤** 세 번째 비콘 호출이 터지면 *"게시하지 않았습니다"* 라면서 **행이 남아 영구 409** | `db.committed=True` + `rollback` no-op 실측 | 비콘 조회를 **INSERT 전에** 끝내고 남은 초는 **산술**로 |
+| **G** | UA 락이 **실제 403 나는 값**을 통과 | `_UA='Python-urllib/3.13'` → 22 passed · 라이브 403 | 락이 아니라 **코드가** 차단 모양을 거부(`_BLOCKED_UA_PREFIXES`) |
+| **H** | 검증기 기여값 **위치** 무잠금 | `append`→`insert(0,…)` 변이 생존 · 정직한 `u-03` 이 `u-13` 으로 | 순서를 `dongho_contributions()` 한 함수로 + **프로덕션 AST 에서 파생 대조** |
+| **I** | 재시도 **카운터 미기록** | 경합 1회면 검증기가 «결과가 다르다»(=조작 신고) | 원장·응답에 `start_counter` · 검증기 `--start-counter` |
+| **J** | `revealed_at` 락이 **어휘적** | `COALESCE(revealed_at, revealed_at)` 생존 | 괄호 균형 파싱으로 **두 번째 인자**를 단언 |
+| **K** | `_ensure` 가 **요청마다** `ALTER TABLE` | `ACCESS EXCLUSIVE` 잠금 · 공개 GET 포함 | 프로세스당 1회(`_DDL_DONE`) |
+| **L** | 425/503 **핸들러 순서** 무잠금 | 순서 뒤집기 변이 생존(425 도달 불가) | AST 로 **순서**를 단언 |
+| **M** | 「원장에 남긴다」가 실은 `logger.info` | 삭제 변이 생존 · 외부 감사자는 서버 로그를 못 본다 | `emit_outbox("DrawCommitmentRevealed", …)` |
+
+## ★재판정 — 리뷰어가 생존시킨 변이 + 형제 축
+
+`scripts/mutate_manual.sh` · 테스트 `tests/test_draw_binding_effect_locks.py`
+
+    ① 두 엔진에서 *beacon_parts 삭제            CAUGHT
+    ② 명부·pool 지문을 seed 에서 제거            CAUGHT
+    ③ 425/503 핸들러 순서 뒤집기                 CAUGHT
+    ④ UA → "Python-urllib/3.13"                CAUGHT
+    ⑤ revealed_at 을 no-op 으로                  CAUGHT
+    ⑥ 검증기 기여값 위치 append→insert(0,…)       CAUGHT
+    ⑦ 명부 변경 게이트 무력화(if False)           CAUGHT
+    ⑧ pool 을 라이브 재조회로 되돌림               CAUGHT
+    ⑨ seed_contributions(None) 재허용             CAUGHT
+    ⑩ latest_round 단일출처 복귀                  CAUGHT   ←★처음엔 SURVIVED(고치고 안 잠갔다)
+    ⑪ 허용오차 검사 무력화                        CAUGHT
+    ⑫ max→min(뒤처진 값 채택)                     CAUGHT
+    ───────────────────────────────── 12/12
+
+★**⑩이 처음에 생존한 것이 이 회차의 요약이다** — *"고쳤다"* 와 *"고친 것을 잠갔다"* 는 다르다.
+
+## §8 ★아직 못 한 것 (정직하게)
+
+1. **제3자 독립 검증이 아직 성립하지 않는다** — ①추첨 완료 후 nonce 공개 **미구현**
+   ②`commitment` 조회가 **현장 멤버십**을 요구. ②는 «누가 공약을 볼 수 있는가» 라는 **제품 결정**이라
+   내가 단독으로 열지 않는다(사용자 판단 필요).
+2. **DB 쓰기 권한자는 여전히 이긴다** — `nonce`+`commit_hash`+지문을 **함께** 갈아치우면 통과한다.
+   `anchor.py`(온체인 앵커링)가 그 자리를 겨누지만 **미배포·호출부 0건**이다.
+3. **DB 통합 실행 미측정** — 새 컬럼 4개의 `ALTER TABLE`, `jsonb` 왕복, `revealed_at` UPDATE 는
+   **실제 Postgres 로 태운 적이 없다**(전부 가짜 DB). ★리뷰어가 `ALTER TABLE` 줄을 지워도
+   139건이 초록인 것으로 **이 사실을 증명했다**.
+4. **BLS 서명 미검증**(그대로) · **체인 은퇴 시 fail-closed** · **LEAD 5분 대기 운영 수용성 미측정**.
+5. **운영자가 결과를 보고 추첨을 미루는 층**은 여전히 못 막는다 — `committed_at`·`revealed_at` 으로
+   **보이게** 할 뿐이고, 그 둘조차 DB 쓰기로 위조 가능하다(2번과 같은 층).

@@ -861,10 +861,20 @@ async def draw_group_commit(group_id: uuid.UUID, db: AsyncSession = Depends(get_
       없다 — 「공약자와 추첨자가 같은 역할」이어도 grinding 이 성립하지 않는 이유가 이것이다.
     ★**재공약 불가**(`UNIQUE(scope, ref_id)`) — 두 번째 호출은 409 다.
     """
+    from sqlalchemy import text as _text
+
     from app.services.sales.draw.beacon import BeaconError
     from app.services.sales.draw.commitment_store import commit_draw
+    from app.services.sales.draw.draw_engine import committable_pool
+    # ★**공약은 명부와 대상 세대를 함께 묶는다.** 그것이 없으면 공약 이후에 대상자를 더 넣거나
+    #   세대를 빼서 결과를 고를 수 있다(독립 적대 리뷰 2026-09-13 MAJOR-1/2 · 실측).
+    roster = [str(r[0]) for r in (await db.execute(_text(
+        "SELECT id FROM sales_draw_candidates WHERE group_id=:g AND site_id=:s"),
+        {"g": str(group_id), "s": str(ctx.site_id)})).all()]
+    pool = await committable_pool(db, ctx.site_id, group_id)
     try:
         return await commit_draw(db, ctx.site_id, "dongho", group_id,
+                                 participants=roster, pool_ids=pool,
                                  by=getattr(ctx.user, "id", None))
     except ValueError as e:
         await db.rollback()
@@ -879,10 +889,16 @@ async def draw_group_commit(group_id: uuid.UUID, db: AsyncSession = Depends(get_
 @actions_router.get("/draw/groups/{group_id}/commitment")
 async def draw_group_commitment(group_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                                 ctx: SalesCtx = Depends(sales_ctx)):
-    """공약 **공개 조회** — `commit_hash`·`committed_at` 만. ★nonce 는 실리지 않는다.
+    """공약 조회 — `commit_hash`·`committed_at`·`beacon_round`·명부/세대 **지문**. nonce 는 없다.
 
-    대상자·입회인이 추첨 **전에** 이 값을 받아 두면, 추첨 후 공개되는 nonce 로
-    `sha256(nonce) == commit_hash` 를 **스스로** 확인할 수 있다.
+    ★★**정정(2026-09-13 독립 적대 리뷰 MAJOR-3)**: 종전 이 독스트링은 *"추첨 후 공개되는 nonce 로
+      스스로 확인할 수 있다"* 고 적었는데 **거짓이었다** — ***nonce 를 공개하는 엔드포인트가
+      저장소에 0건이다***(실행 식별자 기준 실측). 그리고 이 조회 자체가 `sales_ctx` 로
+      **현장 멤버십**을 요구하므로 외부 입회인·감사인은 `commit_hash` 조차 받을 수 없다.
+
+    ⇒ **지금 이 엔드포인트로 가능한 것**: 같은 현장 구성원이 추첨 **전에** 공약값을 받아 두는 것.
+    ⇒ **아직 불가능한 것**(미구현 · 남은 과제): ①추첨 완료 후 nonce 공개 ②비구성원 공개 접근.
+      ***그 둘이 없으면 「제3자 독립 검증」이라고 부를 수 없다*** — 그래서 그렇게 부르지 않는다.
     """
     from app.services.sales.draw.commitment_store import public_commitment
     got = await public_commitment(db, "dongho", group_id)

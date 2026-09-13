@@ -16,23 +16,32 @@ import sys
 
 import pytest
 
-from app.services.sales.draw import vrng
+from app.services.sales.draw import binding, vrng
 
 _VERIFIER = pathlib.Path(__file__).resolve().parents[3] / "scripts" / "verify_draw.py"
 
 
-def _production(nonce: str, group: str, cand: str, pool: list[str]) -> str:
-    key = vrng.seed_key(nonce, group, cand)
-    got, _ = vrng.pick(key, f"dongho:{group}:{cand}", pool)
+#: ★공약이 묶는 **명부·pool 지문**도 키에 들어간다 — 두 구현이 **같은 순서로** 넣어야 한다.
+def _hashes(roster: list[str], pool: list[str]) -> tuple[str, str]:
+    return binding.roster_hash(roster), binding.pool_hash(pool)
+
+
+def _production(nonce: str, group: str, cand: str, pool: list[str],
+                p_hash: str, u_hash: str, start: int = 0) -> str:
+    key = vrng.seed_key(nonce, group, cand, p_hash, u_hash)
+    got, _ = vrng.pick(key, f"dongho:{group}:{cand}", pool, start=start)
     return got
 
 
-def _verifier(nonce: str, group: str, cand: str, pool: list[str], expect: str):
+def _verifier(nonce: str, group: str, cand: str, pool: list[str], expect: str,
+              p_hash: str, u_hash: str, start: int = 0):
     return subprocess.run(
         [sys.executable, str(_VERIFIER),
          "--commit-hash", vrng.commitment(nonce), "--nonce", nonce,
          "--group", group, "--candidate", cand,
-         "--pool", json.dumps(pool), "--expect", expect],
+         "--pool", json.dumps(pool), "--expect", expect,
+         "--participants-hash", p_hash, "--pool-hash", u_hash,
+         "--start-counter", str(start)],
         capture_output=True, text=True, check=False)
 
 
@@ -52,8 +61,13 @@ def test_verifier_and_production_agree(n):
     nonce = f"{n:02x}" * 32
     group, cand = f"G-{n}", f"C-{n * 7}"
     pool = [f"u-{i}" for i in range(3 + n)]
-    expected = _production(nonce, group, cand, pool)
-    out = _verifier(nonce, group, cand, pool, expected)
+    roster = [f"cand-{i}" for i in range(2 + n)]
+    p_hash, u_hash = _hashes(roster, pool)
+    # ★시작 카운터도 **0 이 아닌 값**을 섞어 태운다 — 선점 경합이 있던 정직한 추첨을
+    #   검증기가 「조작」으로 신고하던 자리다(리뷰 MED-5).
+    start = n % 3
+    expected = _production(nonce, group, cand, pool, p_hash, u_hash, start)
+    out = _verifier(nonce, group, cand, pool, expected, p_hash, u_hash, start)
     assert out.returncode == 0, (
         f"검증기가 프로덕션 결과를 재현하지 못한다:\n{out.stdout}\n{out.stderr}"
     )
@@ -64,9 +78,10 @@ def test_verifier_rejects_a_tampered_result():
     """★**두 모집단** — 틀린 결과를 주면 **거부**해야 한다(항상 통과하면 검증이 아니다)."""
     nonce = "ab" * 32
     pool = ["u-a", "u-b", "u-c", "u-d"]
-    real = _production(nonce, "G", "C", pool)
+    p_hash, u_hash = _hashes(["c1", "c2"], pool)
+    real = _production(nonce, "G", "C", pool, p_hash, u_hash)
     wrong = next(u for u in pool if u != real)
-    out = _verifier(nonce, "G", "C", pool, wrong)
+    out = _verifier(nonce, "G", "C", pool, wrong, p_hash, u_hash)
     assert out.returncode != 0, f"조작된 결과를 통과시켰다:\n{out.stdout}"
     assert "결과가 다르다" in out.stdout, out.stdout
 
@@ -76,7 +91,8 @@ def test_verifier_rejects_a_broken_commitment():
     nonce = "cd" * 32
     out = subprocess.run(
         [sys.executable, str(_VERIFIER), "--commit-hash", "00" * 32, "--nonce", nonce,
-         "--group", "G", "--candidate", "C", "--pool", "u-a,u-b", "--expect", "u-a"],
+         "--group", "G", "--candidate", "C", "--pool", "u-a,u-b", "--expect", "u-a",
+         "--participants-hash", "0" * 64, "--pool-hash", "1" * 64],
         capture_output=True, text=True, check=False)
     assert out.returncode != 0
     assert "공약 불일치" in out.stdout, out.stdout
@@ -88,6 +104,21 @@ def test_verifier_rejects_a_weak_nonce():
     out = subprocess.run(
         [sys.executable, str(_VERIFIER), "--commit-hash", vrng.commitment(weak),
          "--nonce", weak, "--group", "G", "--candidate", "C",
-         "--pool", "u-a,u-b", "--expect", "u-a"],
+         "--pool", "u-a,u-b", "--expect", "u-a",
+         "--participants-hash", "0" * 64, "--pool-hash", "1" * 64],
         capture_output=True, text=True, check=False)
     assert "너무 짧다" in out.stdout, out.stdout
+
+
+def test_verifier_requires_the_binding_hashes():
+    """★공약이 묶은 **명부·pool 지문을 안 주면 돌지 않는다**.
+
+    선택 인자로 두면 *"안 줘도 도는"* 경로가 생기고, 그 실행은 **다른 키**를 계산하면서
+    정직한 추첨을 「결과가 다르다」로 신고한다 — ***가장 나쁜 종류의 거짓 신고다.***
+    """
+    out = subprocess.run(
+        [sys.executable, str(_VERIFIER), "--commit-hash", "00" * 32, "--nonce", "ab" * 32,
+         "--group", "G", "--candidate", "C", "--pool", "u-a", "--expect", "u-a"],
+        capture_output=True, text=True, check=False)
+    assert out.returncode != 0, out.stdout
+    assert "participants-hash" in (out.stderr + out.stdout), out.stderr[-300:]

@@ -104,22 +104,85 @@ class BeaconNotReadyError(BeaconError):
 #:   ***도구가 다르면 답이 다르다. curl 이 되는데 코드가 안 되면 헤더를 먼저 의심하라.***
 _UA = "propai-draw-verifier/1.0 (+fairness-audit)"
 
+#: ★**cloudflare 가 실제로 403 으로 막는 모양**(실측: `UA='Python-urllib/3.13'` → 403).
+#:   UA 를 「비어 있지 않은가」로만 잠그면 **이 문자열로 바꿔도 초록**이고, 그러면 운영자 두 곳 중
+#:   하나가 죽어 **모든 공약·모든 추첨이 503** 이 된다(대조가 성립하지 않으므로).
+#:   ⇒ 값 자체를 **모양으로** 거부한다 — 락이 아니라 **코드가** 막는다.
+_BLOCKED_UA_PREFIXES = ("python-urllib", "python-requests", "curl/")
+
+
+def _assert_ua_is_not_blocked(ua: str) -> None:
+    low = ua.strip().lower()
+    if not low:
+        raise BeaconError("User-Agent 가 비었다 — cloudflare 가 403 으로 막는다")
+    for bad in _BLOCKED_UA_PREFIXES:
+        if low.startswith(bad):
+            raise BeaconError(
+                f"User-Agent 가 **차단되는 모양**이다({ua!r}) — 실측으로 403 을 받는 접두 {bad!r}. "
+                "이 값을 쓰면 운영자 한 곳이 통째로 죽어 교차 대조가 불가능해진다"
+            )
+
 
 def _http_json(url: str, timeout: int = 12) -> dict:
+    _assert_ua_is_not_blocked(_UA)
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
     with urllib.request.urlopen(req, timeout=timeout) as r:   # noqa: S310 — 고정 https 목록
         return json.loads(r.read().decode())
 
 
+#: 두 운영자가 보고하는 `latest` 가 이만큼까지 어긋나는 것은 **정상**이다(라운드가 30초마다
+#:   오르므로 전파 지연으로 1~2 라운드 차가 난다). 이보다 벌어지면 **대조 실패**로 본다.
+LATEST_SKEW_TOLERANCE = 2
+
+
 def latest_round(endpoints=DEFAULT_ENDPOINTS, fetch: Callable[[str], dict] | None = None) -> int:
-    """지금 나와 있는 가장 최근 라운드 번호."""
+    """지금 나와 있는 가장 최근 라운드 — ★**서로 다른 운영자 2곳**에서 받아 대조한다.
+
+    ★★**종전에는 첫 번째로 응답한 곳을 그대로 썼다. 그것이 구멍이었다**(독립 적대 리뷰 2026-09-13
+      · 두 리뷰어가 각각 발견). `fetch_round` 는 「운영자 2곳」을 요구하는데 `latest_round` 는 안
+      해서 **경계를 한쪽만 잠근** 꼴이었고, 「미래 라운드인가」 판정이 전부 이 값에 걸려 있다:
+
+        · `target_round` — 공약에 못 박을 라운드
+        · `commit_draw` 의 과거 라운드 거부
+        · `randomness_for` 의 「아직 안 나왔다」 판정
+        · `seconds_until` 의 남은 시간
+
+      실측(리뷰어): 첫 엔드포인트만 **1000 라운드(≈8.3시간) 뒤처지게** 하면 공약이
+      **이미 8시간 전에 공개된 라운드**를 못 박는다 ⇒ nonce 를 아는 사람이 **공약 시점에**
+      당첨자를 계산한다. ***보장이 통째로 사라지는데 모든 신호는 「비콘 사용」이라고 말한다.***
+      거짓말은 **한 곳으로 충분했다** — 그래서 「두 곳을 다 통제해야 뚫린다」는 내 문서는
+      **과소 진술**이었다.
+
+    ★**최댓값을 쓴다**(허용 오차 안에서). 뒤처진 곳을 따라가면 「과거를 미래라 부르는」 쪽으로
+      틀리는데, 그 방향이 **보장을 깨는 방향**이다. 앞선 곳을 따라가면 대기가 길어질 뿐이다.
+      ***틀릴 수밖에 없다면 안전한 쪽으로 틀려라.***
+    """
     f = fetch or _http_json
+    got: dict[str, int] = {}
+    errors: list[str] = []
     for base in endpoints:
         try:
-            return int(f(public_url(base, "latest"))["round"])
-        except Exception:                                      # noqa: BLE001 — 다음 곳을 시도
-            continue
-    raise BeaconError("어느 비콘 엔드포인트에서도 최신 라운드를 못 가져왔다")
+            got[base] = int(f(public_url(base, "latest"))["round"])
+        except Exception as exc:                               # noqa: BLE001 — 다음 곳을 시도
+            errors.append(f"{base}: {type(exc).__name__}")
+    by_op: dict[str, int] = {}
+    for base, rnd in got.items():
+        op = operator_of(base)
+        by_op[op] = max(by_op.get(op, 0), rnd)
+    if len(by_op) < 2:
+        raise BeaconError(
+            f"최신 라운드를 **서로 다른 운영자 2곳 이상**에서 못 가져왔다"
+            f"(성공 {len(got)}곳 · 운영자 {sorted(by_op)}) — 한 곳의 말만 믿고 "
+            f"「미래 라운드」를 정하지 않는다. 사유: {errors}"
+        )
+    spread = max(by_op.values()) - min(by_op.values())
+    if spread > LATEST_SKEW_TOLERANCE:
+        raise BeaconError(
+            f"운영자들이 보고한 최신 라운드가 **{spread}라운드나 어긋난다**({by_op}) — "
+            f"허용 오차 {LATEST_SKEW_TOLERANCE}. 한 곳이 뒤처졌거나 거짓말하고 있다. "
+            "★뒤처진 값을 쓰면 **이미 공개된 라운드를 「미래」로 못 박게** 된다"
+        )
+    return max(by_op.values())
 
 
 def target_round(endpoints=DEFAULT_ENDPOINTS, fetch=None, lead: int = LEAD_ROUNDS) -> int:
@@ -190,16 +253,22 @@ def randomness_for(rnd: int, endpoints=DEFAULT_ENDPOINTS, fetch=None) -> str:
 
 def seed_contributions(beacon_round: int | None, endpoints=DEFAULT_ENDPOINTS,
                        fetch=None) -> tuple[list[str], str]:
-    """추첨 seed 에 섞을 **비콘 기여값**과 **사람이 읽는 라벨**을 함께 돌려준다.
+    """추첨 seed 에 섞을 **비콘 기여값**과 **사람이 읽는 라벨**.
 
-    ★두 추첨 경로(청약·동호)가 **같은 함수**를 통과하게 하는 것이 이 함수의 존재 이유다 —
-      각자 `if beacon_round:` 를 쓰면 **한쪽만 조용히 비콘을 빼는** 경로가 생긴다.
+    ★두 추첨 경로(청약·동호)가 **같은 함수**를 통과하게 하는 것이 이 함수의 존재 이유다.
 
-    ★`beacon_round is None` 은 **Phase 0 시기에 공약된 옛 행**이다(그때는 컬럼이 없었다).
-      그 경우 **조용히 진행하지 않고 라벨이 「비콘 미사용」이라고 말한다** — 침묵이 아니라 표기다.
-      ***지금 새로 하는 공약은 라운드 없이 만들어질 수 없다*** (`commit_draw` 가 거부한다).
+    ★★**`beacon_round is None` 은 거부한다**(2026-09-13 적대 리뷰 · 두 리뷰어 공통 지적).
+      종전에는 *"Phase 0 이전 공약"* 이라며 `([], "비콘 미사용")` 을 돌려줬는데, 그것이 곧
+      **`UPDATE sales_draw_commitments SET beacon_round=NULL` 한 줄로 비콘을 통째로 끄는 통로**
+      였다. 그 UPDATE 를 할 수 있는 사람은 **nonce 도 읽을 수 있는 사람**이므로,
+      ***이 모듈이 막으려던 바로 그 상대에게 탈출구를 열어 준 셈이다.***
+      ⇒ 라벨로 「말하는 것」은 침묵보다 낫지만 **거부보다는 나쁘다.**
+      ***지금 장식인 예외는 나중 서식지가 된다.***
     """
     if beacon_round is None:
-        return [], "비콘 미사용(공약에 라운드 없음 — Phase 0 이전 공약)"
+        raise BeaconError(
+            "공약에 비콘 라운드가 없습니다 — 비콘 없이는 추첨하지 않습니다(fail-closed). "
+            "라운드 없이 만들어진 옛 공약이라면 그 추첨은 **다시 공약해야** 합니다"
+        )
     value = randomness_for(int(beacon_round), endpoints, fetch)
     return [f"drand:{int(beacon_round)}:{value}"], f"drand round {int(beacon_round)}"

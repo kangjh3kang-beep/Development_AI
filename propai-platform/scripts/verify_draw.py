@@ -10,7 +10,10 @@
         --candidate   <대상자 id> \
         --pool        <그 시점 pool(쉼표 구분 또는 JSON 배열)> \
         --expect      <실제 배정된 세대 id> \
-        --beacon-round <공약에 못 박힌 drand 라운드(공개값)>
+        --beacon-round <공약에 못 박힌 drand 라운드(공개값)> \
+        --participants-hash <공약이 묶은 명부 지문> \
+        --pool-hash         <공약이 묶은 대상 세대 지문> \
+        --start-counter     <추첨 응답의 start_counter · 기본 0>
 
 ## ★이 도구가 하는 것과 하지 않는 것
 
@@ -70,8 +73,14 @@ _UA = "propai-draw-verifier/1.0 (+fairness-audit)"
 _CHAIN_HASH = "8990e7a9aaed2ffed73dbd7092123d6f289930540d7651336225dc172e51b2ce"
 
 
+def operator_of(base: str) -> str:
+    """엔드포인트 → 운영자. ★프로덕션 `beacon.operator_of` 와 **같은 규칙**이어야 한다 —
+    「2곳」이 아니라 **「서로 다른 운영자 2곳」**이 대조의 정의다(같은 운영자 예비는 대조가 아니다)."""
+    return "cloudflare" if "cloudflare" in base else "drand.sh"
+
+
 def _beacon_randomness(rnd: int) -> str:
-    """라운드를 **서로 다른 운영자 2곳**에서 가져와 대조한다. 갈리거나 한 곳만 되면 **거부**."""
+    """라운드를 **서로 다른 운영자 2곳**에서 가져와 대조한다. 갈리거나 한쪽뿐이면 **거부**."""
     got: dict[str, str] = {}
     errors: list[str] = []
     for base in _BEACON_ENDPOINTS:
@@ -86,8 +95,11 @@ def _beacon_randomness(rnd: int) -> str:
             got[base] = str(d["randomness"]).lower()
         except Exception as exc:                                 # noqa: BLE001
             errors.append(f"{base}: {type(exc).__name__}")
-    if len(got) < 2:
-        raise RuntimeError(f"라운드 {rnd} 를 2곳에서 못 가져왔다(성공 {len(got)}곳) — 사유 {errors}")
+    operators = {operator_of(b) for b in got}
+    if len(operators) < 2:
+        raise RuntimeError(
+            f"라운드 {rnd} 를 **서로 다른 운영자 2곳**에서 못 가져왔다"
+            f"(성공 {len(got)}곳 · 운영자 {sorted(operators)}) — 사유 {errors}")
     if len(set(got.values())) != 1:
         raise RuntimeError(f"라운드 {rnd} 의 값이 엔드포인트마다 다르다: {got}")
     return next(iter(got.values()))
@@ -96,6 +108,21 @@ def _beacon_randomness(rnd: int) -> str:
 def beacon_contribution(rnd: int, randomness: str) -> str:
     """seed 에 섞이는 기여값 문자열. ★프로덕션 `beacon.seed_contributions` 와 **같아야** 한다."""
     return f"drand:{int(rnd)}:{randomness}"
+
+
+def dongho_contributions(group: str, candidate: str, participants_hash: str,
+                         pool_hash: str, beacon_part: str | None) -> list[str]:
+    """★기여값의 **순서**까지 포함한 정본. 프로덕션 `draw_engine.draw_for_candidate` 와 같아야 한다.
+
+    ***순서가 바뀌면 다른 키다.*** 문자열만 맞추고 **위치**를 안 잠그면, 검증기가 정직한 추첨을
+    **「결과가 다르다」= 조작 의심**으로 신고한다(독립 적대 리뷰 2026-09-13 실측 — `append` 를
+    `insert(0, …)` 로 바꾼 변이가 **생존**했고 정직한 추첨이 `u-03` → `u-13` 으로 갈렸다).
+    ***정직한 추첨을 조작으로 신고하는 것이 이 도구가 낼 수 있는 가장 나쁜 거짓이다.***
+    """
+    parts = [group, candidate, participants_hash, pool_hash]
+    if beacon_part is not None:
+        parts.append(beacon_part)
+    return parts
 
 
 def _seed_key(nonce_hex: str, *contributions: str) -> bytes:
@@ -111,6 +138,12 @@ def main() -> int:
     ap.add_argument("--candidate", required=True)
     ap.add_argument("--pool", required=True, help="쉼표 구분 또는 JSON 배열")
     ap.add_argument("--expect", required=True, help="실제 배정된 세대 id")
+    ap.add_argument("--participants-hash", required=True,
+                    help="GET …/commitment 의 participants_hash(공약이 묶은 명부 지문)")
+    ap.add_argument("--pool-hash", required=True,
+                    help="GET …/commitment 의 pool_hash(공약이 묶은 대상 세대 지문)")
+    ap.add_argument("--start-counter", type=int, default=0,
+                    help="추첨 응답·원장의 start_counter — ★선점 경합이 있었으면 0 이 아니다")
     ap.add_argument("--beacon-round", type=int, default=None,
                     help="공약에 못 박힌 drand 라운드(GET …/commitment 의 beacon_round)")
     ap.add_argument("--beacon-randomness", default=None,
@@ -137,7 +170,7 @@ def main() -> int:
     pool = sorted(x for x in pool if x)
     # ★비콘 기여값 — **조용히 빼지 않는다.** 빼고 계산하면 결과가 안 맞는데, 그때 이 도구는
     #   *"결과가 다르다"*(= 조작 의심)라고 말하게 된다. 실제 원인은 **내가 입력을 덜 넣은 것**이다.
-    parts: list[str] = [a.group, a.candidate]
+    beacon_part: str | None = None
     if a.beacon_round is not None:
         if a.beacon_randomness:
             value = a.beacon_randomness.lower()
@@ -152,15 +185,19 @@ def main() -> int:
                       "그래서 진행하지 않는다")
                 return 2
             print(f"  비콘 라운드 {a.beacon_round} = {value[:32]}… (운영자 2곳 대조 통과)")
-        parts.append(beacon_contribution(a.beacon_round, value))
+        beacon_part = beacon_contribution(a.beacon_round, value)
     else:
         print("  ★`--beacon-round` 가 없다 — **비콘을 섞지 않고** 계산한다. 그 추첨이 비콘을 썼다면 "
               "결과가 일부러 어긋난다(`GET …/commitment` 의 `beacon_round` 를 확인하라)")
+    parts = dongho_contributions(a.group, a.candidate, a.participants_hash,
+                                 a.pool_hash, beacon_part)
     key = _seed_key(a.nonce, *parts)
     domain = f"dongho:{a.group}:{a.candidate}"
-    idx, _nxt = _below(key, domain, len(pool))
+    # ★`--start-counter` — 프로덕션은 선점 경합 시 카운터를 **이어받는다**. 0 으로 고정하면
+    #   **경합이 있던 정직한 추첨**을 조작으로 신고한다(리뷰 MED-5 실측).
+    idx, _nxt = _below(key, domain, len(pool), start=a.start_counter)
     got = pool[idx]
-    print(f"  pool {len(pool)}건 · 도메인 {domain}")
+    print(f"  pool {len(pool)}건 · 도메인 {domain} · 시작 카운터 {a.start_counter}")
     print(f"  재계산 결과 = {got}")
     if got != a.expect:
         print(f"✘ **결과가 다르다** — 기록된 배정 {a.expect}")
