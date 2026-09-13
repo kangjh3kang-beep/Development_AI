@@ -19,7 +19,7 @@
 | 1 | 추첨 엔진이 있나 | 전수 grep | ★**있다** — `app/services/sales/draw/draw_engine.py` (340줄) |
 | 2 | **추첨 경로가 몇 개인가** | 엔드포인트 전수 | ★**둘이고 난수 정책이 서로 다르다**(아래 §1-A) |
 | 3 | 스마트컨트랙트 인프라 | `contracts/` 실측 | ★**있다** — Solidity 4종(`PropAIEscrow`·`PropAIToken`·`PropAIGovernance`·`SubcontractPayment`) + Hardhat + typechain + 테스트 4종 |
-| 4 | 체인에 **실제로 배포**됐나 | `contracts/deployments/amoy/` | ★**됐다** — `PropAIEscrow` `0x961cba4A27D3080d8450789c91D4f30ff72E82E6` · chainId **80002**(Polygon Amoy) · 2026-03-18 |
+| 4 | 체인에 **실제로 배포**됐나 | ①`contracts/deployments/amoy/` ②★**체인에 직접 질의**(`eth_getCode`) | ①**배포 기록 파일이 있다** — `PropAIEscrow` `0x961cba4A…` · chainId **80002** · 2026-03-18. ②★**판정 불가** — 이 환경에서 `https://rpc-amoy.polygon.technology` 가 **HTTP 000**(대조군: `api.4t8t.net` 200 · `api.github.com` 200 → 망은 살아 있고 **그 호스트만 막혔다**). ***「파일에 주소가 있다」는 「체인에 코드가 있다」가 아니다*** — 나는 처음에 이것을 「실배포」라고 말했고 그건 **파일을 본 것**이었다. 정정한다. |
 | 5 | API 가 체인을 부르나 | 소비처 전수 | **부른다** — `apps/api/services/blockchain_service.py`(Web3.py) ← `apps/api/routers/blockchain.py` (★단 이 트리는 `app/` 트리와 **다른 계층**이다 — §3-5) |
 | 6 | 추첨을 잠그는 테스트 | 전수 grep(`draw_for_candidate`/`draw_engine`/`sales_draw`) | ★**전용 테스트 0건**(`test_sales_contract_crm.py` 가 계약 경로로 스치기만) · 대조군 `sales_unit_inventory` 1건 → 조회기 생존 |
 | 7 | 추첨 순번(`seq`) 결정 | `_next_seq` | **등록 순서**(`MAX(seq)+1`) — **무작위화 없음** |
@@ -106,8 +106,11 @@ event DrawRevealed(bytes32 indexed drawId, bytes32 nonce, bytes32 resultRoot, ui
    가정하지 않는다 — 다만 **Phase 0 의 산출물이 그 증빙으로 그대로 쓰인다.**
 2. **①의 실제 운용 여부** — `run_draw` 가 라이브에서 실제로 쓰이는지(호출 이력)는 **미측정**.
    코드 경로만 봤다.
-3. **Amoy 배포분의 현재 생존** — `deployments/amoy/PropAIEscrow.json` 은 2026-03-18 **파일**이다.
-   그 주소가 **지금도 유효한지 체인에 조회하지 않았다**(테스트넷은 초기화되기도 한다).
+3. **Amoy 배포분의 현재 생존 — ★조회를 시도했고 「판정 불가」다.**
+   `eth_getCode` 로 물었으나 이 환경에서 **RPC 호스트가 차단**돼 있다(HTTP 000 · 대조군 2건 200).
+   ⇒ **「배포돼 있다」도 「없다」도 말할 수 없다.** Phase 2 착수 전에 **망이 열린 곳에서**
+   `eth_getCode` 가 `0x` 보다 긴 값을 돌려주는지 확인해야 한다(대조군: 아무 EOA 주소는 `0x`).
+   ★그리고 Phase 2 는 **새 컨트랙트 배포**가 필요하므로 어차피 **RPC 송출 경로 확보가 선행 조건**이다.
 4. **가스비·운영비 미측정** — Polygon 메인넷 앵커링 1건당 비용, 월 추첨 건수 가정 없음.
 5. ★**`apps/api/services/` 와 `apps/api/app/services/` 가 다른 트리다.** `blockchain_service.py` 는
    **전자**에 있고 추첨 엔진은 **후자**에 있다. 이 저장소에는 트리가 셋이라는 실측 기록이 있다 —

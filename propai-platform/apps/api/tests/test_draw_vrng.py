@@ -106,11 +106,32 @@ def test_counter_advances_so_the_same_draw_is_not_repeated():
 
 # ── ④ 입력 순서 독립 ──────────────────────────────────────────────────────
 def test_pick_is_independent_of_input_order():
-    """★명부를 **어떤 순서로 넣든** 같은 결과여야 한다 — 아니면 등록 순서가 추첨에 영향을 준다."""
+    """★명부를 **어떤 순서로 넣든** 같은 결과여야 한다 — 아니면 등록 순서가 추첨에 영향을 준다.
+
+    ★★그리고 **뽑힌 값이 입력에서 와야** 한다. 기계 변이가 이 구멍을 짚었다:
+      `ordered = sorted(items)` → `ordered = 0,`(튜플 `(0,)`)로 바꾸면 `pick` 이 입력과 **무관한
+      `0`** 을 돌려주는데, 「두 순서의 결과가 같다」만 보면 **둘 다 0 이라 통과**한다.
+      ***존재를 잠그고 행위는 안 잠근 형태다*** — 소속과 도달 범위를 함께 단언한다.
+    """
     items = ["u-c", "u-a", "u-d", "u-b"]
     got_a, _ = vrng.pick(KEY, "unit", items)
     got_b, _ = vrng.pick(KEY, "unit", list(reversed(items)))
     assert got_a == got_b, (got_a, got_b)
+    assert got_a in items, f"입력에 없는 값을 뽑았다: {got_a!r}"
+
+
+def test_pick_reaches_every_item_and_never_leaves_the_pool():
+    """★**도달 범위** — 키를 바꿔 가며 뽑으면 목록의 **모든 항목**이 나와야 한다.
+
+    한 항목만 계속 나오거나 목록 밖 값이 나오면 추첨이 아니다.
+    """
+    items = ["u-a", "u-b", "u-c", "u-d"]
+    seen = set()
+    for i in range(200):
+        got, _ = vrng.pick(bytes([i % 256]) * 16, "unit", items)
+        assert got in items, f"목록 밖 값: {got!r}"
+        seen.add(got)
+    assert seen == set(items), f"도달하지 못한 항목이 있다: {set(items) - seen}"
 
 
 def test_shuffle_is_a_permutation_and_order_independent():
