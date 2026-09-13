@@ -2,6 +2,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export * as mocks from "./mocks";
+export { DrawRegistry__factory } from "./DrawRegistry__factory";
 export { PropAIEscrow__factory } from "./PropAIEscrow__factory";
 export { PropAIGovernance__factory } from "./PropAIGovernance__factory";
 export { PropAIToken__factory } from "./PropAIToken__factory";

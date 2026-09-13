@@ -8,6 +8,8 @@ from itertools import groupby
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.sales.draw import beacon, binding, vrng
+from app.services.sales.draw.commitment_store import finalize_draw, reveal_commitment
 from app.services.sales.harness.outbox import emit_outbox
 from apps.api.database.models.sales.subscription import (
     SalesSubscriptionAnnouncement,
@@ -68,7 +70,34 @@ async def _available_units(db, site_id, type_id, *, lock: bool = False):
     return list((await db.execute(stmt.order_by(SalesUnitInventory.id))).scalars())
 
 
-async def run_draw(db: AsyncSession, site_id, announcement_id, seed: str | None = None) -> int:
+async def subscription_binding(db, site_id, announcement_id) -> tuple[list[str], list[str]]:
+    """★공약 시점에 못 박을 **(신청 명부, 대상 세대)**.
+
+    명부는 `eligibility='OK'` 인 신청의 id, 세대는 그 공고가 뽑을 수 있는 **현재 가용 세대 전체**다.
+    ***공약 엔드포인트와 추첨 엔진이 같은 함수로 모집단을 만든다*** — 둘이 따로 계산하면
+    「공약한 것」과 「뽑은 것」이 조용히 갈린다(그 갈림이 곧 결함이다).
+    """
+    apps = list((await db.execute(select(SalesSubscriptionApplication).where(
+        SalesSubscriptionApplication.announcement_id == announcement_id,
+        SalesSubscriptionApplication.eligibility == "OK"))).scalars())
+    # ★★**그 공고가 실제로 뽑는 타입으로 좁힌다**(R2 리뷰 MAJOR-7).
+    #   종전에는 **현장 전체 가용 세대**였다. 추첨은 `groupby(apps, unit_type_id)` 로 **신청이 있는
+    #   타입만** 도는데, 공약은 현장 전체를 묶고 있었으니 **무관한 세대 하나만 상태가 바뀌어도**
+    #   지문이 달라져 추첨이 막혔다 — 그리고 그 통로는 전부 **정상 업무**다:
+    #   `claim_offer`(선착순·고객이 누른다) · `promote_reserve` · 계약 체결/해지 · 세대 추가·삭제.
+    #   ***게이트가 공격만 막고 정상 운영도 막으면 그건 결함이다(위양성도 결함이다).***
+    type_ids = {a.unit_type_id for a in apps if a.unit_type_id is not None}
+    if not type_ids:
+        return [str(a.id) for a in apps], []
+    units = list((await db.execute(select(SalesUnitInventory).where(
+        SalesUnitInventory.site_id == site_id,
+        SalesUnitInventory.type_id.in_(list(type_ids)),
+        SalesUnitInventory.status == "AVAILABLE",
+        SalesUnitInventory.deleted_at.is_(None)))).scalars())
+    return [str(a.id) for a in apps], [str(u.id) for u in units]
+
+
+async def run_draw(db: AsyncSession, site_id, announcement_id) -> int:
     # 공고 행을 FOR UPDATE 로 잠가, 동시에 두 번 들어온 추첨 요청을 직렬화한다.
     # ★[IDOR·security 전역스윕·iter-5 HIGH] 과거엔 공고를 id 로만 조회(site_id 미스코프)하고
     #   scalar_one() 이라 두 가지 결함이 있었다.
@@ -90,13 +119,64 @@ async def run_draw(db: AsyncSession, site_id, announcement_id, seed: str | None 
     #   (재추첨이 필요하면 별도의 '추첨 취소→재오픈' 흐름을 둬야 한다 — 여기서 임의 재실행 금지.)
     if ann.status == "DRAWN":
         return 0
-    seed = seed or ann.announce_no or str(announcement_id)
+    # ★★**호출자 seed 와 공고번호 폴백을 없앤다**(2026-09-13 · 실측 결함 둘).
+    #   종전: `seed = seed or ann.announce_no or str(announcement_id)`
+    #     ①-a **호출자가 seed 를 보낼 수 있었다** — 오프라인에서 원하는 당첨자가 나올 때까지
+    #          굴린 뒤 제출하면 **결과를 고를 수 있다**(동점자 순서가 seed 로 정해진다).
+    #     ①-b 미지정 시 seed 가 **공고번호**였다 — 공개·예측 가능한 값이라
+    #          ***누구나 추첨 전에 당첨자를 계산할 수 있었다.***
+    #   ⇒ seed 는 **사전 공약된 nonce** 에서만 온다. 공약이 없으면 **추첨하지 않는다**
+    #     (fail-closed — 조용히 예측 가능한 값으로 떨어지지 않는다).
+    #   공약/공개 절차: `rules["draw_commit"]` 에 sha256(nonce) 를 **미리** 게시하고,
+    #   추첨 시 `draw_nonce` 를 넣어 대조한다. 서버가 뽑아 보고 nonce 를 갈아치우면 해시가 어긋난다.
+    #   ★★2차 정정(독립 리뷰 M-1/M-2): 공약을 `ann.rules` 에 두었더니 **연극**이었다 —
+    #     `rules` 는 범용 CRUD 로 덮어쓸 수 있고 그 쓰기 역할이 추첨 역할을 **포함**해서,
+    #     운영자가 명부를 본 뒤 commit+nonce 를 **한 번에** 써 넣고 바로 추첨할 수 있었다.
+    #     게다가 `rules` 는 읽기 API 에 실려 nonce 를 미리 넣으면 **누구나 사전 계산**했다.
+    #     ⇒ 공약을 **CRUD 밖의 append-only 저장소**로 옮긴다(`sales_draw_commitments`,
+    #       `UNIQUE(scope, ref_id)` 로 **재공약 불가** · nonce 는 읽기 API 에 안 실린다).
+    #   ★★**Phase 1(비콘)**: 공약에 못 박은 **미래 drand 라운드**를 seed 에 섞는다 — nonce 를
+    #     아는 사람도 그 라운드가 공개되기 전에는 결과를 계산할 수 없다. 라운드가 아직이거나
+    #     비콘을 못 가져오면 **추첨을 거부**한다(fail-closed).
+    rev = await reveal_commitment(db, "subscription", announcement_id)
+    beacon_parts, beacon_label = beacon.seed_contributions(rev.beacon_round)
+
+    # ★게이트를 **일을 시작하기 전에** 둔다 — 거부할 추첨이면 신청 조회·정렬도 하지 않는다.
+    live_roster, live_pool = await subscription_binding(db, site_id, announcement_id)
+    if binding.roster_hash(live_roster) != rev.participants_hash:
+        raise ValueError(
+            f"공약 이후 **신청 명부가 바뀌었습니다**(공약 {len(rev.participants)}건 ↔ 현재 "
+            f"{len(set(live_roster))}건) — 추첨하지 않습니다. 명부를 바꾸려면 **다시 공약**해야 합니다"
+        )
+    # ★**세대도 같이 묶는다.** 명부만 묶으면 세대를 빼서 결과를 고르는 경로가 남는다
+    #   (동·호 경로에서 실측: 3건만 빼도 30세대 중 10세대 도달).
+    if binding.pool_hash(live_pool) != rev.pool_hash:
+        raise ValueError(
+            f"공약 이후 **대상 세대가 바뀌었습니다**(공약 {len(rev.pool_ids)}세대 ↔ 현재 "
+            f"{len(set(live_pool))}세대) — 추첨하지 않습니다. **다시 공약**해야 합니다"
+        )
+    # ★명부 지문을 **seed 에 섞는다** — 이제 주석이 참이다(게이트 + seed 이중 방어).
+    seed = vrng.seed_key(rev.nonce, str(announcement_id),
+                         rev.participants_hash, rev.pool_hash, *beacon_parts).hex()
+    # ★**원장에 남긴다.** 종전엔 `logger.info` 였는데 주석은 *"원장에 남긴다"* 라고 적고 있었다 —
+    #   외부 감사자는 서버 로그를 못 본다. 형제 경로(`draw_engine`)는 처음부터 진짜 원장을 쓴다.
+    await emit_outbox(db, site_id, "DrawCommitmentRevealed", {
+        "announcement_id": str(announcement_id), "commit_hash": rev.commit_hash,
+        "beacon_round": rev.beacon_round, "beacon": beacon_label,
+        "participants_hash": rev.participants_hash, "pool_hash": rev.pool_hash,
+    })
     rules = ann.rules or {}
     special_ratio = rules.get("special_ratio", {})  # {type_id: 0~1} 파라미터
     apps = list((await db.execute(select(SalesSubscriptionApplication).where(
         SalesSubscriptionApplication.announcement_id == announcement_id,
         SalesSubscriptionApplication.eligibility == "OK"))).scalars())
     apps.sort(key=lambda a: str(a.unit_type_id))
+    # ★★**명부가 공약 이후에 바뀌었으면 뽑지 않는다**(독립 적대 리뷰 2026-09-13 MAJOR-1).
+    #   종전 주석은 *"명부를 키에 섞는다"* 라고 적었는데 **거짓이었다** — 실제 키는
+    #   `seed_key(nonce, announcement_id, 비콘)` 뿐이었고 당락은 `_tiebreak(seed, a.id)` 로 갈렸다.
+    #   그런데 `SalesSubscriptionApplication` 은 **범용 CRUD** 에 등록돼 있어(`sales/__init__.py`)
+    #   운영자가 신청을 **삭제·재생성**해 `application_id` 를 굴릴 수 있었다.
+    #   ***공약을 CRUD 밖으로 뺐지만, 공약이 묶어야 할 명부는 여전히 CRUD 안에 있었다.***
     total_win = 0
     for type_id, grp in groupby(apps, key=lambda a: a.unit_type_id):
         group = list(grp)
@@ -150,6 +230,14 @@ async def run_draw(db: AsyncSession, site_id, announcement_id, seed: str | None 
             db.add(SalesSubscriptionReserveQueue(site_id=site_id, announcement_id=announcement_id,
                    application_id=a.id, unit_type_id=type_id, reserve_no=i))
     ann.status = "DRAWN"
+    # ★**추첨이 끝났다 — 최종화한다**(결과 루트 온체인 + nonce 공개 개방).
+    #   청약은 한 번에 전원을 뽑으므로 여기가 곧 완료 시점이다.
+    _leaves = [hashlib.sha256(f"{a.id}:{a.result}".encode()).hexdigest()
+               for a in sorted(apps, key=lambda x: str(x.id))]
+    try:
+        await finalize_draw(db, "subscription", announcement_id, _leaves)
+    except Exception as exc:                      # noqa: BLE001 — 최종화 실패가 추첨을 무르지 않는다
+        logger.warning("청약 추첨 최종화 실패(추첨 자체는 성립): %s", exc)
     await emit_outbox(db, site_id, "ApplicationReceived", {"round_id": str(ann.round_id or ""), "unit_id": ""})
     await db.flush()
     return total_win

@@ -22,6 +22,9 @@ import sys
 import uuid as uuid_mod
 from datetime import UTC, datetime
 
+from app.services.sales.draw import commitment_store as _cs
+from app.services.sales.draw import vrng as _vrng
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
@@ -565,6 +568,37 @@ class TestRunDrawIdempotency:
         # 공고행 FOR UPDATE(스코프된 SELECT 도 잠금)·부작용 0(winner/예비큐 생성 없음).
         assert db.lock_seen is True
         assert db.added == []
+
+
+#: ★가짜 DB 테스트용 고정 nonce. 공약 저장소(`sales_draw_commitments`)는 **진짜 DB** 가 필요하므로
+#:   이 단위테스트에서는 그 경계를 **명시적으로** 대체한다. 「공약이 없으면 거부된다」·
+#:   「재공약 불가」·「nonce 가 결과를 만든다」는 `test_draw_commit_reveal.py` 가 따로 태운다.
+_FIXED_NONCE = "5a" * 32
+
+
+@pytest.fixture(autouse=True)
+def _stub_commitment(monkeypatch):
+    """추첨 경로의 공약 조회를 고정값으로 — DB 없는 단위테스트의 경계."""
+    from app.services.sales.draw import binding as _b
+    _roster, _pool = ["app-1", "app-2", "app-3"], ["unit-1", "unit-2", "unit-3"]
+
+    async def _bind(_db, _site, _ann):
+        return list(_roster), list(_pool)
+
+    async def _fake(_db, _scope, _ref):
+        # ★새 계약: 공약이 **명부·pool 을 함께 묶는다**. 여기서는 그 검사를 **통과**시키고
+        #   (같은 값을 양쪽에 준다), 바인딩이 실제로 결과를 바꾸는지는
+        #   `test_draw_binding_effect_locks.py` 가 따로 태운다.
+        return _cs.Revealed(_FIXED_NONCE, _vrng.commitment(_FIXED_NONCE), 900,
+                            _b.normalize(_roster), _b.normalize(_pool),
+                            _b.roster_hash(_roster), _b.pool_hash(_pool))
+
+    monkeypatch.setattr(sub_engine, "subscription_binding", _bind)
+    monkeypatch.setattr(sub_engine.beacon, "randomness_for", lambda *a, **k: "aa" * 32)
+    # ★`raising=True`(기본) — 종전엔 `raising=False` 였다. 그러면 대상 이름이 바뀌어도
+    #   **조용히 없는 속성을 덮어쓰고** 프로덕션 함수가 그대로 불린다. 실제로 이번 개명에서
+    #   이 픽스처만 빨개지지 않았다 ⇒ ***스텁의 `raising=False` 는 개명을 못 보는 눈이다.***
+    monkeypatch.setattr(sub_engine, "reveal_commitment", _fake)
 
 
 class _DrawAnn:
