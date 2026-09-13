@@ -602,6 +602,23 @@ _SHARED_SIDE_EFFECTS = (
 )
 
 
+def _assert_no_shared_side_effects(text: str, rel: str) -> None:
+    """텍스트의 **실행 줄**에 공유 운영 경로가 없음을 단언한다 — 없으면 **실행을 거부**한다.
+
+    ★한 곳에서만 판정한다(사본 금지). 치환 직후와 **파일을 쓴 뒤** 두 번 부른다 —
+      뒤엣것이 호출부가 늘어도 따라오는 잠금이다.
+    """
+    # ★정본을 쓴다(사본 금지 — 한계가 갈린다)
+    from tests import _scan_guard as sg
+
+    exec_only = sg.code_lines(text)
+    for danger in _SHARED_SIDE_EFFECTS:
+        assert danger not in exec_only, (
+            f"{rel}: 실행 줄에 공유 경로 {danger} 가 남았다. "
+            "이대로 실행하면 통합자의 배포 락·로그·상태를 건드린다 — 실행을 거부한다."
+        )
+
+
 def _redirect_side_effects(src: str, rel: str, tmp_path: Path) -> str:
     """부작용 경로를 임시 경로로 돌린 텍스트. **못 돌렸으면 예외로 거부한다.**
 
@@ -620,13 +637,7 @@ def _redirect_side_effects(src: str, rel: str, tmp_path: Path) -> str:
         out, n = pat.subn(f'{var}="{tmp_path / var.lower()}"', out, count=1)
         assert n == 1, f"{rel}: {var} 치환 실패 — 변수명이 바뀌었나"
 
-    # ★★실행 전 안전 단언 — 주석은 걷어내고 **실행 줄**만 본다.
-    exec_only = sg.code_lines(out)
-    for danger in _SHARED_SIDE_EFFECTS:
-        assert danger not in exec_only, (
-            f"{rel}: 사본의 실행 줄에 공유 경로 {danger} 가 남았다. "
-            "이대로 실행하면 통합자의 배포 락·로그·상태를 건드린다 — 실행을 거부한다."
-        )
+    _assert_no_shared_side_effects(out, rel)
     return out
 
 
@@ -649,6 +660,13 @@ def _sandbox(tmp_path: Path, rel: str, *, lib: str) -> Path:
     dst = box / Path(rel).name
     dst.write_text(out, encoding="utf-8")
     dst.chmod(0o755)
+
+    # ★★**쓴 파일을 다시 읽어** 확인한다 — 호출부가 아니라 **여기**서.
+    #   초판은 이 검사를 **호출부 하나**에만 뒀고, 다른 호출부(`lib="stub"`)는 그대로 실행했다.
+    #   실측(독립 리뷰 MAJOR-1): 그 경로로 **진짜 `/tmp` 가 오염됐고 테스트는 PASSED** 였다 —
+    #   하네스가 막으라고 만든 바로 그 피해를 내면서 초록을 냈다(§D-20 처방 범위 ≠ 결함 범위).
+    #   ⇒ 호출부가 늘어도 **자동으로 따라오도록** 생성 지점에서 잠근다.
+    _assert_no_shared_side_effects(dst.read_text(encoding="utf-8"), f"{rel}(사본)")
     assert lib in ("none", "real", "stub"), f"알 수 없는 lib 모드: {lib}"
     if lib != "none":
         libdir = box / "lib"
@@ -687,13 +705,6 @@ def test_guard_library_absence_actually_exits_nonzero(rel: str, tmp_path: Path) 
     **`or` 라 두 토큰이 서로를 덮어** 하나씩은 지워도 통과했다. *「죽는가」를 안 태웠다.*
     """
     script = _sandbox(tmp_path, rel, lib="none")
-    # ★★**호출부 잠금** — 함수를 잠그는 것과 **그 함수가 불리는 것**은 다르다.
-    #   `_sandbox` 가 안전 검사를 안 부르게 바꿔도 위 호출은 성공하므로, 여기서
-    #   **실제로 쓰인 사본**을 직접 본다.
-    from tests import _scan_guard as sg
-    written = sg.code_lines(script.read_text(encoding="utf-8"))
-    for danger in _SHARED_SIDE_EFFECTS:
-        assert danger not in written, f"{rel}: 실행할 사본에 공유 경로 {danger} 가 남았다"
     r = _run_guard(script, tmp_path)
 
     # ★공허 방지 — 스크립트가 아예 못 돌았으면(예: bash 없음) 아래 단언이 무의미하다.
