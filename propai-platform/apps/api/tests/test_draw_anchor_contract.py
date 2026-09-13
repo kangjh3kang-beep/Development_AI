@@ -119,3 +119,29 @@ def test_module_declares_that_chain_does_not_create_fairness():
     doc = ast.get_docstring(tree) or ""
     assert "공정성을 만들지 않는다" in doc, "경계 선언이 사라졌다 — 다음 사람이 오독한다"
     assert "개인정보" in doc
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "★**부채(미배선)** — 온체인 앵커링이 구현돼 있지만 **프로덕션 호출부가 0건**이다. "
+    "그래서 지금 DB 쓰기 권한자는 `nonce`+`commit_hash`+지문을 **함께** 갈아치워 이길 수 있다 "
+    "(독립 적대 리뷰 2026-09-13 MAJOR-5). 앵커가 붙어야 그 층이 닫힌다. "
+    "★이 xfail 은 **초록 안에서 부채를 보이게** 하려는 것이다 — 커밋 메시지에만 적으면 안 드러난다. "
+    "배선하면 이 테스트가 XPASS 로 **실패**하므로(strict), 그때 이 표식을 지워라."
+))
+def test_anchoring_is_wired_into_the_draw_paths():
+    """추첨 경로가 실제로 온체인 앵커를 부르는가 — **아직 아니다.**"""
+    import ast
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "app" / "services" / "sales"
+    callers = set()
+    for f in root.rglob("*.py"):
+        if f.name == "anchor.py":
+            continue
+        tree = ast.parse(f.read_text(encoding="utf-8"))
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Call):
+                name = getattr(n.func, "id", None) or getattr(n.func, "attr", None)
+                if name in {"commit_onchain", "reveal_onchain"}:
+                    callers.add(f"{f.name}:{n.lineno}")
+    assert callers, "온체인 앵커 호출부가 0건이다(미배선 부채)"
