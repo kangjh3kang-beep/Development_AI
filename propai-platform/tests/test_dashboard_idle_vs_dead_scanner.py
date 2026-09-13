@@ -80,7 +80,10 @@ def _classify(alltime: int, h24: int, probe_line: str = "") -> str:
 _G_STARVED = ("PROBE now=2026-09-12 10:05 ctrl_type_total=0 ctrl_type_alltime=2408 "
               "astate=starved aat=2026-09-12T10:05:00Z aaxes=lat_0/19_pay_0/1 ains=0 "
               "alast=2026-09-12T10:02:57Z")
-#: 설정 행 자체가 없다 = TTL 산수상 **3회 연속 미실행**.
+#: 설정 행 자체가 없다 = **연속 미실행**.
+#: ★2026-09-12 정정: 종전엔 «TTL 산수상 3회» 라고 적었는데 그 산수의 두 수(TTL 180 · 주기 60)가
+#:   **손으로 복사**된 것이라 프로덕션 사유에서 걷어냈다. 여기 주석도 같이 정리한다 —
+#:   ***지운 문장이 형제 파일에 남으면 다음 사람이 그것을 근거로 되돌린다.***
 _G_ABSENT = _G_STARVED.replace("astate=starved", "astate=(행없음)")
 
 

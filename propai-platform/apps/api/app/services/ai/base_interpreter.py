@@ -941,7 +941,7 @@ class BaseInterpreter:
                         # 절단·파싱 신호(관측성) — 플릿 전체 절단율을 쿼리 1방으로.
                         "truncated": truncated,
                         "parse_ok": parse_ok,
-                        # 자가성장 L1 A/B 집계용 — 이번 호출의 프롬프트 버전(기본 v2).
+                        # 자가성장 L1 A/B 집계용 — 이번 호출의 프롬프트 버전(기본값은 _PROMPT_VERSION).
                         "prompt_version": self._resolve_prompt_version(),
                     },
                 },
