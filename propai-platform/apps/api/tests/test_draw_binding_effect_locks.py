@@ -875,3 +875,41 @@ def test_void_records_before_deleting_and_requires_a_reason():
     assert out["void_count"] == 3, (
         f"★누적 무효화 횟수가 틀렸다({out.get('void_count')}) — 이 숫자가 곧 감시 지표다"
     )
+
+
+# ── ㉑ ★무효화 경로가 **실제로 라우터에 등록**됐는가 ────────────────────────
+def test_void_routes_are_registered():
+    """★「무효화 경로를 만들었다」는 **선언**이고, 등록 여부는 **산출물**이다.
+
+    이것이 없으면 게이트가 거부할 때 운영자는 **여전히 벽돌 앞에 선다** —
+    그리고 거부 메시지는 「다시 공약하라」고 말한다(***지킬 수 없는 안내를 하는 게이트는 함정이다***).
+    함수가 파일에 있는 것과 그 경로가 **불릴 수 있는 것**은 다르다.
+    """
+    from app.api.endpoints.sales import actions, lifecycle_p5
+
+    paths = {(sorted(r.methods)[0], r.path)
+             for r in list(actions.actions_router.routes) + list(lifecycle_p5.r5.routes)
+             if getattr(r, "methods", None)}
+    want = {
+        ("POST", "/draw/groups/{group_id}/commit/void"),
+        ("GET", "/draw/groups/{group_id}/commit/voids"),
+        ("POST", "/subscription/{ann_id}/commit/void"),
+        ("GET", "/subscription/{ann_id}/commit/voids"),
+    }
+    assert len(paths) > 20, f"라우터를 제대로 못 읽었다(공허 방지): {len(paths)}"
+    missing = want - paths
+    assert not missing, f"★무효화 경로가 등록되지 않았다 — 벽돌 복구 불가: {sorted(missing)}"
+
+
+def test_void_and_commit_require_the_same_role_gate():
+    """★무효화가 **공약보다 낮은 권한**으로 열려 있으면 그것이 곧 재추첨 통로다."""
+    import inspect
+
+    from app.api.endpoints.sales import actions
+
+    commit_src = inspect.getsource(actions.draw_group_commit)
+    void_src = inspect.getsource(actions.draw_group_void)
+    assert "_DRAW_MGR" in commit_src and "_DRAW_MGR" in void_src, (
+        f"역할 게이트가 다르다 — 공약 {commit_src[:0]}… 무효화 쪽을 확인하라"
+    )
+    assert "require_role" in void_src, "무효화에 역할 게이트가 없다"
