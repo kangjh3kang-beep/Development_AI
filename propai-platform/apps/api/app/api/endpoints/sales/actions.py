@@ -849,6 +849,42 @@ async def draw_group_create(body: dict, db: AsyncSession = Depends(get_db),
         raise HTTPException(400, str(e)) from e
 
 
+@actions_router.post("/draw/groups/{group_id}/commit")
+async def draw_group_commit(group_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                            ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
+    """★**추첨 공약 게시** — 추첨 **전에** 한 번만. 반환에 nonce 는 없다.
+
+    이것이 없으면 추첨은 **거부**된다(fail-closed). 공약을 걸어야 «뽑아 보고 다시 뽑기」를
+    막을 수 있고, 그 사실을 나중에 증명할 수 있다.
+
+    ★**nonce 는 서버가 만들고 돌려주지 않는다.** 그래서 공약을 건 사람도 결과를 미리 계산할 수
+      없다 — 「공약자와 추첨자가 같은 역할」이어도 grinding 이 성립하지 않는 이유가 이것이다.
+    ★**재공약 불가**(`UNIQUE(scope, ref_id)`) — 두 번째 호출은 409 다.
+    """
+    from app.services.sales.draw.commitment_store import commit_draw
+    try:
+        return await commit_draw(db, ctx.site_id, "dongho", group_id,
+                                 by=getattr(ctx.user, "id", None))
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(409, str(e)) from e
+
+
+@actions_router.get("/draw/groups/{group_id}/commitment")
+async def draw_group_commitment(group_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                                ctx: SalesCtx = Depends(sales_ctx)):
+    """공약 **공개 조회** — `commit_hash`·`committed_at` 만. ★nonce 는 실리지 않는다.
+
+    대상자·입회인이 추첨 **전에** 이 값을 받아 두면, 추첨 후 공개되는 nonce 로
+    `sha256(nonce) == commit_hash` 를 **스스로** 확인할 수 있다.
+    """
+    from app.services.sales.draw.commitment_store import public_commitment
+    got = await public_commitment(db, "dongho", group_id)
+    if got is None:
+        raise HTTPException(404, "아직 공약이 게시되지 않았습니다")
+    return got
+
+
 @actions_router.post("/draw/groups/{group_id}/pool")
 async def draw_group_pool(group_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
                           ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):

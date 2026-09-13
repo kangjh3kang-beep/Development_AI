@@ -72,6 +72,30 @@ _AMOUNT_CAP = 1_000_000_000_000
 #   try/except 를 두지 않아 그 ValueError 가 전역 핸들러에서 HTTP500 으로 은폐됐다(친화 메시지 미도달
 #   ·트랜잭션 미정리). actions.py 계약 엔드포인트와 동일하게 ValueError→409(Conflict)+db.rollback()
 #   으로 매핑해, 사용자에게 사유를 정확히 전달하고 트랜잭션 오염을 막는다(상태머신 충돌=409 규약 통일).
+@r5.post("/subscription/{ann_id}/draw/commit")
+async def subscription_draw_commit(ann_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                                   ctx: SalesCtx = Depends(require_role(*_R_SUBSCRIPTION_DRAW))):
+    """★청약 추첨 **공약 게시** — 추첨 전에 한 번만. 반환에 nonce 는 없다."""
+    from app.services.sales.draw.commitment_store import commit_draw
+    try:
+        return await commit_draw(db, ctx.site_id, "subscription", ann_id,
+                                 by=getattr(ctx.user, "id", None))
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(409, str(e)) from e
+
+
+@r5.get("/subscription/{ann_id}/draw/commitment")
+async def subscription_draw_commitment(ann_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                                       ctx: SalesCtx = Depends(sales_ctx)):
+    """공약 공개 조회 — `commit_hash`·`committed_at` 만(★nonce 미포함)."""
+    from app.services.sales.draw.commitment_store import public_commitment
+    got = await public_commitment(db, "subscription", ann_id)
+    if got is None:
+        raise HTTPException(404, "아직 공약이 게시되지 않았습니다")
+    return got
+
+
 @r5.post("/subscription/{ann_id}/draw")
 async def draw(ann_id: uuid.UUID, body: dict | None = None, db: AsyncSession = Depends(get_db),
                ctx: SalesCtx = Depends(require_role(*_R_SUBSCRIPTION_DRAW))):
