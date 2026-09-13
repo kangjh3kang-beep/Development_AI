@@ -58,6 +58,8 @@ class _DB:
         self.hold_wins_after = hold_wins_after
         self._hold_calls = 0
         #: 이 세대들은 **타 현장**이거나 **소프트삭제**다 — 술어가 없으면 새어 나간다.
+        #: 추첨 후 **남은 미배정 인원**. 0 이면 엔진이 **최종화**로 간다(nonce 공개가 열린다).
+        self.pending_after = 1
         self.foreign: set[str] = set()
         self.soft_deleted: set[str] = set()
         self.leaked: list[tuple] = []
@@ -75,6 +77,11 @@ class _DB:
             return _Res([(r,) for r in self.roster])
         if "SELECT assigned_unit_id FROM sales_draw_candidates" in q:
             return _Res([(a,) for a in self.assigned])
+        if "count(*) FROM sales_draw_candidates" in q:
+            # ★미배정 인원수 — `pending_after` 로 「전원 완료」 여부를 만든다.
+            return _Res([(self.pending_after,)])
+        if "SELECT id, assigned_unit_id FROM sales_draw_candidates" in q:
+            return _Res([(r, f"unit-{i}") for i, r in enumerate(self.roster)])
         if "UPDATE sales_unit_inventory" in q:
             # ★★**술어를 실제로 집행한다.** 엔진이 `site_id`·`deleted_at` 를 안 걸면 여기서
             #   타 현장·소프트삭제 세대가 **선점에 성공**해 버린다 — 그러면 아래 테스트가 빨개진다.
@@ -143,6 +150,15 @@ def _run_draw(monkeypatch, rev, *, beacon_value="aa" * 32, db=None):
 
     monkeypatch.setattr(de, "append_event", _ev)
     de._last_meta_for_test = meta_seen
+
+    finals: list = []
+
+    async def _fin(_db, scope, ref, leaves):
+        finals.append((scope, str(ref), list(leaves)))
+        return {"already": False, "result_root": "rr", "anchor": {"state": "anchored"}}
+
+    monkeypatch.setattr(de, "finalize_draw", _fin)
+    de._last_finalize_for_test = finals
     return asyncio.new_event_loop().run_until_complete(
         de.draw_for_candidate(db or _DB(), uuid.uuid4(), _GROUP, _CAND))
 
@@ -913,3 +929,39 @@ def test_void_and_commit_require_the_same_role_gate():
         f"역할 게이트가 다르다 — 공약 {commit_src[:0]}… 무효화 쪽을 확인하라"
     )
     assert "require_role" in void_src, "무효화에 역할 게이트가 없다"
+
+
+# ── ㉒ ★최종화는 **전원이 뽑힌 뒤에만** 일어난다(nonce 공개 게이트) ─────────
+def test_finalize_only_when_every_candidate_is_drawn(monkeypatch):
+    """★중간에 최종화하면 **nonce 가 열려 남은 대상자의 결과가 즉시 계산된다.**
+
+    두 모집단으로 본다 — 미배정이 남으면 최종화 **없음**, 0 이면 최종화 **있음**.
+    """
+    rev = _revealed(beacon_round=900)
+
+    db = _DB()
+    db.pending_after = 2                          # 아직 두 명 남았다
+    out = _run_draw(monkeypatch, rev, db=db)
+    assert getattr(de, "_last_finalize_for_test", []) == [], (
+        "★전원이 뽑히기 전에 최종화했다 — 남은 대상자의 결과가 계산 가능해진다"
+    )
+    assert out["finalized"] is None, out["finalized"]
+
+    db2 = _DB()
+    db2.pending_after = 0                         # 전원 완료
+    out2 = _run_draw(monkeypatch, rev, db=db2)
+    fins = getattr(de, "_last_finalize_for_test", [])
+    assert fins and fins[-1][0] == "dongho", f"전원 완료인데 최종화하지 않았다: {fins}"
+    assert out2["finalized"] is not None
+
+
+def test_finalize_leaves_carry_no_personal_data(monkeypatch):
+    """★체인은 **영구**다 — 결과 잎에 이름·연락처가 들어가면 지울 수 없다."""
+    db = _DB()
+    db.pending_after = 0
+    _run_draw(monkeypatch, _revealed(beacon_round=900), db=db)
+    leaves = getattr(de, "_last_finalize_for_test", [])[-1][2]
+    assert leaves, "잎이 비었다(공허 방지)"
+    for lf in leaves:
+        assert len(lf) == 64 and int(lf, 16) >= 0, f"잎이 해시가 아니다: {lf!r}"
+    assert "홍길동" not in "".join(leaves)

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -86,26 +87,32 @@ def _missing() -> str:
 
 
 def commit_onchain(scope: str, ref_id: str, commit_hash: str,
-                   participants_hash: str) -> AnchorResult:
+                   participants_hash: str, *, wait_s: int | None = None) -> AnchorResult:
     """공약을 체인에 올린다. **실패해도 예외를 던지지 않는다.**"""
     cfg = _config()
     if cfg is None:
         return AnchorResult(False, "skipped", _missing())
     try:
+        # ★`draw_id` 는 **hex 문자열**이다 — `_b32` 로 32바이트로 만든다. 종전에는 web3 가
+        #   이 변환을 대신해 주고 있었고, 그것을 걷어내자 **첫 인자에서 터졌다**(fail-soft 설계
+        #   덕에 추첨은 멈추지 않고 `failed` 사유로 드러났다).
         return _send(cfg, "commitDraw",
-                     [draw_id(scope, ref_id), _b32(commit_hash), _b32(participants_hash)])
+                     [_b32(draw_id(scope, ref_id)), _b32(commit_hash), _b32(participants_hash)],
+                     wait_s=wait_s)
     except Exception as exc:                      # noqa: BLE001 — 사유를 남기고 삼키지 않는다
         return AnchorResult(False, "failed", f"{type(exc).__name__}: {exc}"[:300])
 
 
-def reveal_onchain(scope: str, ref_id: str, nonce: str, result_root: str) -> AnchorResult:
+def reveal_onchain(scope: str, ref_id: str, nonce: str, result_root: str,
+                   *, wait_s: int | None = None) -> AnchorResult:
     """추첨 후 nonce·결과 루트를 올린다. 컨트랙트가 **공약을 스스로 검산**한다."""
     cfg = _config()
     if cfg is None:
         return AnchorResult(False, "skipped", _missing())
     try:
         return _send(cfg, "revealDraw",
-                     [draw_id(scope, ref_id), _b32(nonce), _b32(result_root)])
+                     [_b32(draw_id(scope, ref_id)), _b32(nonce), _b32(result_root)],
+                     wait_s=wait_s)
     except Exception as exc:                      # noqa: BLE001
         return AnchorResult(False, "failed", f"{type(exc).__name__}: {exc}"[:300])
 
@@ -119,31 +126,126 @@ def _b32(hex_str: str) -> bytes:
     return raw
 
 
-_ABI = [
-    {"type": "function", "name": "commitDraw", "stateMutability": "nonpayable",
-     "inputs": [{"name": "drawId", "type": "bytes32"}, {"name": "commitHash", "type": "bytes32"},
-                {"name": "participantsHash", "type": "bytes32"}], "outputs": []},
-    {"type": "function", "name": "revealDraw", "stateMutability": "nonpayable",
-     "inputs": [{"name": "drawId", "type": "bytes32"}, {"name": "nonce", "type": "bytes32"},
-                {"name": "resultRoot", "type": "bytes32"}], "outputs": []},
-]
+#: 함수 시그니처 — ★**셀렉터를 손으로 적지 않는다**(keccak 로 파생한다).
+#:   세 인자가 전부 `bytes32` 라 인코딩은 **32바이트 3개를 이어 붙이는 것**이 전부다
+#:   (동적 타입이 없으므로 ABI 인코더가 필요 없다 — 그래서 `web3` 를 안 쓴다).
+_SIGS = {
+    "commitDraw": "commitDraw(bytes32,bytes32,bytes32)",
+    "revealDraw": "revealDraw(bytes32,bytes32,bytes32)",
+}
+
+#: 영수증을 기다리는 기본 상한(초). ★기다리지 않으면 **되돌려진 트랜잭션도 「성공」으로 보고**된다.
+#:   ★다만 **HTTP 요청 안에서 90초를 기다릴 수는 없다** — 그래서 요청 경로는 짧게 기다리고
+#:   못 받으면 `pending` 으로 **정직하게** 말한 뒤, 읽을 때 `reconcile` 로 맞춘다.
+_RECEIPT_TIMEOUT_S = 15
+_RECEIPT_POLL_S = 3
 
 
-def _send(cfg: tuple[str, str, str], fn: str, args: list[Any]) -> AnchorResult:
-    """실제 전송. ★`web3` 미설치도 **실패가 아니라 사유가 있는 skipped** 로 말한다."""
+def _rpc(url: str, method: str, params: list[Any]) -> Any:
+    import httpx
+
+    r = httpx.post(url, json={"jsonrpc": "2.0", "method": method, "params": params, "id": 1},
+                   timeout=20.0)
+    r.raise_for_status()
+    body = r.json()
+    if "error" in body:
+        raise RuntimeError(f"RPC {method}: {body['error'].get('message', body['error'])}")
+    return body["result"]
+
+
+def _calldata(fn: str, args: list[bytes]) -> str:
+    from eth_utils import keccak
+
+    sel = keccak(text=_SIGS[fn])[:4]
+    return "0x" + (sel + b"".join(args)).hex()
+
+
+def _send(cfg: tuple[str, str, str], fn: str, args: list[Any],
+          *, wait_s: int | None = None) -> AnchorResult:
+    """실제 전송. ★**영수증의 `status` 까지 확인**해야 「올렸다」고 말할 수 있다.
+
+    ★★종전 구현은 `send_raw_transaction` 직후 `anchored` 를 반환했다. 그런데 이 컨트랙트는
+      `revealDraw` 에서 **공약을 스스로 검산**하고 어긋나면 `revert` 한다 — 즉 ***되돌려진
+      트랜잭션을 「체인에 올렸다」고 보고***하게 된다. 그것이 이 모듈이 존재하는 이유와 정면으로
+      어긋난다(앵커는 **증거**인데, 거짓 증거는 증거보다 나쁘다).
+
+    ★상태 어휘를 넷으로 가른다 — ***하나의 신호가 여러 사건을 덮지 않게.***
+      `anchored`(영수증 status=1) · `pending`(보냈으나 상한 내 미채굴) ·
+      `failed`(되돌려짐·전송 실패) · `skipped`(설정·의존성 부재)
+    """
     rpc, addr, key = cfg
     try:
-        from web3 import Web3
+        from eth_account import Account
     except ImportError:
-        return AnchorResult(False, "skipped", "web3 미설치 — 앵커링 없이 추첨은 정상 진행된다")
-    w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 20}))
-    acct = w3.eth.account.from_key(key)
-    c = w3.eth.contract(address=Web3.to_checksum_address(addr), abi=_ABI)
-    tx = getattr(c.functions, fn)(*args).build_transaction({
-        "from": acct.address,
-        "nonce": w3.eth.get_transaction_count(acct.address),
-        "chainId": w3.eth.chain_id,
-    })
+        return AnchorResult(False, "skipped",
+                            "eth-account 미설치 — 앵커링 없이 추첨은 정상 진행된다")
+    acct = Account.from_key(key)                  # ★키는 이 프로세스 밖으로 나가지 않는다
+    data = _calldata(fn, args)
+    chain_id = int(_rpc(rpc, "eth_chainId", []), 16)
+    nonce = int(_rpc(rpc, "eth_getTransactionCount", [acct.address, "pending"]), 16)
+    call = {"from": acct.address, "to": addr, "data": data}
+    # ★가스 추정이 실패하면 그 자체가 **컨트랙트가 거부한다는 신호**다 — 임의값으로 덮지 않는다.
+    gas = int(_rpc(rpc, "eth_estimateGas", [call]), 16)
+    gas_price = int(_rpc(rpc, "eth_gasPrice", []), 16)
+    tx = {"to": addr, "data": data, "nonce": nonce, "chainId": chain_id,
+          "gas": int(gas * 1.2), "gasPrice": int(gas_price * 1.25), "value": 0}
     signed = acct.sign_transaction(tx)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    return AnchorResult(True, "anchored", "", tx_hash.hex())
+    raw = getattr(signed, "raw_transaction", None) or signed.rawTransaction
+    tx_hash = _rpc(rpc, "eth_sendRawTransaction", ["0x" + bytes(raw).hex()])
+
+    limit = _RECEIPT_TIMEOUT_S if wait_s is None else max(0, int(wait_s))
+    waited = 0.0
+    while waited < limit:
+        rcpt = _rpc(rpc, "eth_getTransactionReceipt", [tx_hash])
+        if rcpt:
+            ok = int(rcpt.get("status", "0x0"), 16) == 1
+            if ok:
+                return AnchorResult(True, "anchored", "", tx_hash)
+            return AnchorResult(False, "failed",
+                                "트랜잭션이 되돌려졌다(revert) — 컨트랙트가 거부했다", tx_hash)
+        time.sleep(_RECEIPT_POLL_S)
+        waited += _RECEIPT_POLL_S
+    # ★**「모른다」를 「성공」으로 말하지 않는다.**
+    return AnchorResult(False, "pending",
+                        f"{limit}초 안에 채굴되지 않았다 — 나중에 영수증을 확인하라", tx_hash)
+
+
+def reconcile(tx_hash: str) -> AnchorResult:
+    """`pending` 으로 남은 트랜잭션의 **현재 상태를 다시 잰다.**
+
+    ★`pending` 은 *"모른다"* 이지 *"실패"* 도 *"성공"* 도 아니다. 그 상태를 영원히 두면
+      **원장이 「모른다」로 굳는다** — 읽을 때마다 이 함수로 맞춘다(게으른 정합).
+    """
+    cfg = _config()
+    if cfg is None:
+        return AnchorResult(False, "skipped", _missing(), tx_hash)
+    try:
+        rcpt = _rpc(cfg[0], "eth_getTransactionReceipt", [tx_hash])
+    except Exception as exc:                      # noqa: BLE001
+        return AnchorResult(False, "pending", f"조회 실패: {type(exc).__name__}", tx_hash)
+    if not rcpt:
+        return AnchorResult(False, "pending", "아직 채굴되지 않았다", tx_hash)
+    if int(rcpt.get("status", "0x0"), 16) == 1:
+        return AnchorResult(True, "anchored", "", tx_hash)
+    return AnchorResult(False, "failed", "트랜잭션이 되돌려졌다(revert)", tx_hash)
+
+
+def commit_preceded_reveal(scope: str, ref_id: str) -> bool | None:
+    """★**체인에게 직접 묻는다** — 「공약이 공개보다 앞섰는가」.
+
+    이 PR 은 그동안 *"그건 추첨 전에 commit_hash 를 받아 둔 사람만 말할 수 있다"* 고 적어 왔다.
+    ***앵커가 붙으면 그 명제를 체인이 증언한다*** — 시각이 블록에 박히기 때문이다.
+    설정이 없으면 `None`(모름) — **`False`(아니다)와 구별한다.**
+    """
+    cfg = _config()
+    if cfg is None:
+        return None
+    try:
+        from eth_utils import keccak
+
+        sel = keccak(text="commitPrecededReveal(bytes32)")[:4]
+        data = "0x" + (sel + _b32(draw_id(scope, ref_id))).hex()
+        got = _rpc(cfg[0], "eth_call", [{"to": cfg[1], "data": data}, "latest"])
+        return int(got, 16) == 1
+    except Exception:                             # noqa: BLE001 — 모르면 모른다고 한다
+        return None

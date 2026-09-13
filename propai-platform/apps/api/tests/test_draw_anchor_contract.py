@@ -89,7 +89,17 @@ def test_no_personal_data_can_reach_the_chain():
     체인은 **삭제가 불가능**하다. 「나중에 지우면 된다」가 성립하지 않는 층이라,
     올라갈 **자리 자체를 없애는 것**이 유일한 보장이다.
     """
-    types = {i["type"] for f in anchor._ABI for i in f["inputs"]}
+    # ★★**표현이 바뀌면 락도 옮겨야 한다.** 종전엔 `anchor._ABI` 를 봤는데, web3 를 걷어내며
+    #   시그니처 문자열(`_SIGS`)로 바뀌어 이 락이 **대상을 잃었다**(AttributeError 로 시끄럽게
+    #   빨개졌다 — ***조용히 통과하지 않은 것이 이 락의 설계가 옳았다는 증거다***).
+    #   이제 **시그니처를 파싱해 인자 타입을 파생**한다 — 목록을 손으로 적지 않는다.
+    import re
+
+    assert anchor._SIGS, "대조군 실패 — 시그니처를 하나도 못 읽었다"
+    types = set()
+    for sig in anchor._SIGS.values():
+        inner = re.search(r"\((.*)\)", sig).group(1)
+        types |= {x.strip() for x in inner.split(",") if x.strip()}
     assert types, "대조군 실패 — ABI 를 못 읽었다"
     assert types == {"bytes32"}, f"bytes32 가 아닌 인자가 있다: {sorted(types)}"
 
@@ -121,13 +131,9 @@ def test_module_declares_that_chain_does_not_create_fairness():
     assert "개인정보" in doc
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "★**부채(미배선)** — 온체인 앵커링이 구현돼 있지만 **프로덕션 호출부가 0건**이다. "
-    "그래서 지금 DB 쓰기 권한자는 `nonce`+`commit_hash`+지문을 **함께** 갈아치워 이길 수 있다 "
-    "(독립 적대 리뷰 2026-09-13 MAJOR-5). 앵커가 붙어야 그 층이 닫힌다. "
-    "★이 xfail 은 **초록 안에서 부채를 보이게** 하려는 것이다 — 커밋 메시지에만 적으면 안 드러난다. "
-    "배선하면 이 테스트가 XPASS 로 **실패**하므로(strict), 그때 이 표식을 지워라."
-))
+# ★**부채 해소**(2026-09-13): 이 테스트는 `xfail(strict=True)` 로 「앵커링 미배선」 부채를
+#   초록 안에 드러내고 있었다. 배선하자 **XPASS 로 빨개져** 표식을 지우도록 강제했다 —
+#   ***설계대로 작동했고, 그래서 이 줄이 지금 여기 있다.***
 def test_anchoring_is_wired_into_the_draw_paths():
     """추첨 경로가 실제로 온체인 앵커를 부르는가 — **아직 아니다.**"""
     import ast

@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.sales.draw import beacon, binding, vrng
-from app.services.sales.draw.commitment_store import reveal_commitment
+from app.services.sales.draw.commitment_store import finalize_draw, reveal_commitment
 from app.services.sales.harness.outbox import emit_outbox
 from apps.api.database.models.sales.subscription import (
     SalesSubscriptionAnnouncement,
@@ -230,6 +230,14 @@ async def run_draw(db: AsyncSession, site_id, announcement_id) -> int:
             db.add(SalesSubscriptionReserveQueue(site_id=site_id, announcement_id=announcement_id,
                    application_id=a.id, unit_type_id=type_id, reserve_no=i))
     ann.status = "DRAWN"
+    # ★**추첨이 끝났다 — 최종화한다**(결과 루트 온체인 + nonce 공개 개방).
+    #   청약은 한 번에 전원을 뽑으므로 여기가 곧 완료 시점이다.
+    _leaves = [hashlib.sha256(f"{a.id}:{a.result}".encode()).hexdigest()
+               for a in sorted(apps, key=lambda x: str(x.id))]
+    try:
+        await finalize_draw(db, "subscription", announcement_id, _leaves)
+    except Exception as exc:                      # noqa: BLE001 — 최종화 실패가 추첨을 무르지 않는다
+        logger.warning("청약 추첨 최종화 실패(추첨 자체는 성립): %s", exc)
     await emit_outbox(db, site_id, "ApplicationReceived", {"round_id": str(ann.round_id or ""), "unit_id": ""})
     await db.flush()
     return total_win

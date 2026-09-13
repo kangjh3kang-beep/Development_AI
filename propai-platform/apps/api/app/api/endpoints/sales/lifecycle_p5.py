@@ -140,6 +140,35 @@ async def subscription_draw_voids(ann_id: uuid.UUID, db: AsyncSession = Depends(
     from app.services.sales.draw.commitment_store import void_history
     return {"voids": await void_history(db, "subscription", ann_id)}
 
+# ══ ★제3자 **공개 검증** — 인증 없음. 최종화된 추첨만. ════════════════════
+#
+#   **왜 무인증인가**: 이 PR 은 *"검증기는 운영자가 자료를 손으로 건네줄 때만 돈다 — 그건
+#   정의상 독립 검증이 아니다"* 라는 지적을 받았다. 조회에 **현장 멤버십**이 필요하면
+#   대상자·입회인·감사인은 `commit_hash` 조차 못 받는다. ⇒ 그 손을 없앤다.
+#
+#   **노출 범위를 좁혀서 연다**(설계 결정 — 숨기지 않고 적는다):
+#     · **최종화된 추첨만**. 진행 중이면 404 — ***중간에 nonce 를 열면 남은 대상자의 결과가
+#       즉시 계산된다.***
+#     · 개인정보는 **한 글자도** 싣지 않는다(이름·연락처 없음 — 락이 단언한다).
+#     · 남는 것은 해시·라운드·시각·세대 id·seed — **동·호 배정 결과는 어차피 공고되는 값**이다.
+#     · 식별자는 UUID 라 열거가 안 된다.
+#   ★그럼에도 «누가 볼 수 있는가» 는 사업 판단이다 — 닫으려면 이 두 라우트에
+#     `Depends(sales_ctx)` 를 붙이면 되고, 그때 **제3자 독립 검증은 다시 성립하지 않는다.**
+
+@r5.get("/subscription/{ann_id}/verify", tags=["public-verification"])
+async def subscription_draw_verify(ann_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """추첨 **공개 검증 번들** — 인증 없음. 추첨이 끝난 뒤에만 응답한다."""
+    from app.services.sales.draw.commitment_store import verification_bundle
+    got = await verification_bundle(db, "subscription", ann_id)
+    if got is None:
+        raise HTTPException(404, "공약이 없습니다")
+    if not got.get("finalized_at"):
+        raise HTTPException(
+            404,
+            "아직 추첨이 끝나지 않았습니다 — 진행 중에 nonce 를 공개하면 남은 대상자의 결과가 "
+            "즉시 계산됩니다. 끝난 뒤 다시 조회하십시오")
+    return got
+
 @r5.post("/subscription/{ann_id}/draw")
 async def draw(ann_id: uuid.UUID, body: dict | None = None, db: AsyncSession = Depends(get_db),
                ctx: SalesCtx = Depends(require_role(*_R_SUBSCRIPTION_DRAW))):

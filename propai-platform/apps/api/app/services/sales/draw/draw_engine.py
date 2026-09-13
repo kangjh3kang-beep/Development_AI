@@ -23,14 +23,17 @@ from __future__ import annotations
 import hashlib
 import io
 import json as _json
+import logging
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.sales.draw import beacon, binding, vrng
-from app.services.sales.draw.commitment_store import reveal_commitment
+from app.services.sales.draw.commitment_store import finalize_draw, reveal_commitment
 from app.services.sales.units.event_ledger import append_event
+
+logger = logging.getLogger(__name__)
 
 _DDL_GROUPS = (
     "CREATE TABLE IF NOT EXISTS sales_draw_groups ("
@@ -418,8 +421,28 @@ async def draw_for_candidate(db: AsyncSession, site_id, group_id, candidate_id, 
                                   "start_counter": start_counter},
                             do_commit=False)
     await db.commit()
+    # ★★**전원이 뽑혔으면 최종화한다** — 결과 루트를 체인에 올리고 **nonce 공개를 연다.**
+    #   ***중간에 열면 남은 대상자의 결과가 즉시 계산된다*** — 그래서 「전원」이 조건이다.
+    remaining_cands = (await db.execute(text(
+        "SELECT count(*) FROM sales_draw_candidates "
+        "WHERE group_id=:g AND assigned_unit_id IS NULL"), {"g": str(group_id)})).first()
+    finalized = None
+    if remaining_cands and int(remaining_cands[0]) == 0:
+        leaves = [
+            # 결과 잎: **대상자 id + 배정 세대** — 이름·연락처는 들어가지 않는다(체인은 영구다).
+            hashlib.sha256(f"{r[0]}:{r[1]}".encode()).hexdigest()
+            for r in (await db.execute(text(
+                "SELECT id, assigned_unit_id FROM sales_draw_candidates "
+                "WHERE group_id=:g ORDER BY id"), {"g": str(group_id)})).all()
+        ]
+        try:
+            finalized = await finalize_draw(db, "dongho", group_id, leaves)
+        except Exception as exc:                  # noqa: BLE001 — 최종화 실패가 추첨을 무르지 않는다
+            logger.warning("추첨 최종화 실패(추첨 자체는 성립): %s", exc)
+            finalized = {"error": f"{type(exc).__name__}"}
     return {
         "ok": True, "candidate": {"seq": int(cand[0]), "name": cand[1]},
+        "finalized": finalized,
         "assigned_unit": {"id": chosen, "dong": u[0] if u else None, "ho": u[1] if u else None},
         "seed": seed, "pool_hash": pool_hash, "pool_size": len(pool_sorted), "remaining_after": len(remaining) - 1,
         # ★비콘을 **썼는지 안 썼는지**를 응답이 말한다 — 침묵하면 「썼다고 해 놓고 안 쓰는」 경로가 보이지 않는다.

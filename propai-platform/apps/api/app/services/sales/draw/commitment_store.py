@@ -43,7 +43,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.sales.draw import beacon, binding, vrng
+from app.services.sales.draw import anchor, beacon, binding, vrng
 
 _DDL = (
     "CREATE TABLE IF NOT EXISTS sales_draw_commitments ("
@@ -61,6 +61,12 @@ _DDL = (
     "  pool_ids jsonb,"                      # ★공약 시점 대상 세대 전문(서버 내부)
     "  participants_hash varchar(64),"       # 그 지문 — **공개**한다
     "  pool_hash varchar(64),"               # 그 지문 — **공개**한다
+    "  anchor_commit_state varchar(16),"     # 온체인 공약 앵커 상태
+    "  anchor_commit_tx varchar(80),"
+    "  anchor_reveal_state varchar(16),"     # 온체인 공개 앵커 상태
+    "  anchor_reveal_tx varchar(80),"
+    "  result_root varchar(64),"             # 결과 머클루트(체인에 올린 값)
+    "  finalized_at timestamptz,"            # ★이 시각 이후에만 nonce 를 공개한다
 
     "  UNIQUE (scope, ref_id)"               # ★재공약 불가 — 이것이 grinding 을 막는 축이다
     ")"
@@ -81,7 +87,10 @@ async def _ensure(db: AsyncSession) -> None:
     await db.execute(text(_DDL))
     # Phase 0 에서 만들어진 테이블에는 이 컬럼들이 없다 — 기존 배포를 깨지 않고 올린다.
     for col, typ in (("beacon_round", "bigint"), ("participants", "jsonb"), ("pool_ids", "jsonb"),
-                     ("participants_hash", "varchar(64)"), ("pool_hash", "varchar(64)")):
+                     ("participants_hash", "varchar(64)"), ("pool_hash", "varchar(64)"),
+                     ("anchor_commit_state", "varchar(16)"), ("anchor_commit_tx", "varchar(80)"),
+                     ("anchor_reveal_state", "varchar(16)"), ("anchor_reveal_tx", "varchar(80)"),
+                     ("result_root", "varchar(64)"), ("finalized_at", "timestamptz")):
         await db.execute(text(
             f"ALTER TABLE sales_draw_commitments ADD COLUMN IF NOT EXISTS {col} {typ}"))
     _DDL_DONE = True
@@ -169,9 +178,18 @@ async def commit_draw(db: AsyncSession, site_id, scope: str, ref_id, *,
          "br": beacon_round, "p": _json.dumps(participants), "u": _json.dumps(pool_ids),
          "ph": p_hash, "uh": u_hash})
     await db.commit()
+    # ★**온체인 앵커링** — 실패해도 추첨·공약은 성립한다(부가 증거다). 다만 **상태를 기록**해
+    #   「올렸다고 해 놓고 안 올린」 경우가 원장에서 드러나게 한다.
+    ares = anchor.commit_onchain(scope, str(ref_id), commit_hash, p_hash)
+    await db.execute(text(
+        "UPDATE sales_draw_commitments SET anchor_commit_state=:s, anchor_commit_tx=:t "
+        "WHERE scope=:sc AND ref_id=:r"),
+        {"s": ares.state, "t": ares.tx_hash, "sc": scope, "r": str(ref_id)})
+    await db.commit()
     # ★공개 반환에 nonce 가 없다. 반대로 라운드·지문은 **공개해야** 한다 —
     #   그것이 없으면 제3자가 «무엇을 대상으로 뽑았는지»를 확인할 수 없다.
     return {"scope": scope, "ref_id": str(ref_id), "commit_hash": commit_hash,
+            "anchor": ares.as_dict(),
             "beacon_round": beacon_round, "beacon_available_in_s": available_in_s,
             "participants_hash": p_hash, "participants_count": len(participants),
             "pool_hash": u_hash, "pool_size": len(pool_ids)}
@@ -224,22 +242,75 @@ async def reveal_commitment(db: AsyncSession, scope: str, ref_id) -> Revealed:
 
 
 async def public_commitment(db: AsyncSession, scope: str, ref_id) -> dict[str, Any] | None:
-    """공개용 조회 — **`commit_hash` 와 시각만**. nonce 는 절대 싣지 않는다."""
+    """공개 조회.
+
+    ★★**nonce 는 「추첨이 끝난 뒤에만」 실린다**(`finalized_at` 이 찍힌 뒤). 그 전에 실으면
+      동·호 즉석추첨에서 **남은 대상자들의 결과가 즉시 계산된다** — fail-closed 다.
+      ***끝나기 전에는 이 필드가 아예 없다(빈 문자열이 아니라 부재).***
+    """
     await _ensure(db)
     row = (await db.execute(text(
         "SELECT commit_hash, committed_at, revealed_at, beacon_round, "
-        "       participants_hash, pool_hash, participants, pool_ids FROM sales_draw_commitments "
-        "WHERE scope=:s AND ref_id=:r"), {"s": scope, "r": str(ref_id)})).first()
+        "       participants_hash, pool_hash, participants, pool_ids, "
+        "       finalized_at, nonce, result_root, "
+        "       anchor_commit_state, anchor_commit_tx, anchor_reveal_state, anchor_reveal_tx "
+        "FROM sales_draw_commitments WHERE scope=:s AND ref_id=:r"),
+        {"s": scope, "r": str(ref_id)})).first()
     if not row:
         return None
-    return {"commit_hash": str(row[0]), "committed_at": str(row[1]),
-            "revealed_at": str(row[2]) if row[2] else None,
-            # ★비콘 라운드·지문은 **공개 대상**이다 — 이것이 없으면 제3자가 재현할 수 없다.
-            "beacon_round": int(row[3]) if row[3] is not None else None,
-            "participants_hash": str(row[4]) if row[4] else None,
-            "pool_hash": str(row[5]) if row[5] else None,
-            "participants_count": len(row[6] or []),
-            "pool_size": len(row[7] or [])}
+    c_state = await _reconcile_anchor(db, scope, ref_id, "anchor_commit_state", row[11], row[12])
+    r_state = await _reconcile_anchor(db, scope, ref_id, "anchor_reveal_state", row[13], row[14])
+    final = row[8]
+    got: dict[str, Any] = {
+        "commit_hash": str(row[0]), "committed_at": str(row[1]),
+        "revealed_at": str(row[2]) if row[2] else None,
+        # ★비콘 라운드·지문은 **공개 대상**이다 — 이것이 없으면 제3자가 재현할 수 없다.
+        "beacon_round": int(row[3]) if row[3] is not None else None,
+        "participants_hash": str(row[4]) if row[4] else None,
+        "pool_hash": str(row[5]) if row[5] else None,
+        "participants_count": len(row[6] or []),
+        "pool_size": len(row[7] or []),
+        "finalized_at": str(final) if final else None,
+        "result_root": str(row[10]) if row[10] else None,
+        "anchor": {"commit": {"state": c_state, "tx_hash": row[12]},
+                   "reveal": {"state": r_state, "tx_hash": row[14]},
+                   "chain_says_commit_preceded_reveal":
+                       anchor.commit_preceded_reveal(scope, str(ref_id))},
+    }
+    if final is not None:
+        # ★추첨이 끝났다 — 이제 nonce 를 공개한다. **이것이 없으면 제3자 검증이 성립하지 않는다**
+        #   (검증기는 `--nonce` 를 필수로 요구한다).
+        got["nonce"] = str(row[9])
+    return got
+
+
+async def verification_bundle(db: AsyncSession, scope: str, ref_id) -> dict[str, Any] | None:
+    """제3자 검증에 **필요한 전부**를 한 번에. ★개인정보는 **한 글자도** 싣지 않는다.
+
+    ★이 PR 은 그동안 *"검증기는 운영자가 자료를 손으로 건네줄 때만 돈다 — 그건 정의상 독립
+      검증이 아니다"* 라는 지적을 받았다. 이 함수가 **그 손을 없앤다** —
+      검증자가 이 응답 하나로 `scripts/verify_draw.py` 를 그대로 돌릴 수 있다.
+    """
+    got = await public_commitment(db, scope, ref_id)
+    if got is None:
+        return None
+    rows = (await db.execute(text(
+        "SELECT seq, assigned_unit_id, draw_seed, draw_pool FROM sales_draw_candidates "
+        "WHERE group_id=:g AND assigned_unit_id IS NOT NULL ORDER BY drawn_at"),
+        {"g": str(ref_id)})).all() if scope == "dongho" else []
+    got["draws"] = [
+        # ★`name`·`phone` 은 **의도적으로 뺀다** — 검증에 필요 없고, 공개 엔드포인트다.
+        {"seq": int(r[0]), "assigned_unit_id": str(r[1]),
+         "seed": str(r[2] or ""), "pool": list(r[3] or [])}
+        for r in rows
+    ]
+    got["verify_with"] = (
+        "python3 scripts/verify_draw.py --commit-hash <commit_hash> --nonce <nonce> "
+        "--group <ref_id> --candidate <대상자 id> --pool <pool> --expect <assigned_unit_id> "
+        "--participants-hash <participants_hash> --pool-hash <pool_hash> "
+        "--beacon-round <beacon_round> --taken <이미 배정된 세대들>"
+    )
+    return got
 
 
 _DDL_VOID = (
@@ -321,3 +392,57 @@ async def void_history(db: AsyncSession, scope: str, ref_id) -> list[dict[str, A
         "WHERE scope=:s AND ref_id=:r ORDER BY voided_at"), {"s": scope, "r": str(ref_id)})).all()
     return [{"commit_hash": str(r[0]), "beacon_round": r[1],
              "voided_at": str(r[2]), "reason": str(r[3])} for r in rows]
+
+
+async def finalize_draw(db: AsyncSession, scope: str, ref_id, result_leaves: list[str]) -> dict[str, Any]:
+    """추첨이 **끝났을 때** 호출한다 — 결과 루트를 체인에 올리고 **nonce 공개를 연다.**
+
+    ## ★왜 「끝났을 때」인가
+
+    동·호 즉석추첨은 대상자가 한 명씩 뽑는다. **중간에 nonce 를 공개하면 남은 대상자들의 결과가
+    즉시 계산된다** — 그 순간 공정성이 사라진다. 그래서 `finalized_at` 이 찍히기 전에는
+    `public_commitment` 가 nonce 를 **절대** 싣지 않는다(fail-closed).
+
+    ## 이 함수가 여는 것
+
+    ★이 PR 은 그동안 *"「공약이 추첨보다 앞섰는지」는 증명하지 못한다"* 고 정직하게 적어 왔다.
+    앵커가 붙으면 **체인이 그 명제를 증언한다**(`commitPrecededReveal`) — 두 트랜잭션의 블록
+    시각이 체인에 박히기 때문이다. ***한계 하나가 여기서 닫힌다.***
+
+    멱등: 이미 최종화됐으면 다시 올리지 않고 현재 상태를 돌려준다.
+    """
+    await _ensure(db)
+    row = (await db.execute(text(
+        "SELECT nonce, finalized_at, result_root, anchor_reveal_state, anchor_reveal_tx "
+        "FROM sales_draw_commitments WHERE scope=:s AND ref_id=:r"),
+        {"s": scope, "r": str(ref_id)})).first()
+    if not row:
+        raise ValueError("최종화할 공약이 없습니다")
+    if row[1] is not None:                        # 이미 최종화 — 멱등
+        return {"already": True, "result_root": str(row[2] or ""),
+                "anchor": {"state": row[3], "tx_hash": row[4]}}
+    root = anchor.merkle_root(list(result_leaves))
+    ares = anchor.reveal_onchain(scope, str(ref_id), str(row[0]), root)
+    await db.execute(text(
+        "UPDATE sales_draw_commitments SET finalized_at=now(), result_root=:rr, "
+        "anchor_reveal_state=:s, anchor_reveal_tx=:t WHERE scope=:sc AND ref_id=:r"),
+        {"rr": root.removeprefix("0x"), "s": ares.state, "t": ares.tx_hash,
+         "sc": scope, "r": str(ref_id)})
+    await db.commit()
+    return {"already": False, "result_root": root, "anchor": ares.as_dict()}
+
+
+async def _reconcile_anchor(db: AsyncSession, scope: str, ref_id, col: str, state, tx):
+    """`pending` 으로 굳은 앵커 상태를 읽을 때 **다시 잰다**(게으른 정합).
+
+    ★`pending` 은 *"모른다"* 다. 그대로 두면 **원장이 「모른다」로 굳는다.**
+    """
+    if state != "pending" or not tx:
+        return state
+    got = anchor.reconcile(str(tx))
+    if got.state != state:
+        await db.execute(text(
+            f"UPDATE sales_draw_commitments SET {col}=:s WHERE scope=:sc AND ref_id=:r"),  # noqa: S608
+            {"s": got.state, "sc": scope, "r": str(ref_id)})
+        await db.commit()
+    return got.state
