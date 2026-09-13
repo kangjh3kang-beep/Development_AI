@@ -16,7 +16,7 @@
  * 렌더(필드가 없을 때 graceful)한다.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 
@@ -407,13 +407,18 @@ export function InsightBlockers({ insight }: { insight: GrowthInsight }) {
           있게 되고, CSS 변이를 「표현」으로 면제한 판단과 **모순**된다.
           구분자를 두어야 이 축이 **DOM 텍스트로 잠긴다**. */}
       {blockers.map((code, i) => (
-        <span
-          key={code}
-          data-testid={`insight-blocker-${code}`}
-          className="mr-1 inline-block rounded-md bg-[var(--surface-muted)] px-1.5 py-0.5 text-[11px] font-medium"
-        >
-          {i > 0 ? " · " : ""}{BLOCKER_LABELS[code] ?? code}
-        </span>
+        <Fragment key={code}>
+          {/* ★구분자를 배지 **바깥**에 둔다 — 안에 두면 알약 모양 칩 안에 「· 후보 창 경과」로
+              들어가 **칩이 하나로 보인다**(독립 검증 R2 의 비차단 지적).
+              DOM 텍스트 락은 그대로 성립한다(형제 텍스트 노드도 `textContent` 에 들어간다). */}
+          {i > 0 ? " · " : ""}
+          <span
+            data-testid={`insight-blocker-${code}`}
+            className="mr-1 inline-block rounded-md bg-[var(--surface-muted)] px-1.5 py-0.5 text-[11px] font-medium"
+          >
+            {BLOCKER_LABELS[code] ?? code}
+          </span>
+        </Fragment>
       ))}
       {insight.open_blocker_reason && (
         <p data-testid="insight-blocker-reason" className="mt-1 whitespace-pre-line">
