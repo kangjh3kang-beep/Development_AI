@@ -82,7 +82,7 @@ def _run(home: str, cwd: str) -> subprocess.CompletedProcess[str]:
 STATUS_PATH = "/tmp/deploy_status.txt"
 
 
-def _status_text(home: str) -> str:   # noqa: ARG001 — 시그니처 유지(호출부 다수)
+def _status_text(_home: str) -> str:
     """`_run` 이 쓴 상태 파일. ★**한 곳에서만** 경로를 선언한다(사본 금지)."""
     p = Path(STATUS_PATH)
     assert p.exists(), f"상태 파일이 없다: {p} — `_run` 이 안 돌았나"
@@ -609,7 +609,8 @@ def _redirect_side_effects(src: str, rel: str, tmp_path: Path) -> str:
       사본이 **진짜 `/tmp`** 를 가리키게 되고, 그대로 실행하면 통합자의 배포 락·로그·
       상태를 건드린다. 그래서 **조용히 진행하지 않고 시끄럽게 실패**한다.
     """
-    from tests import _scan_guard as sg   # ★정본을 쓴다(사본 금지 — 한계가 갈린다)
+    # ★정본을 쓴다(사본 금지 — 한계가 갈린다)
+    from tests import _scan_guard as sg
 
     out = src
     for var in ("LOCKDIR", "STATUS", "LOG"):
