@@ -329,6 +329,78 @@ export function fmtAge(iso: string | null, now: number = Date.now()): string | n
  * 소스에서 `case "x":` 존재만 검사하면 **초록으로 통과한다**(실제로 `improvement_proposal`
  * 이 그 상태였다 — 2026-08-25). 렌더 결과를 봐야만 잡힌다(규율 §A-1·A-3).
  */
+/** 차단 코드 → 사람이 읽는 짧은 라벨. ★**모르는 코드는 코드 그대로** 낸다 —
+ *  목록이 상한이 되어 새 코드가 화면에서 **사라지는** 것을 막는다. */
+const BLOCKER_LABELS: Record<string, string> = {
+  type_not_handled: "치유기에 이 타입 분기 없음",
+  window_expired: "후보 창 경과",
+  action_not_healable: "권장 조치가 치유 대상 아님",
+};
+
+/**
+ * ★「왜 아직 `open` 인가」를 **읽는 화면**. 종전엔 API 가 싣는데 **소비처가 0곳**이었다
+ * (`#1039` 독립 리뷰 MAJOR-3 — *소비처 0 을 한 층 위로 옮긴 것*).
+ *
+ * ★★**상태가 넷이다.** `.todo` 는 셋만 말했지만 타입이 `open_blockers?: string[] | null` 이라
+ *   **부재(`undefined`)** 가 따로 있고, **web 은 api 와 따로 배포**되므로 도달 가능하다
+ *   (구판 api · mock). 부재를 「차단 사유 없음」으로 그리면 **모르는 것을 안다고 주장**하는 것이다.
+ *
+ * ★`InsightMetrics` 와 같은 이유로 **내보낸다** — 이 함수의 실패 형태는 «분기는 있는데 빈 것을
+ *   반환» 이라 소스 검사로는 초록으로 통과한다. **렌더 결과를 봐야** 잡힌다.
+ *
+ * ★어휘 제약(필드 저자 `sid=68ed1a1d` 와 합의): 빈 배열에 **「치유 대기·예정」을 쓰지 않는다**.
+ *   `open_blockers()` 는 `LIMIT 200` 절단·메타가드·닫기 실패를 **재지 않으므로**, 그렇게 쓰면
+ *   화면이 **완료를 약속**하게 된다. 잰 것만 말한다 — **「차단 사유 없음」**.
+ */
+export function InsightBlockers({ insight }: { insight: GrowthInsight }) {
+  const blockers = insight.open_blockers;
+
+  // ① 부재 — **API 가 말하지 않았다**. 「없음」과 **다른 사실**이다.
+  if (blockers === undefined) {
+    return (
+      <p data-testid="insight-blockers-unknown" className="mt-2 text-xs text-[var(--text-hint)]">
+        <span className="font-bold">판정 정보 없음</span>{" "}
+        이 API 판은 「왜 아직 열려 있는가」를 싣지 않습니다.
+      </p>
+    );
+  }
+
+  // ② `null` — 열려 있지 않음(판정 대상 아님). **아무것도 그리지 않는다**
+  //    («해당 없음」도 주장이 된다 — 저자 합의).
+  if (blockers === null) return null;
+
+  // ③ 빈 배열 — 후보 술어를 전부 통과. ★치유를 **약속하지 않는다**.
+  if (blockers.length === 0) {
+    return (
+      <p data-testid="insight-blockers-none" className="mt-2 text-xs text-[var(--text-hint)]">
+        <span className="font-bold text-[var(--accent-strong)]">차단 사유 없음</span>{" "}
+        후보 술어를 전부 통과했다는 뜻이며, 치유를 약속하지는 않습니다.
+      </p>
+    );
+  }
+
+  // ④ 막혀 있음 — 코드와 **사유 전문**을 함께. ★사유를 자르지 않는다(그 문장이 이 화면의 존재 이유다).
+  return (
+    <div data-testid="insight-blockers-list" className="mt-2 text-xs text-[var(--text-hint)]">
+      <span className="font-bold text-[var(--text-secondary)]">아직 열려 있는 이유</span>{" "}
+      {blockers.map((code) => (
+        <span
+          key={code}
+          data-testid={`insight-blocker-${code}`}
+          className="mr-1 inline-block rounded-md bg-[var(--surface-muted)] px-1.5 py-0.5 text-[11px] font-medium"
+        >
+          {BLOCKER_LABELS[code] ?? code}
+        </span>
+      ))}
+      {insight.open_blocker_reason && (
+        <p data-testid="insight-blocker-reason" className="mt-1 whitespace-pre-line">
+          {insight.open_blocker_reason}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
   const m = insight.metrics_json ?? {};
   const rows: { label: string; value: string }[] = [];
@@ -1608,6 +1680,7 @@ export function GrowthDashboard() {
                               {it.recommended_action}
                             </p>
                           )}
+                          <InsightBlockers insight={it} />
                           <p className="mt-2 text-[11px] text-[var(--text-hint)]">
                             <span className="cc-num">{fmtDate(it.created_at)}</span>
                             {/* ★나이를 **함께** 낸다 — 절대 시각을 대체하지 않는다(합성). */}
