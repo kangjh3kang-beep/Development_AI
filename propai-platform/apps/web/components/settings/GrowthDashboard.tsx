@@ -16,7 +16,7 @@
  * 렌더(필드가 없을 때 graceful)한다.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 
@@ -54,7 +54,7 @@ type InsightType =
   | "prompt_candidate"
   | (string & {});
 
-type GrowthInsight = {
+export type GrowthInsight = {
   id: string;
   insight_type: InsightType;
   severity: string | null; // InsightSeverity | null
@@ -329,6 +329,106 @@ export function fmtAge(iso: string | null, now: number = Date.now()): string | n
  * 소스에서 `case "x":` 존재만 검사하면 **초록으로 통과한다**(실제로 `improvement_proposal`
  * 이 그 상태였다 — 2026-08-25). 렌더 결과를 봐야만 잡힌다(규율 §A-1·A-3).
  */
+/** 차단 코드 → 사람이 읽는 짧은 라벨. ★**모르는 코드는 코드 그대로** 낸다 —
+ *  목록이 상한이 되어 새 코드가 화면에서 **사라지는** 것을 막는다.
+ *  ★락: `GrowthDashboard.openBlockers.test.tsx` 가 **두 모집단**으로 잡는다 —
+ *    등록된 코드는 «코드와 다른 문자열», 미등록 코드는 «코드 그대로». 한쪽만 있으면
+ *    이 맵을 지워도 초록이다(기계 변이가 실제로 그렇게 생존했다). */
+const BLOCKER_LABELS: Record<string, string> = {
+  type_not_handled: "치유기에 이 타입 분기 없음",
+  window_expired: "후보 창 경과",
+  action_not_healable: "권장 조치가 치유 대상 아님",
+};
+
+/**
+ * ★「왜 아직 `open` 인가」를 **읽는 화면**. 종전엔 API 가 싣는데 **소비처가 0곳**이었다
+ * (`#1039` 독립 리뷰 MAJOR-3 — *소비처 0 을 한 층 위로 옮긴 것*).
+ *
+ * ★★**상태가 넷이다.** `.todo` 는 셋만 말했지만 타입이 `open_blockers?: string[] | null` 이라
+ *   **부재(`undefined`)** 가 따로 있다. 부재를 「차단 사유 없음」으로 그리면 **모르는 것을 안다고
+ *   주장**하는 것이라 분기를 나눈다.
+ *
+ * ★★★**도달 가능성은 정직하게 적는다**(독립 리뷰 MAJOR-2 가 내 초판을 반증했다):
+ *   · **mock 경로는 닫혀 있다** — 유일한 호출부가 `{ useMock: false }` 다(이 파일 `fetch` 지점).
+ *   · **`null` 도 이 소비처에선 안 온다** — 서버 쿼리가 `status=open` 이고 라우터는
+ *     `status != "open"` 일 때만 `null` 을 낸다. 여기서 `open_blockers` 는 **항상 리스트**다.
+ *   · 남는 경로는 **api 롤백/버전 스큐** 하나다(두 축이 따로 배포되는 것은 실측된 사실 —
+ *     같은 날 api 단독 주기와 web 단독 주기가 각각 돌았다 · 측정 `sid=68ed1a1d`).
+ *   ⇒ `null`·`undefined` 분기는 **방어**다. 남겨 두되 «오늘 라이브에서 온다»고 적지 않는다.
+ *
+ * ★`InsightMetrics` 와 같은 이유로 **내보낸다** — 이 함수의 실패 형태는 «분기는 있는데 빈 것을
+ *   반환» 이라 소스 검사로는 초록으로 통과한다. **렌더 결과를 봐야** 잡힌다.
+ *
+ * ★어휘 제약(필드 저자 `sid=68ed1a1d` 와 합의): 빈 배열에 **「치유 대기·예정」을 쓰지 않는다**.
+ *   `open_blockers()` 는 `LIMIT 200` 절단·메타가드·닫기 실패를 **재지 않으므로**, 그렇게 쓰면
+ *   화면이 **완료를 약속**하게 된다. 잰 것만 말한다 — **「차단 사유 없음」**.
+ */
+export function InsightBlockers({ insight }: { insight: GrowthInsight }) {
+  const blockers = insight.open_blockers;
+
+  // ① 부재 — **API 가 말하지 않았다**. 「없음」과 **다른 사실**이다.
+  //   ★단 **열려 있지 않은 카드**에는 말하지 않는다 — 닫힌 항목에 「왜 아직 열려 있는가」를
+  //     물으면 그 문장 자체가 거짓이다(독립 리뷰 MINOR-1: 서버 필터가 넓어지면 도달한다).
+  if (blockers === undefined && insight.status !== "open") return null;
+  if (blockers === undefined) {
+    return (
+      <p data-testid="insight-blockers-unknown" className="mt-2 text-xs text-[var(--text-hint)]">
+        <span className="font-bold">판정 정보 없음</span>{" "}
+        이 API 판은 「왜 아직 열려 있는가」를 싣지 않습니다.
+      </p>
+    );
+  }
+
+  // ② `null` — 열려 있지 않음(판정 대상 아님). **아무것도 그리지 않는다**
+  //    («해당 없음」도 주장이 된다 — 저자 합의).
+  if (blockers === null) return null;
+
+  // ③ 빈 배열 — 후보 술어를 전부 통과. ★치유를 **약속하지 않는다**.
+  if (blockers.length === 0) {
+    return (
+      <p data-testid="insight-blockers-none" className="mt-2 text-xs text-[var(--text-hint)]">
+        <span className="font-bold text-[var(--accent-strong)]">차단 사유 없음</span>{" "}
+        후보 술어를 전부 통과했다는 뜻이며, 치유를 약속하지는 않습니다.
+      </p>
+    );
+  }
+
+  // ④ 막혀 있음 — 코드와 **사유 전문**을 함께. ★사유를 자르지 않는다(그 문장이 이 화면의 존재 이유다).
+  return (
+    <div data-testid="insight-blockers-list" className="mt-2 text-xs text-[var(--text-hint)]">
+      <span className="font-bold text-[var(--text-secondary)]">아직 열려 있는 이유</span>{" "}
+      {/* ★설명 가능한 변이 생존(점수 부풀리기 방지): 아래 `key`·`className` 변이는 **생존한다**.
+          `key` 는 React 조정 힌트이고(★`open_blockers()` 가 서로 다른 상수를 한 번씩만 넣으므로
+          **중복 키가 원리적으로 불가** — 독립 리뷰가 백엔드로 확인), `className` 은 표현이다.
+          ★단 그 면제는 **구분이 CSS 에만 있지 않을 때만** 정당하다 — 그래서 위에 텍스트
+          구분자를 뒀다. 이 블록의 계약(라벨 문자열 · 구분 · 사유 전문)은 전부 잠겨 있다. */}
+      {/* ★배지 사이에 **텍스트 구분자**를 둔다. 없으면 DOM 텍스트에서 두 사유가 붙어
+          「…분기 없음후보 창 경과」가 된다(독립 리뷰 MEDIUM-1 실측). 그러면 구분이 **CSS 에만**
+          있게 되고, CSS 변이를 「표현」으로 면제한 판단과 **모순**된다.
+          구분자를 두어야 이 축이 **DOM 텍스트로 잠긴다**. */}
+      {blockers.map((code, i) => (
+        <Fragment key={code}>
+          {/* ★구분자를 배지 **바깥**에 둔다 — 안에 두면 알약 모양 칩 안에 「· 후보 창 경과」로
+              들어가 **칩이 하나로 보인다**(독립 검증 R2 의 비차단 지적).
+              DOM 텍스트 락은 그대로 성립한다(형제 텍스트 노드도 `textContent` 에 들어간다). */}
+          {i > 0 ? " · " : ""}
+          <span
+            data-testid={`insight-blocker-${code}`}
+            className="mr-1 inline-block rounded-md bg-[var(--surface-muted)] px-1.5 py-0.5 text-[11px] font-medium"
+          >
+            {BLOCKER_LABELS[code] ?? code}
+          </span>
+        </Fragment>
+      ))}
+      {insight.open_blocker_reason && (
+        <p data-testid="insight-blocker-reason" className="mt-1 whitespace-pre-line">
+          {insight.open_blocker_reason}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
   const m = insight.metrics_json ?? {};
   const rows: { label: string; value: string }[] = [];
@@ -1608,6 +1708,7 @@ export function GrowthDashboard() {
                               {it.recommended_action}
                             </p>
                           )}
+                          <InsightBlockers insight={it} />
                           <p className="mt-2 text-[11px] text-[var(--text-hint)]">
                             <span className="cc-num">{fmtDate(it.created_at)}</span>
                             {/* ★나이를 **함께** 낸다 — 절대 시각을 대체하지 않는다(합성). */}
