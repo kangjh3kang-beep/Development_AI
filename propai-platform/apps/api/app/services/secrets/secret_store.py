@@ -95,7 +95,7 @@ CATALOG: list[dict[str, Any]] = [
     {"name": "RONE_HOUSING_STATBL_ID", "label": "R-ONE 주택매매가격지수 통계표ID", "group": "공공데이터·지도",
      "secret": False, "kind": "text",
      "desc": "주택종합 매매가격지수(월 변동률) 통계표 ID. 건물/주택 시점수정 실데이터에 사용."},
-    {"name": "RONE_COMMYIELD_STATBL_ID", "label": "R-ONE 상업용 투자수익률 통계표ID", "group": "공공데이터·지도",
+    {"name": "RONE_COMMYIELD_STATBL_ID", "label": "R-ONE 상업용 소득수익률(자본환원율) 통계표ID", "group": "공공데이터·지도",
      "secret": False, "kind": "text",
      "desc": "상업용부동산 **소득수익률** 통계표 ID. 수익환원법 자본환원율(cap rate) 실데이터에 사용. ★투자수익률(= 소득수익률 + 자본수익률) 표를 넣으면 항목 가드가 거부한다 — cap rate 가 아니다. ★주기는 프로덕션이 QQ 로 조회한다."},
     {"name": "RONE_JEONSE_CONV_STATBL_ID", "label": "R-ONE 전월세전환율 통계표ID", "group": "공공데이터·지도",
