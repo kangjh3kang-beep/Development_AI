@@ -125,19 +125,30 @@ event DrawRevealed(bytes32 indexed drawId, bytes32 nonce, bytes32 resultRoot, ui
 - Phase 2 는 **관측·기록 전용**(체인 기록이 실패해도 추첨은 성립). 앵커링을 끄면 원상.
   ★단 «체인에 올렸다»를 사용자에게 약속한 뒤 끄면 **그 약속이 거짓**이 되므로, 문구는 켠 뒤에 쓴다.
 
-## §5 잠금 (같은 커밋에)
+## §5 잠금 — ★**실재하는 이름으로 적는다**(리뷰 D-4)
 
-| 락 | 무엇을 잠그나 |
-|---|---|
-| `test_vrng_is_language_independent` | 알려진 `(key, msg)` → **고정 기대값**(외부 도구로 계산한 값). 파이썬 버전이 바뀌어도 같아야 한다 |
-| `test_vrng_uniform_and_no_modulo_bias` | rejection sampling 이 실제로 편향을 없애는가(χ² · 대조군으로 modulo 구현을 넣어 **기울어짐을 검출**) |
-| `test_commit_precedes_reveal` | ★**공약 없는 추첨은 거부**된다(공약 이벤트가 없으면 `draw` 가 실패) |
-| `test_tampered_nonce_is_rejected` | `sha256(nonce) != commit` 이면 **거부** |
-| `test_caller_cannot_supply_seed` | `run_draw(seed=...)` 가 **더는 존재하지 않거나 무시**됨 + 공고번호 폴백 부재 |
-| `test_pool_is_stored_untruncated` | pool 원본 저장 + 해시 **64자**(절단 변이 CAUGHT) |
-| `test_seq_is_drawn_not_insertion_order` | 등록 순서와 추첨 순번이 **다른 모집단**을 만든다 |
-| `test_no_pii_onchain` (Phase 2) | 온체인 페이로드에 **이름·연락처·동호 문자열이 없다**(대조군: 해시는 있다) |
-| `DrawRegistry.test.ts` (Phase 2) | 이중 commit 거부 · reveal 불일치 거부 · 권한 |
+종전 §5 는 락 이름 9개를 적었는데 **8개가 실재하지 않았다**(개명 4 · **미구현 3**).
+***계획서만 읽으면 「공약 선행이 잠겨 있다」로 오독된다*** — 그래서 실명으로 갈아 적는다.
+
+| 파일 | 건수 | 무엇을 잠그나 |
+|---|---|---|
+| `test_draw_vrng.py` | 16 | 고정 기대값 · **openssl 교차검증** · **문서의 감사 명령을 실제로 실행** · 거부표집(modulo 대조군) · 도메인 분리 · 카운터 전진 · 입력순서 독립 · **소속·도달범위** · **shuffle 균등성** · **약한 nonce 거부** · `random` 미임포트 |
+| `test_draw_commit_reveal.py` | 9 | seed 인자 부재 · 엔드포인트 미전달 · **AST 로 `announce_no` 부재** · 공약 부재→거부 · nonce 변조→거부 · **옳은 공약은 통과** · **nonce 가 결과를 만든다** · 공개값으로 재현 불가 · **`run_draw` 배선** |
+| `test_draw_commitment_store_contract.py` | 7 | **CRUD 미등록** · **공개 반환에 nonce 부재(AST)** · **`UNIQUE` 재공약 불가** · `committed_at` 존재 · 호출자 nonce 불가 · 생성 nonce 가 하한 충족 · fail-closed |
+| `test_draw_engine_v2_contract.py` | 6 | ②가 `vrng.pick` 사용 · 공약 경유 · **해시 절단 없음 + pool 전문** · **재시도에서 seed 재생성 금지** · **v1/v2 공존** · seed 컬럼 폭 |
+| `test_draw_verifier_agrees_with_production.py` | 5 | 검증기 독립성(저장소 미임포트) · **12입력 프로덕션 대조** · 조작 거부 · 공약불일치 거부 · 약한 nonce 거부 |
+| `test_draw_seq_still_insertion_order.py` | 2 | ★**남은 부채**를 초록 안에(`xfail(strict)`) — 순번이 아직 등록 순서 |
+
+**합계 45건.** ★그리고 **부채는 초록 안에서 보인다** — 배선하면 `xfail` 이 **XPASS 로 빨개져**
+「지워라」고 말한다(실제로 ②를 옮기자 `test_draw_engine_still_unmigrated.py` 가 그렇게 했고, 지웠다).
+
+### ★아직 **원리적으로 작성 불가**한 락 (정직하게 적는다)
+
+- `test_commit_precedes_reveal` — 「공약이 추첨보다 **앞섰다**」. `committed_at` 은 기록하지만
+  **추첨 시각을 같은 원장에 남기지 않으면** 선후를 기계가 판정하지 못한다. 지금은
+  **대상자가 추첨 전에 `GET …/commitment` 를 받아 두는 것**이 그 증거이고, 검증기가
+  **그 한계를 자기 출력에 적는다.** ⇒ 기계 판정으로 올리려면 추첨 이벤트에 `commit_hash` 와
+  **추첨 시각**을 함께 남기고 둘을 대조해야 한다(후속).
 
 ## §6 변이 감사
 
