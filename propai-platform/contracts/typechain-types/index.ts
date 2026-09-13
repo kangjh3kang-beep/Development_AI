@@ -12,6 +12,8 @@ export type { Pausable } from "./@openzeppelin/contracts/utils/Pausable";
 export { Pausable__factory } from "./factories/@openzeppelin/contracts/utils/Pausable__factory";
 export type { ReentrancyGuard } from "./@openzeppelin/contracts/utils/ReentrancyGuard";
 export { ReentrancyGuard__factory } from "./factories/@openzeppelin/contracts/utils/ReentrancyGuard__factory";
+export type { DrawRegistry } from "./src/DrawRegistry";
+export { DrawRegistry__factory } from "./factories/src/DrawRegistry__factory";
 export type { ReentrantRefundAttacker } from "./src/mocks/ReentrantRefundAttacker";
 export { ReentrantRefundAttacker__factory } from "./factories/src/mocks/ReentrantRefundAttacker__factory";
 export type { PropAIEscrow } from "./src/PropAIEscrow";

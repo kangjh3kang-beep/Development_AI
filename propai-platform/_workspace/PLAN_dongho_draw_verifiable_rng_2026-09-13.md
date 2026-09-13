@@ -106,11 +106,22 @@ event DrawRevealed(bytes32 indexed drawId, bytes32 nonce, bytes32 resultRoot, ui
    가정하지 않는다 — 다만 **Phase 0 의 산출물이 그 증빙으로 그대로 쓰인다.**
 2. **①의 실제 운용 여부** — `run_draw` 가 라이브에서 실제로 쓰이는지(호출 이력)는 **미측정**.
    코드 경로만 봤다.
-3. **Amoy 배포분의 현재 생존 — ★조회를 시도했고 「판정 불가」다.**
-   `eth_getCode` 로 물었으나 이 환경에서 **RPC 호스트가 차단**돼 있다(HTTP 000 · 대조군 2건 200).
-   ⇒ **「배포돼 있다」도 「없다」도 말할 수 없다.** Phase 2 착수 전에 **망이 열린 곳에서**
-   `eth_getCode` 가 `0x` 보다 긴 값을 돌려주는지 확인해야 한다(대조군: 아무 EOA 주소는 `0x`).
-   ★그리고 Phase 2 는 **새 컨트랙트 배포**가 필요하므로 어차피 **RPC 송출 경로 확보가 선행 조건**이다.
+3. **Amoy 배포분의 생존 — ★해소됐다(2026-09-13 재측정).**
+   종전엔 `rpc-amoy.polygon.technology` 가 **HTTP 000** 이라 「판정 불가」로 적었다.
+   ***「그 호스트가 막혔다」를 「체인에 못 묻는다」로 일반화한 것이 틀렸다*** — 대체 엔드포인트
+   **셋이 전부 200** 이다(`rpc.ankr.com/polygon_amoy` · `polygon-amoy-bor-rpc.publicnode.com` ·
+   `polygon-amoy.drpc.org`). 그중 하나로 물으니:
+   ```
+   eth_chainId                     → 0x13882 (=80002 Amoy)      ← 체인 확인
+   eth_getCode(0x961cba4A…)        → 8,736자                    ← ★코드 실재
+   eth_getCode(0x…dEaD)            → 0x                          ← 음성 대조군
+   ```
+   ⇒ **`PropAIEscrow` 는 Amoy 에 실제로 배포돼 있다.**
+   ★부수: `polygon-rpc.com`(메인넷)은 HTTP 200 이지만 JSON-RPC 는 `API key disabled` 를 돌려준다 —
+   ***HTTP 200 은 「그 서비스가 답한다」가 아니다.*** 프로토콜로 물어야 갈린다.
+   ★남은 것: **배포에는 자금이 있는 키가 필요**하고 그건 내 권한 밖이다(사용자·운영 행위).
+
+
 4. **가스비·운영비 미측정** — Polygon 메인넷 앵커링 1건당 비용, 월 추첨 건수 가정 없음.
 5. ★**`apps/api/services/` 와 `apps/api/app/services/` 가 다른 트리다.** `blockchain_service.py` 는
    **전자**에 있고 추첨 엔진은 **후자**에 있다. 이 저장소에는 트리가 셋이라는 실측 기록이 있다 —

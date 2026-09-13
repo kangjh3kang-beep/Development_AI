@@ -26,6 +26,10 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.ReentrancyGuard__factory>;
     getContractFactory(
+      name: "DrawRegistry",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.DrawRegistry__factory>;
+    getContractFactory(
       name: "ReentrantRefundAttacker",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.ReentrantRefundAttacker__factory>;
@@ -62,6 +66,11 @@ declare module "hardhat/types/runtime" {
       signer?: ethers.Signer
     ): Promise<Contracts.ReentrancyGuard>;
     getContractAt(
+      name: "DrawRegistry",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.DrawRegistry>;
+    getContractAt(
       name: "ReentrantRefundAttacker",
       address: string | ethers.Addressable,
       signer?: ethers.Signer
@@ -100,6 +109,10 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.ReentrancyGuard>;
     deployContract(
+      name: "DrawRegistry",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.DrawRegistry>;
+    deployContract(
       name: "ReentrantRefundAttacker",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.ReentrantRefundAttacker>;
@@ -135,6 +148,11 @@ declare module "hardhat/types/runtime" {
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.ReentrancyGuard>;
+    deployContract(
+      name: "DrawRegistry",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.DrawRegistry>;
     deployContract(
       name: "ReentrantRefundAttacker",
       args: any[],
