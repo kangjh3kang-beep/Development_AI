@@ -115,7 +115,13 @@ def test_draw_without_commitment_is_refused():
     """
     with pytest.raises(ValueError) as e:
         _run_with({})
-    assert "공약" in str(e.value), str(e.value)
+    msg = str(e.value)
+    # ★★**두 갈래를 한 신호로 보지 않는다**(2026-09-13 변이 실측).
+    #   종전엔 `"공약" in msg` 만 봤는데, 「공약이 **없습니다**」와 「공약이 **일치하지 않습니다**」가
+    #   **둘 다 「공약」을 포함**해서 부재 가드를 지워도 **초록**이었다(변이 SURVIVED).
+    #   ***한 신호가 두 사건을 덮으면 어느 것이 고장났는지 못 가른다.***
+    assert "공약이 없습니다" in msg, msg
+    assert "일치하지" not in msg, f"부재가 아니라 불일치로 떨어졌다 — 부재 가드가 죽었다: {msg}"
 
 
 def test_tampered_nonce_is_refused():
@@ -123,7 +129,9 @@ def test_tampered_nonce_is_refused():
     good = vrng.commitment(NONCE)
     with pytest.raises(ValueError) as e:
         _run_with({"draw_commit": good, "draw_nonce": "aa" * 32})
-    assert "일치하지" in str(e.value), str(e.value)
+    msg = str(e.value)
+    assert "일치하지" in msg, msg
+    assert "공약이 없습니다" not in msg, f"불일치가 아니라 부재로 떨어졌다: {msg}"
 
 
 def test_matching_commitment_passes_the_gate():
