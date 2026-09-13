@@ -39,7 +39,7 @@ vi.mock("@/lib/api-client", () => ({
 }));
 vi.mock("@/lib/use-is-admin", () => ({ useIsAdmin: () => true }));
 
-import { GrowthDashboard, InsightBlockers } from "../GrowthDashboard";
+import { GrowthDashboard, InsightBlockers, type GrowthInsight } from "../GrowthDashboard";
 
 const LONG_REASON =
   "치유기가 이 타입에 분기를 두지 않습니다. 자동 치유 후보는 선언된 타입에 한정됩니다. / " +
@@ -48,12 +48,17 @@ const LONG_REASON =
 
 type Blockers = string[] | null | undefined;
 
-function makeInsight(blockers: Blockers, reason: string | null = null) {
-  const base = {
+/** ★타입을 받는다 — 스텁도 계약이다. `as never` 로 우회하면 필수 필드가 늘어도 조용하다(§33). */
+function makeInsight(
+  blockers: Blockers,
+  reason: string | null = null,
+  status: GrowthInsight["status"] = "open",
+): GrowthInsight {
+  const base: GrowthInsight = {
     id: "i1",
     insight_type: "error_cluster",
     severity: "critical",
-    status: "open",
+    status,
     window_start: null,
     window_end: null,
     metrics_json: {},
@@ -61,17 +66,29 @@ function makeInsight(blockers: Blockers, reason: string | null = null) {
     recommended_action: null,
     created_at: "2026-09-01T00:00:00Z",
     open_blocker_reason: reason,
-  } as Record<string, unknown>;
-  // ★`undefined` 는 **키 자체를 넣지 않는다** — `open_blockers: undefined` 로 넣으면
-  //   «부재»가 아니라 «명시적 undefined» 라 실제 API 응답과 모양이 달라진다.
+  };
+  // ★`undefined` 는 **키 자체를 넣지 않는다.** 이유는 «모양이 달라진다»가 아니라 **위생**이다 —
+  //   이 소비처에서 `obj.k` 는 두 경우를 구별하지 못하고 JSON 은 명시적 `undefined` 를 싣지도
+  //   못한다(독립 리뷰 MINOR-3 가 내 초판의 과장된 근거를 정정했다). 그래도 **실제 응답과 같은
+  //   모양**으로 두는 편이 다음 사람을 덜 헷갈리게 한다.
   if (blockers !== undefined) base.open_blockers = blockers;
-  return base as never;
+  return base;
 }
 
-function renderBlockers(blockers: Blockers, reason: string | null = null) {
-  const { container } = render(<InsightBlockers insight={makeInsight(blockers, reason)} />);
+function renderBlockers(
+  blockers: Blockers,
+  reason: string | null = null,
+  status: GrowthInsight["status"] = "open",
+) {
+  const { container } = render(
+    <InsightBlockers insight={makeInsight(blockers, reason, status)} />,
+  );
   return container;
 }
+
+/** ★합의된 어휘 제약 — **치유를 약속하는 말**. `open_blockers()` 가 `LIMIT 200` 절단·메타가드·
+ *  닫기 실패를 **안 재므로** 화면이 완료를 약속하면 거짓이 된다(필드 저자 `sid=68ed1a1d`). */
+const PROMISE_WORDS = ["치유 예정", "치유 대기", "곧 치유", "치유됩니다"];
 
 describe("InsightBlockers — 네 상태가 각각 다른 출력을 낸다", () => {
   it("★★부재(undefined) 는 「판정 정보 없음」이고 **「차단 사유 없음」이 아니다**", () => {
@@ -90,6 +107,12 @@ describe("InsightBlockers — 네 상태가 각각 다른 출력을 낸다", () 
     // ★어휘 제약: 완료를 약속하는 말을 쓰지 않는다.
     expect(c.textContent).not.toContain("치유 대기");
     expect(c.textContent).not.toContain("치유 예정");
+  });
+
+  it("★★열려 있지 않은 카드에는 **부재를 말하지 않는다** — 그 문장 자체가 거짓이 된다", () => {
+    // 두 모집단: 같은 「부재」인데 status 로 갈린다(픽스처가 단일 모집단이면 이 유도가 무잠금).
+    expect(renderBlockers(undefined, null, "open").textContent).toContain("판정 정보 없음");
+    expect(renderBlockers(undefined, null, "acknowledged").textContent).toBe("");
   });
 
   it("★null 은 **아무것도 그리지 않는다** — 「해당 없음」도 주장이다", () => {
@@ -120,27 +143,57 @@ describe("InsightBlockers — 네 상태가 각각 다른 출력을 낸다", () 
     expect(new Set(texts).size).toBe(4);
   });
 
+  it.each([
+    ["부재", undefined as Blockers],
+    ["빈 배열", [] as Blockers],
+    ["막힘", ["type_not_handled", "window_expired"] as Blockers],
+  ])("★★어휘 제약이 **%s 분기에도** 걸린다 — 어느 상태도 치유를 약속하지 않는다", (_n, b) => {
+    const c = renderBlockers(b, "사유 전문");
+    // ★초판은 이 제약을 `[]` 분기에만 걸었다. 그런데 **완료를 약속」이 실제로 해로운 자리는
+    //   막혀 있는 쪽**이다(독립 리뷰 MAJOR-1 ②).
+    for (const w of PROMISE_WORDS) expect(c.textContent).not.toContain(w);
+  });
+
   it("★모르는 코드는 **코드 그대로** 나온다 — 목록이 상한이 되지 않게", () => {
     renderBlockers(["brand_new_code_2027"]);
     expect(screen.getByTestId("insight-blocker-brand_new_code_2027").textContent)
       .toBe("brand_new_code_2027");
   });
 
-  // ★★두 모집단 — 이 짝이 없으면 `BLOCKER_LABELS` 가 **장식**이 된다.
-  //   기계 변이가 잡았다: 맵에서 한 줄을 지워도 위 테스트는 초록이었다(화면은 원시 코드로
-  //   떨어지는데 아무도 안 물었다). *등록된 코드가 사람 말로 나오는가* 를 따로 잠근다.
-  //   ★코드 문자열 자체를 단언하지 않고 **「코드와 다르다」**를 단언한다 — 문구를 다듬을 때마다
-  //     깨지는 취약한 락을 만들지 않으면서 «라벨이 실제로 쓰인다»는 계약만 잡는다.
-  it.each(["type_not_handled", "window_expired", "action_not_healable"])(
-    "★등록된 코드 %s 는 **사람 말**로 나온다(원시 코드가 아니다)",
-    (code) => {
-      renderBlockers([code]);
-      const shown = screen.getByTestId(`insight-blocker-${code}`).textContent!;
-      expect(shown.length).toBeGreaterThan(0);          // 공허 방지
-      expect(shown).not.toBe(code);                      // ★본판정 — 맵이 실제로 쓰인다
-      expect(shown).not.toContain("_");                  // 원시 코드 모양이 아니다
-    },
-  );
+  // ★★★**리터럴 핀** — 초판은 `not.toContain("_")` 로 «원시 코드가 아니다」만 봤다.
+  //   그건 **삭제 축만** 잡는다. 독립 리뷰가 실측으로 반증했다:
+  //     · 라벨을 「치유 예정」으로 바꾸기          → `::VERDICT=SURVIVED`
+  //     · 두 코드의 라벨을 맞바꾸기                → `::VERDICT=SURVIVED`
+  //   ★★그리고 내가 §6 에 인용한 「기계 kill」은 **센티넬 인공물**이었다 —
+  //     변이 도구의 치환 문자열 `__MUTATED__` 가 **밑줄을 품어** `not.toContain("_")` 에
+  //     걸린 것뿐이다. *잡히도록 보장된 변이를 골라 거짓 CAUGHT 를 본 것*이다.
+  //   ⇒ 문구를 **핀**한다. 표현이 아니라 **계약**이다 — 운영자가 판단 근거로 읽는 문장이고,
+  //     백엔드 형제가 같은 판단을 이미 내렸다(`healing_rules.py` 의 코드 리터럴 핀).
+  it.each([
+    ["type_not_handled", "치유기에 이 타입 분기 없음"],
+    ["window_expired", "후보 창 경과"],
+    ["action_not_healable", "권장 조치가 치유 대상 아님"],
+  ])("★등록된 코드 %s 는 **정확히 그 문장**으로 나온다(핀)", (code, label) => {
+    renderBlockers([code]);
+    expect(screen.getByTestId(`insight-blocker-${code}`).textContent).toBe(label);
+  });
+
+  it("★★두 라벨을 **맞바꿔도** 잡힌다 — 핀이 없으면 이 축이 통째로 열린다", () => {
+    renderBlockers(["type_not_handled", "window_expired"]);
+    // 각 배지가 **자기 코드의** 문장을 단다(핀이 서로 다름을 같은 실행에서 확인).
+    const a = screen.getByTestId("insight-blocker-type_not_handled").textContent!;
+    const b = screen.getByTestId("insight-blocker-window_expired").textContent!;
+    expect(a).toContain("치유기에 이 타입 분기 없음");
+    expect(b).toContain("후보 창 경과");
+    expect(a).not.toContain("후보 창 경과");
+  });
+
+  it("★★사유 배지 사이에 **텍스트 구분자**가 있다 — CSS 에만 의존하지 않는다", () => {
+    const c = renderBlockers(["type_not_handled", "window_expired"]);
+    // 구분자가 없으면 DOM 텍스트에서 「…분기 없음후보 창 경과」로 **붙는다**(리뷰 MEDIUM-1 실측).
+    expect(c.textContent).not.toContain("없음후보 창 경과");
+    expect(c.textContent).toContain("·");
+  });
 });
 
 describe("★배선 — 대시보드 렌더 결과에서 사유가 나온다", () => {

@@ -54,7 +54,7 @@ type InsightType =
   | "prompt_candidate"
   | (string & {});
 
-type GrowthInsight = {
+export type GrowthInsight = {
   id: string;
   insight_type: InsightType;
   severity: string | null; // InsightSeverity | null
@@ -345,8 +345,16 @@ const BLOCKER_LABELS: Record<string, string> = {
  * (`#1039` 독립 리뷰 MAJOR-3 — *소비처 0 을 한 층 위로 옮긴 것*).
  *
  * ★★**상태가 넷이다.** `.todo` 는 셋만 말했지만 타입이 `open_blockers?: string[] | null` 이라
- *   **부재(`undefined`)** 가 따로 있고, **web 은 api 와 따로 배포**되므로 도달 가능하다
- *   (구판 api · mock). 부재를 「차단 사유 없음」으로 그리면 **모르는 것을 안다고 주장**하는 것이다.
+ *   **부재(`undefined`)** 가 따로 있다. 부재를 「차단 사유 없음」으로 그리면 **모르는 것을 안다고
+ *   주장**하는 것이라 분기를 나눈다.
+ *
+ * ★★★**도달 가능성은 정직하게 적는다**(독립 리뷰 MAJOR-2 가 내 초판을 반증했다):
+ *   · **mock 경로는 닫혀 있다** — 유일한 호출부가 `{ useMock: false }` 다(이 파일 `fetch` 지점).
+ *   · **`null` 도 이 소비처에선 안 온다** — 서버 쿼리가 `status=open` 이고 라우터는
+ *     `status != "open"` 일 때만 `null` 을 낸다. 여기서 `open_blockers` 는 **항상 리스트**다.
+ *   · 남는 경로는 **api 롤백/버전 스큐** 하나다(두 축이 따로 배포되는 것은 실측된 사실 —
+ *     같은 날 api 단독 주기와 web 단독 주기가 각각 돌았다 · 측정 `sid=68ed1a1d`).
+ *   ⇒ `null`·`undefined` 분기는 **방어**다. 남겨 두되 «오늘 라이브에서 온다»고 적지 않는다.
  *
  * ★`InsightMetrics` 와 같은 이유로 **내보낸다** — 이 함수의 실패 형태는 «분기는 있는데 빈 것을
  *   반환» 이라 소스 검사로는 초록으로 통과한다. **렌더 결과를 봐야** 잡힌다.
@@ -359,6 +367,9 @@ export function InsightBlockers({ insight }: { insight: GrowthInsight }) {
   const blockers = insight.open_blockers;
 
   // ① 부재 — **API 가 말하지 않았다**. 「없음」과 **다른 사실**이다.
+  //   ★단 **열려 있지 않은 카드**에는 말하지 않는다 — 닫힌 항목에 「왜 아직 열려 있는가」를
+  //     물으면 그 문장 자체가 거짓이다(독립 리뷰 MINOR-1: 서버 필터가 넓어지면 도달한다).
+  if (blockers === undefined && insight.status !== "open") return null;
   if (blockers === undefined) {
     return (
       <p data-testid="insight-blockers-unknown" className="mt-2 text-xs text-[var(--text-hint)]">
@@ -386,17 +397,22 @@ export function InsightBlockers({ insight }: { insight: GrowthInsight }) {
   return (
     <div data-testid="insight-blockers-list" className="mt-2 text-xs text-[var(--text-hint)]">
       <span className="font-bold text-[var(--text-secondary)]">아직 열려 있는 이유</span>{" "}
-      {/* ★설명 가능한 변이 생존(점수 부풀리기 방지): 아래 `key`·`className` 을 지우거나 바꾸는
-          변이는 **생존한다**. `key` 는 React 조정 힌트라 렌더 결과가 같고, `className` 은
-          표현이다. 둘 다 **계약이 아니다** — 단언하면 다듬을 때마다 깨지는 취약한 락이 된다.
-          이 블록의 계약은 «코드 라벨이 나오고 사유 전문이 잘리지 않는다» 이고 그것은 잠겨 있다. */}
-      {blockers.map((code) => (
+      {/* ★설명 가능한 변이 생존(점수 부풀리기 방지): 아래 `key`·`className` 변이는 **생존한다**.
+          `key` 는 React 조정 힌트이고(★`open_blockers()` 가 서로 다른 상수를 한 번씩만 넣으므로
+          **중복 키가 원리적으로 불가** — 독립 리뷰가 백엔드로 확인), `className` 은 표현이다.
+          ★단 그 면제는 **구분이 CSS 에만 있지 않을 때만** 정당하다 — 그래서 위에 텍스트
+          구분자를 뒀다. 이 블록의 계약(라벨 문자열 · 구분 · 사유 전문)은 전부 잠겨 있다. */}
+      {/* ★배지 사이에 **텍스트 구분자**를 둔다. 없으면 DOM 텍스트에서 두 사유가 붙어
+          「…분기 없음후보 창 경과」가 된다(독립 리뷰 MEDIUM-1 실측). 그러면 구분이 **CSS 에만**
+          있게 되고, CSS 변이를 「표현」으로 면제한 판단과 **모순**된다.
+          구분자를 두어야 이 축이 **DOM 텍스트로 잠긴다**. */}
+      {blockers.map((code, i) => (
         <span
           key={code}
           data-testid={`insight-blocker-${code}`}
           className="mr-1 inline-block rounded-md bg-[var(--surface-muted)] px-1.5 py-0.5 text-[11px] font-medium"
         >
-          {BLOCKER_LABELS[code] ?? code}
+          {i > 0 ? " · " : ""}{BLOCKER_LABELS[code] ?? code}
         </span>
       ))}
       {insight.open_blocker_reason && (
