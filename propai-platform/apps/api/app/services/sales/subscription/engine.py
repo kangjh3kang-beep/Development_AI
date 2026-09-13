@@ -1,8 +1,6 @@
 """청약 배정 엔진 — 가점/추첨/특공 + 예비순번 + 선착순/무순위. 추첨은 시드 고정(감사 가능)."""
 
 import hashlib
-
-from app.services.sales.draw import vrng
 import logging
 from datetime import UTC, datetime, timedelta
 from itertools import groupby
@@ -10,6 +8,7 @@ from itertools import groupby
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.sales.draw import vrng
 from app.services.sales.harness.outbox import emit_outbox
 from apps.api.database.models.sales.subscription import (
     SalesSubscriptionAnnouncement,

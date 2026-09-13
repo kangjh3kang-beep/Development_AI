@@ -20,9 +20,9 @@ import asyncio
 import os
 import sys
 import uuid as uuid_mod
+from datetime import UTC, datetime
 
 from app.services.sales.draw import vrng as _vrng
-from datetime import UTC, datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
