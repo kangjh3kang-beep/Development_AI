@@ -681,20 +681,62 @@ def _sandbox(tmp_path: Path, rel: str, *, lib: str) -> Path:
     return dst
 
 
-def _run_guard(script: Path, tmp_path: Path) -> subprocess.CompletedProcess[str]:
-    """가드까지만 도달하고 **그 뒤로는 못 가게** 돌린다.
+#: 가드 **뒤**에서만 불려야 하는 명령들. 하나라도 불리면 «여백이 뚫렸다».
+_TRIPWIRES = ("git", "docker", "docker-compose", "sudo", "curl")
 
-    `REPO` 는 `$HOME/Development_AI` 라서 `HOME` 을 없는 경로로 주면 `cd` 에서 멈춘다
-    — 가드가 깨져 있어도 **배포가 나가지 않는다**(그게 이 프로브의 안전 여백이다).
+#: 가드 **앞** 프리플라이트가 부르는 것들 — 결정적으로 만든다.
+#: `pgrep` 은 **머신 전역**을 보고(무관한 프로세스 하나로 위양성 · 독립 리뷰 MEDIUM-2 실측)
+#: `df` 는 **디스크 사용률**에 묶인다(90% 넘으면 실패).
+_PREFLIGHT_FAKES = {
+    "pgrep": "#!/bin/sh\nexit 1\n",
+    "df": '#!/bin/sh\nprintf "F B U A Use%% M\\n/dev/x 1 1 1 1%% /\\n"\n',
+}
+
+
+def _stub_bin(tmp_path: Path) -> tuple[Path, Path]:
+    """`PATH` 앞에 깔 스텁 디렉토리와 **호출 기록 파일**.
+
+    ★★여백을 **우연에서 강제로** 바꾼다(독립 리뷰 MAJOR-2). 종전엔 가드가 깨져도
+      `cd "$REPO"` 가 없는 경로라 멈췄는데, 그건 **잠기지 않은 한 줄**에 기댄 것이다.
+      그 줄이 약해지면 `safe-deploy.sh` 는 **작업트리를 강제 되돌리는 단계**로,
+      `rollback-web.sh` 는 `docker image tag` 로 간다 — 후자는 **실제 프론트 롤백**이다.
+    ⇒ 위험 명령을 **PATH 에서 갈아치우고**, 불리면 **기록하고 죽는다**.
+      그러면 *「가드 뒤로 한 발짝도 안 갔다」* 를 **단언**할 수 있다(rc 만 보지 않는다).
     """
+    binp = tmp_path / "stubbin"
+    binp.mkdir(exist_ok=True)
+    calls = tmp_path / "tripwire.log"
+    for name in _TRIPWIRES:
+        p = binp / name
+        p.write_text(
+            f'#!/bin/sh\necho "{name} $*" >> "{calls}"\nexit 97\n', encoding="utf-8"
+        )
+        p.chmod(0o755)
+    for name, bodytext in _PREFLIGHT_FAKES.items():
+        p = binp / name
+        p.write_text(bodytext, encoding="utf-8")
+        p.chmod(0o755)
+    return binp, calls
+
+
+def _run_guard(script: Path, tmp_path: Path) -> tuple[subprocess.CompletedProcess[str], str]:
+    """가드까지만 도달하고 **그 뒤로는 못 가게** 돌린다. **호출 기록**을 함께 준다.
+
+    안전 여백은 **둘**이다:
+      ① `REPO` 가 `$HOME/…` 이라 `HOME` 을 없는 경로로 주면 `cd` 에서 멈춘다.
+      ② ★`PATH` 앞의 **트립와이어 스텁** — ①이 약해져도 위험 명령이 **실행되지 않는다**.
+    """
+    binp, calls = _stub_bin(tmp_path)
     env = dict(os.environ)
     env["HOME"] = str(tmp_path / "fakehome")
     env["REPO"] = str(tmp_path / "fakehome" / "Development_AI")   # rollback-web 은 env 를 본다
-    env["LOCKDIR"] = str(tmp_path / "lockdir")
-    return subprocess.run(
+    env["PATH"] = f"{binp}:{env.get('PATH', '')}"
+    r = subprocess.run(
         ["bash", str(script), "web", "main"],
         capture_output=True, text=True, env=env, timeout=120, check=False,
     )
+    tripped = calls.read_text(encoding="utf-8") if calls.exists() else ""
+    return r, tripped
 
 
 @pytest.mark.parametrize("rel", _GUARDED_SCRIPTS)
@@ -705,11 +747,7 @@ def test_guard_library_absence_actually_exits_nonzero(rel: str, tmp_path: Path) 
     **`or` 라 두 토큰이 서로를 덮어** 하나씩은 지워도 통과했다. *「죽는가」를 안 태웠다.*
     """
     script = _sandbox(tmp_path, rel, lib="none")
-    r = _run_guard(script, tmp_path)
-
-    # ★공허 방지 — 스크립트가 아예 못 돌았으면(예: bash 없음) 아래 단언이 무의미하다.
-    assert r.returncode is not None
-    assert (r.stdout + r.stderr).strip(), f"{rel}: 아무 출력도 없다 — 스크립트가 안 돌았다"
+    r, tripped = _run_guard(script, tmp_path)
 
     # ★본판정 — **전용 종료코드 12**. 이 저장소는 가드 종료코드가 다른 사건과 겹치지
     #   않아야 한다고 이미 잠갔다(같은 파일의 종료코드 충돌 테스트) — 그러니 12 는 **계약**이다.
@@ -717,6 +755,22 @@ def test_guard_library_absence_actually_exits_nonzero(rel: str, tmp_path: Path) 
         f"{rel}: lib 없이 돌렸는데 rc={r.returncode} (기대 12). "
         f"가드가 fail-open 이면 그대로 흘러가 배포 경로로 간다.\n{r.stdout}\n{r.stderr}"
     )
+
+    # ★★**여백을 단언한다** — rc 만 보면 «어디서 멈췄는지»를 모른다.
+    #   가드 뒤의 위험 명령(git·docker·…)이 하나라도 불렸으면 여백이 뚫린 것이다.
+    assert tripped == "", f"{rel}: 가드 뒤 명령이 실행됐다 — 여백이 뚫렸다:\n{tripped}"
+
+    # ★★**사건에 이름이 붙는가** — 종전 소스 단언의 `guard-lib` 축을 여기서 되살린다.
+    #   초판의 「공허 방지」 둘은 **원리적으로 위반 불가**했다(`returncode is not None`)거나
+    #   **bash 자신의 메시지**로 참이 됐다(`stderr` 비어 있지 않음) — 독립 리뷰 MEDIUM-3.
+    #   ⇒ **격리된 상태 파일**을 본다. 스크립트가 거기 쓰지 않으면 이 단언이 죽는다.
+    status = tmp_path / "status"
+    if "STATUS=" in (REPO_ROOT / rel).read_text(encoding="utf-8"):
+        assert status.exists(), f"{rel}: 상태 파일을 안 썼다 — 가드가 사건을 기록하지 않았다"
+        assert "guard-lib" in status.read_text(encoding="utf-8"), (
+            f"{rel}: 상태가 **이 사건의 이름**을 말하지 않는다: "
+            f"{status.read_text(encoding='utf-8')!r}"
+        )
 
 
 @pytest.mark.parametrize("rel", _GUARDED_SCRIPTS)
@@ -726,12 +780,18 @@ def test_guard_passes_when_the_library_is_present(rel: str, tmp_path: Path) -> N
     이 짝이 없으면 «항상 12 로 죽는 스크립트» 도 위 테스트를 통과한다
     (한 모집단만 보는 단언은 고친 것과 망가진 것을 구별하지 못한다).
     """
-    script = _sandbox(tmp_path, rel, lib="stub")
-    r = _run_guard(script, tmp_path)
-    assert r.returncode != 12, (
-        f"{rel}: lib 가 있는데도 rc=12 — 가드가 **항상** 죽는다면 위 본판정은 공허하다.\n"
-        f"{r.stdout}\n{r.stderr}"
+    # ★**정본 lib** 을 쓴다 — 스텁을 쓰면 «가드가 돌았다」가 아니라 «아무것도 안 했다」를 본다.
+    script = _sandbox(tmp_path, rel, lib="real")
+    r, tripped = _run_guard(script, tmp_path)
+
+    # ★★본판정 — `rc != 12` 로는 부족하다. 가드 **앞**의 조기중단(caddy 10 · 락 9 ·
+    #   prune 8 · 디스크 7)도 `!= 12` 라 통과한다 ⇒ *「가드까지 못 갔다」를 「통과했다」로*
+    #   읽게 된다(독립 리뷰 MEDIUM-1). **가드가 자기 판정을 냈다**를 본다: 호스트 판정 `11`.
+    assert r.returncode == GUARD_EXIT, (
+        f"{rel}: 정본 lib 로 돌렸는데 rc={r.returncode} (기대 {GUARD_EXIT}=호스트 판정). "
+        f"가드 앞에서 멈췄다면 위 본판정의 대조군이 공허해진다.\n{r.stdout}\n{r.stderr}"
     )
+    assert tripped == "", f"{rel}: 가드 뒤 명령이 실행됐다:\n{tripped}"
 
 
 def test_the_sandbox_refuses_when_substitution_misses(tmp_path: Path) -> None:
@@ -762,7 +822,9 @@ def test_the_sandbox_refuses_when_substitution_misses(tmp_path: Path) -> None:
            "**하드코딩**이라 이 파일을 한 번 돌리면 `/tmp/deploy_status.txt` 가 덮이고 "
            "`/tmp/deploy.log` 가 비워지며 동시배포 락을 잠깐 점유한다. 형제 "
            "`rollback-web.sh` 는 **이미** `${LOCKDIR:-…}` 로 덮어쓸 수 있다 — 두 스크립트가 "
-           "이 점에서 갈려 있다. ★고치면 이 테스트가 초록으로 뒤집히며 알려 준다. "
+           "이 점에서 갈려 있다. ★고치면 `XPASS(strict)` 로 **빨갛게** 뒤집힌다 — 그때 이 "
+           "마커를 같이 지워라(«초록으로 뒤집힌다»고 적었던 초판은 **거짓**이었다 · "
+           "독립 리뷰 MEDIUM-5). "
            "★단 **배포 스크립트 변경**이라 이 PR 범위 밖이다(별건·리뷰 필요).",
 )
 def test_side_effect_paths_should_be_overridable() -> None:
