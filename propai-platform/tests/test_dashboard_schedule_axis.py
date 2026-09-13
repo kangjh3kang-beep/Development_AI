@@ -253,8 +253,16 @@ def _run_schedule_block(probe_line: str) -> str:
     # ★블록은 **SKIND/SJOBS 추출부터** 잡아야 한다. 사유 추출 줄부터 자르면 변수가 비어
     #   `${SKIND:-unknown}` 이 되고, **내 하네스가 만든 가짜 unknown** 을 코드 결함으로 읽게 된다
     #   (실제로 처음에 그렇게 짜서 락이 울었다 — 락이 제 하네스를 잡아 준 것이다).
-    m = _re.search(r"\n(    # ★스케줄 축 .*?then OBS=1; fi\n)", src, _re.DOTALL)
-    assert m, "★스케줄 절 블록을 못 찾았다 — 락이 낡았다(공허한 초록 방지)"
+    # ★★2026-09-14 — 종전엔 **들여쓰기까지 박힌 리터럴**(`    # ★스케줄 축 …`)로 슬라이스했다.
+    #   판정 절이 `analysis_and_schedule_section()` 으로 추출되면서 들여쓰기가 4→2 로 바뀌자
+    #   **락이 통째로 헛돌았다**(「블록을 못 찾았다」). 형제 `idle_vs_dead_scanner` 도 같은 이유로 깨졌다.
+    #   ⇒ **함수 본문 안에서** 찾는다. 들여쓰기·주석 문구가 바뀌어도 산다.
+    #   ★그래도 이건 여전히 「모양」이다 — 근본은 **셸 절을 소스에서 떼어 내 합성**하는 것이다.
+    #     그 구조를 바꾸는 건 이 PR 범위 밖이라 좌표만 남긴다(§부채).
+    fn = _re.search(r"\nanalysis_and_schedule_section\(\) \{\n(.*?)\n\}\n", src, _re.DOTALL)
+    assert fn, "★분석/스케줄 판정 함수를 못 찾았다 — 락이 낡았다(공허한 초록 방지)"
+    m = _re.search(r"(  # ★스케줄 축 .*?then OBS=1; fi\n)", fn.group(1) + "\n", _re.DOTALL)
+    assert m, "★스케줄 절을 함수 안에서 못 찾았다 — 락이 낡았다(공허한 초록 방지)"
     block = m.group(1)
     script = (
         f"PROBE_OUT={_shlex.quote(probe_line)}\n"

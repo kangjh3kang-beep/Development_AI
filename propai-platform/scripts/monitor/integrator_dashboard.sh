@@ -144,6 +144,67 @@ print(kind + "|" + why)
 ' "$d" "$1" "$2" "${3:-}" 2>/dev/null || echo "unknown|판정 함수를 태우지 못했다(python3 또는 프로브 경로 확인)"
 }
 
+# ★★2026-09-14 — **이 절은 `ctrl==0` 게이트 안에 있었다. 그래서 라이브에서 안 돌았다.**
+#   실측(2026-09-13T12:4xZ): 24h `latency_regression` = **6** ⇒ `ctrl != 0` ⇒ `elif` 미진입
+#   ⇒ `astate`·축·사유·스케줄 판정이 **화면에 한 줄도 안 나갔다.**
+#   ★`ctrl` 은 ②(불가능 행) 판정용 **대조군**이지 「분석기 상태를 볼 자격」이 아니다.
+#   ★★`#1046` 이 «사유를 싣기만 하고 읽는 화면이 0곳»을 고쳤는데, **한 층 위에 같은 클래스**가 있었다.
+#   ⇒ 함수로 빼서 **게이트 밖에서** 부른다(되돌리기: 호출 한 줄 삭제 + 원위치).
+analysis_and_schedule_section() {
+  ASTATE=$(echo "$G" | grep -oE 'astate=[^ ]+' | cut -d= -f2)
+  AAT=$(echo   "$G" | grep -oE 'aat=[^ ]+'    | cut -d= -f2)
+  AAXES=$(echo "$G" | grep -oE 'aaxes=[^ ]+'  | cut -d= -f2)
+  AINS=$(echo  "$G" | grep -oE 'ains=[^ ]+'   | cut -d= -f2)
+  ALAST=$(echo "$G" | grep -oE 'alast=[^ ]+'  | cut -d= -f2)
+  # ★필드가 비면 «(필드없음)» 으로 **명시**한다 — 빈 문자열을 그냥 넘기면
+  #   «옛 프로브 사본» 이 «축이 없다(idle)» 로 조용히 둔갑한다(형제 `overlap` 과 같은 규율).
+  [ -z "$ASTATE" ] && ASTATE="(필드없음)"
+  # ★★2026-09-14 — 종전엔 여기에 `${ctrl:-0}` 를 넘겼다. **모집단이 틀렸다.**
+  #   `ctrl` 은 `latency_regression` **한 유형**의 24h 수인데(`probe.py`), 커버리지 축은 **넷**이다
+  #   (`fallback_rate`·`payment_funnel_drop`·`quality_drop`·`latency_regression`).
+  #   ★그리고 `lat` 축이 판정해도 회귀가 아니면 행은 `latency_baseline` 으로 쌓인다 —
+  #     라이브 24h 는 baseline 40 : regression 6 이었다. 즉 `judged` + `ctrl=0` 이 **도달 가능**하고
+  #     그때 «판정했다는데 24h 창이 비었다» 를 냈다. **바로 윗줄이 `인사이트 ${AINS}` 를 찍는데도.**
+  #   ⇒ **전체 인사이트 수(`AINS`)를 넘긴다.** `AINS` 는 위에서 **이미 뽑아 놓고 아무도 안 썼다**.
+  AV=$(analysis_verdict_of "$ASTATE" "${AINS:-0}" "${AAXES:-}" 2>/dev/null)
+  AK=${AV%%|*}; AR=${AV#*|}
+  # ★★판정기 자체가 없으면(함수 미정의·python3 부재) `AV` 가 **빈 문자열**이고
+  #   그러면 사유 칸이 통째로 **비어서 출력된다** — 이 파일이 금지하는 바로 그 침묵이다.
+  #   실측: 형제 락(`test_dashboard_idle_vs_dead_scanner.py`)이 블록만 떼어 돌렸더니
+  #   «★ — **0 으로 읽지 마라**» 라는 **사유 없는 경보**가 나왔다. 그 락이 잡아 줬다.
+  #   ⇒ 빈 값은 «모른다» 로 승격하되 **사유를 반드시 채운다.**
+  if [ -z "$AK" ] || [ "$AK" = "$AR" ]; then
+    AK="unknown"
+    AR="분석상태 판정기를 태우지 못했다(함수 미정의 또는 python3 부재) — 이 줄은 '유휴'가 아니다"
+  fi
+  echo "   분석기 상태: state=${ASTATE} · 축 ${AAXES:--} · 인사이트 ${AINS:--} · 발행 ${AAT:--} · 워터마크 ${ALAST:--}"
+  # ★스케줄 축 — **「경과」만으로는 정상과 정지를 못 가른다.**
+  #   실측(2026-09-12): `learn` 9,471분 경과가 **정상**이었다(주기 10080분).
+  #   프로브가 순수 함수로 판정한 결과를 **그대로** 싣는다(셸이 규칙을 다시 구현하지 않는다).
+  SKIND=$(echo "$G" | grep -oE 'skind=[^ ]+' | cut -d= -f2)
+  SJOBS=$(echo "$G" | grep -oE 'sjobs=[^ ]+' | cut -d= -f2)
+  # ★사유는 `PROBE` 줄의 **마지막 필드**다(`swhy=` 뒤 줄 끝까지). 종전엔 별도 `PROBE_SCHEDULE`
+  #   줄에서 뽑으려 했는데 위 `$G` 가 `grep -m1 '^PROBE '` 라 **그 줄이 아예 안 들어온다** —
+  #   사유가 항상 빈 채로 `OBS=1` 이 올라갔다(독립 리뷰 MAJOR-1 · 실측 길이 0).
+  SWHY=$(echo "$G" | sed -n 's/.* swhy=//p' | head -1)
+  echo "   스케줄: ${SKIND:-unknown} · 경과/주기 ${SJOBS:--} ${SWHY:+· ${SWHY}}"
+  # ★**`obs` 만 관측으로 올린다 — `unknown` 은 올리지 않는다.**
+  #   `unknown` 의 지배적 원인은 «API 가 아직 이 스냅샷을 발행하지 않는 버전» 이다
+  #   (배포 전에는 항상 그렇다). 그걸 관측으로 올리면 **상시 빨강**이 되고,
+  #   이 저장소는 그 형태를 `#868` 에서 **명시적으로 기각**했다 — 상시 신호는 배경이 된다.
+  #   ★그렇다고 **초록으로 뭉개지도 않는다**: 위 줄이 `unknown` 을 그대로 찍는다.
+  #   ★★그리고 진짜 고장 둘은 `unknown` 이 아니라 **`obs`** 로 온다:
+  #     · 틱 루프 사망   → 스냅샷이 낡음      → obs
+  #     · 잡 실행만 사망 → overdue 가 채워짐  → obs
+  #   즉 이 완화는 **고장을 가리지 않는다.**
+  if [ "${SKIND:-unknown}" = "obs" ]; then OBS=1; fi
+  case "$AK" in
+    ok)      echo "   ✅ ${AR}" ;;
+    obs)     OBS=1; echo "   ★${AR}" ;;
+    *)       DEAD=1; echo "   ★${AR} — **0 으로 읽지 마라**" ;;
+  esac
+}
+
 # ★★이 게이트를 **실행**으로 밟으면(= source 가 아니라 `bash … --verdict-lib`)
 #   종전엔 **출력 0바이트 · rc=0** 이었다. 이 파일의 계약에서 `0` 은 *"모든 프로브 생존"* 이고,
 #   그 실행은 **아무것도 재지 않았다.** ***안 재 놓고 「이상 없음」을 말하는 모양***이고,
@@ -264,52 +325,8 @@ else
     #   state=starved · axes="fal 0/0 lat 0/19 pay 0/1 qua 0/0" · at=08:05:05Z).
     #   ★내가 그 사실을 **소스 grep 으로 못 찾고 라이브 응답으로 알았다** —
     #     «매체»(`INSERT INTO platform_events`)로 찾으면 «목적»(분석기가 실행을 어디 남기나)을 놓친다.
-    ASTATE=$(echo "$G" | grep -oE 'astate=[^ ]+' | cut -d= -f2)
-    AAT=$(echo   "$G" | grep -oE 'aat=[^ ]+'    | cut -d= -f2)
-    AAXES=$(echo "$G" | grep -oE 'aaxes=[^ ]+'  | cut -d= -f2)
-    AINS=$(echo  "$G" | grep -oE 'ains=[^ ]+'   | cut -d= -f2)
-    ALAST=$(echo "$G" | grep -oE 'alast=[^ ]+'  | cut -d= -f2)
-    # ★필드가 비면 «(필드없음)» 으로 **명시**한다 — 빈 문자열을 그냥 넘기면
-    #   «옛 프로브 사본» 이 «축이 없다(idle)» 로 조용히 둔갑한다(형제 `overlap` 과 같은 규율).
-    [ -z "$ASTATE" ] && ASTATE="(필드없음)"
-    AV=$(analysis_verdict_of "$ASTATE" "${ctrl:-0}" "${AAXES:-}" 2>/dev/null)
-    AK=${AV%%|*}; AR=${AV#*|}
-    # ★★판정기 자체가 없으면(함수 미정의·python3 부재) `AV` 가 **빈 문자열**이고
-    #   그러면 사유 칸이 통째로 **비어서 출력된다** — 이 파일이 금지하는 바로 그 침묵이다.
-    #   실측: 형제 락(`test_dashboard_idle_vs_dead_scanner.py`)이 블록만 떼어 돌렸더니
-    #   «★ — **0 으로 읽지 마라**» 라는 **사유 없는 경보**가 나왔다. 그 락이 잡아 줬다.
-    #   ⇒ 빈 값은 «모른다» 로 승격하되 **사유를 반드시 채운다.**
-    if [ -z "$AK" ] || [ "$AK" = "$AR" ]; then
-      AK="unknown"
-      AR="분석상태 판정기를 태우지 못했다(함수 미정의 또는 python3 부재) — 이 줄은 '유휴'가 아니다"
-    fi
     echo "   인사이트 24h 창 0 (전 역사 ${ctrl_all}건 = 술어 생존)"
-    echo "   분석기 상태: state=${ASTATE} · 축 ${AAXES:--} · 인사이트 ${AINS:--} · 발행 ${AAT:--} · 워터마크 ${ALAST:--}"
-    # ★스케줄 축 — **「경과」만으로는 정상과 정지를 못 가른다.**
-    #   실측(2026-09-12): `learn` 9,471분 경과가 **정상**이었다(주기 10080분).
-    #   프로브가 순수 함수로 판정한 결과를 **그대로** 싣는다(셸이 규칙을 다시 구현하지 않는다).
-    SKIND=$(echo "$G" | grep -oE 'skind=[^ ]+' | cut -d= -f2)
-    SJOBS=$(echo "$G" | grep -oE 'sjobs=[^ ]+' | cut -d= -f2)
-    # ★사유는 `PROBE` 줄의 **마지막 필드**다(`swhy=` 뒤 줄 끝까지). 종전엔 별도 `PROBE_SCHEDULE`
-    #   줄에서 뽑으려 했는데 위 `$G` 가 `grep -m1 '^PROBE '` 라 **그 줄이 아예 안 들어온다** —
-    #   사유가 항상 빈 채로 `OBS=1` 이 올라갔다(독립 리뷰 MAJOR-1 · 실측 길이 0).
-    SWHY=$(echo "$G" | sed -n 's/.* swhy=//p' | head -1)
-    echo "   스케줄: ${SKIND:-unknown} · 경과/주기 ${SJOBS:--} ${SWHY:+· ${SWHY}}"
-    # ★**`obs` 만 관측으로 올린다 — `unknown` 은 올리지 않는다.**
-    #   `unknown` 의 지배적 원인은 «API 가 아직 이 스냅샷을 발행하지 않는 버전» 이다
-    #   (배포 전에는 항상 그렇다). 그걸 관측으로 올리면 **상시 빨강**이 되고,
-    #   이 저장소는 그 형태를 `#868` 에서 **명시적으로 기각**했다 — 상시 신호는 배경이 된다.
-    #   ★그렇다고 **초록으로 뭉개지도 않는다**: 위 줄이 `unknown` 을 그대로 찍는다.
-    #   ★★그리고 진짜 고장 둘은 `unknown` 이 아니라 **`obs`** 로 온다:
-    #     · 틱 루프 사망   → 스냅샷이 낡음      → obs
-    #     · 잡 실행만 사망 → overdue 가 채워짐  → obs
-    #   즉 이 완화는 **고장을 가리지 않는다.**
-    if [ "${SKIND:-unknown}" = "obs" ]; then OBS=1; fi
-    case "$AK" in
-      ok)      echo "   ✅ ${AR}" ;;
-      obs)     OBS=1; echo "   ★${AR}" ;;
-      *)       DEAD=1; echo "   ★${AR} — **0 으로 읽지 마라**" ;;
-    esac
+    # ★분석/스케줄 판정은 게이트 밖에서 부른다(아래 fi 직후).
   else
     echo "   불가능 행: 정지 이후 ${post}건 / 정지 이전 ${pre}건   [대조군 latency_regression 24h ${ctrl}건 = 술어 생존]"
     echo "   엔진 생존: 정지 이후 인사이트 ${live}건 기록"
@@ -367,6 +384,8 @@ else
     esac
     [ "${post:-0}" -gt 0 ] && { VIOL=1; echo "   ★★재발 — 낡은 생산자가 또 있다. 기각한 가설(워커 옛이미지·severity UPDATE·다른 INSERT 경로)은 재생성 말 것."; }
   fi
+  # ★게이트와 무관하게 **항상** 분석/스케줄을 판정한다(위 함수 주석 참조).
+  analysis_and_schedule_section
 fi
 echo "── ③-2 지연 버스트 (★사후 판정 — /health 는 그 순간만 말한다)"
 # ★왜 이 절이 있나: 2026-08-27 하루에 ~10분짜리 지연 버스트가 **최소 5회** 났고

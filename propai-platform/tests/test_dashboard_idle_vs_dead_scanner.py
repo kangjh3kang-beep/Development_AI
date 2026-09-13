@@ -56,18 +56,23 @@ def _classify(alltime: int, h24: int, probe_line: str = "") -> str:
 
     `probe_line`: 프로브 출력 한 줄(`$G`). 비우면 «분석상태 필드 없음» 모집단이 된다.
     """
-    src = _DASH.read_text(encoding="utf-8")
-    m = re.search(
-        r'\n(  if \[ "\$\{ctrl:-0\}" -eq 0 \].*?\n  else\n)', src, re.DOTALL)
-    assert m, "★③ 분기 블록을 못 찾았다 — 락이 낡았다(공허한 초록 방지)"
-    block = m.group(1)
-    # `else` 이후 본문은 판정에 무관하므로 닫아 준다.
+    # ★★2026-09-14 — 종전엔 `if/elif` **블록을 소스에서 슬라이스**해 돌렸다. 이 파일이 바로
+    #   아래에서 *«모양이 아니라 위치로 찾는다»* 고 적어 놓고, **자기는 모양을 슬라이스**했다.
+    #   그래서 판정 절이 `analysis_and_schedule_section()` 으로 추출되자 **락이 통째로 헛돌았다**
+    #   (블록에 판정이 없으니 OBS/DEAD 가 안 서고, 그걸 «유휴가 플래그를 안 세운다» 로 읽었다).
+    #   ⇒ **함수 이름(안정 계약)으로 부른다.** `--verdict-lib` 가 그러라고 있는 게이트다.
+    #   ★이러면 다음 리팩토링이 블록을 어디로 옮기든 이 락은 **그대로 산다.**
     script = (
         f". '{_DASH}' --verdict-lib\n"
         f'G={shlex.quote(probe_line)}\nctrl={h24}\nctrl_all={alltime}\n'
         'DEAD=0\nOBS=0\nVIOL=0\n'
-        + block
-        + '    echo "   판정진행"\n  fi\n'
+        # ★프로덕션 ③의 두 가지를 **문구까지** 흉내 낸다(셋이 서로 다른 답을 내는지 보는 락이므로).
+        'if [ "${ctrl:-0}" -eq 0 ] && [ "${ctrl_all:-0}" -eq 0 ]; then\n'
+        '  echo "   ★대조군 0 — **같은 술어가 전 역사에서 아무것도 못 집었다**. '
+        '아래 숫자를 믿지 마라(리터럴/스키마 확인)."\n  DEAD=1\nfi\n'
+        # ★프로덕션의 `else`(ctrl>0) 가지가 찍는 줄을 흉내 낸다 — 셋이 서로 다른 문구여야 한다.
+        'if [ "${ctrl:-0}" -ne 0 ]; then echo "   판정진행"; fi\n'
+        'analysis_and_schedule_section\n'
         + 'echo "DEAD=$DEAD"\necho "OBS=$OBS"\n'
     )
     out = subprocess.run(["bash", "-c", script], capture_output=True,
@@ -97,7 +102,11 @@ def test_the_three_populations_give_three_different_answers():
     """
     dead = _classify(alltime=0, h24=0)
     idle = _classify(alltime=2348, h24=0, probe_line=_G_STARVED)
-    judging = _classify(alltime=2348, h24=52)
+    # ★★2026-09-14 — 판정 절이 `ctrl` 게이트 **밖**으로 나왔다(라이브에서 한 번도 안 불리던 것을 고쳤다).
+    #   그래서 `ctrl>0` 경로도 **분석 판정을 한다** ⇒ 하네스도 프로덕션처럼 `$G` 를 줘야 한다.
+    #   ★안 주면 `(필드없음)` → `unknown` → `DEAD=1` 이 되는데, 그건 **하네스 결함**이지 제품 결함이 아니다
+    #   (프로덕션은 `$G` 가 항상 있다). 이 구분을 안 하면 락이 자기 픽스처를 제품으로 착각한다.
+    judging = _classify(alltime=2348, h24=52, probe_line=_G_STARVED)
 
     assert "DEAD=1" in dead, "전 역사 0 인데 검사기 사망으로 안 본다"
     assert "DEAD=0" in idle, "★유휴를 검사기 사망으로 읽는다(이 PR 이 고치는 그것)"
@@ -128,10 +137,12 @@ def test_missing_judge_is_loud_and_never_silent():
     """
     out = subprocess.run(
         ["bash", "-c",
+         # ★판정기를 **일부러 정의하지 않는다** — `--verdict-lib` 를 source 하지 않고
+         #   함수 본문만 떼어 쓰던 종전 방식의 의도를 유지하되, 추출은 **이름**으로 한다.
          f'G=""\nctrl=0\nctrl_all=2348\nDEAD=0\nOBS=0\nVIOL=0\n'
-         + re.search(r'\n(  if \[ "\$\{ctrl:-0\}" -eq 0 \].*?\n  else\n)',
+         + re.search(r'\n(analysis_and_schedule_section\(\) \{\n.*?\n\}\n)',
                      _DASH.read_text(encoding="utf-8"), re.DOTALL).group(1)
-         + '    echo "   판정진행"\n  fi\necho "DEAD=$DEAD"\n'],
+         + 'analysis_and_schedule_section\necho "DEAD=$DEAD"\n'],
         capture_output=True, text=True, check=False)
     body = out.stdout
     assert "DEAD=1" in body, "★판정기가 없는데 사망으로 안 본다(0 으로 읽힌다)"
@@ -179,10 +190,15 @@ def test_idle_does_not_fall_through_to_exit_zero():
     """
     src = _DASH.read_text(encoding="utf-8")
     # ① 유휴 분기가 플래그를 세운다
+    # ★판정 절이 `analysis_and_schedule_section()` 으로 추출됐다(2026-09-14) — 그 안에서
+    #   플래그가 서는지 본다. **블록 모양이 아니라 함수 이름**으로 찾는다.
     idle_block = re.search(
-        'elif \\[ "\\$\\{ctrl:-0\\}" -eq 0 \\]; then(.*?)\\n  else\\n', src, re.DOTALL)
-    assert idle_block, "★유휴 분기를 못 찾았다 — 락이 낡았다"
+        r'\nanalysis_and_schedule_section\(\) \{\n(.*?)\n\}\n', src, re.DOTALL)
+    assert idle_block, "★분석/스케줄 판정 함수를 못 찾았다 — 락이 낡았다"
     assert "OBS=1" in idle_block.group(1),         "★유휴가 플래그를 안 세운다 → exit 0('모든 프로브 생존')로 떨어진다"
+    # ★그리고 그 함수가 **게이트 밖에서 실제로 불리는가** — 정의만 있고 소비처 0 이면 무의미하다.
+    calls = [ln for ln in src.splitlines() if ln.strip() == "analysis_and_schedule_section"]
+    assert calls, "★함수는 정의됐는데 부르는 곳이 없다(소비처 0)"
     # ② 최종 판정이 그 플래그를 **exit 0 보다 먼저** 읽는다
     #
     # ★**모양이 아니라 위치로 찾는다.** 첫 판은 `src.rindex('if [ "$DEAD"')` 로 **리터럴 모양**을
