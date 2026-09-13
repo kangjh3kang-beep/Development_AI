@@ -1,0 +1,169 @@
+# 계획 — 동·호 추첨에 **검증 가능한 난수(VRNG)** 적용 + 블록체인 앵커링
+
+세션 `development-ai-a2` · `sid=79cfa3eb` · 2026-09-13
+요청: *"RNG난수생성시스템을 분양앱의 동·호추첨시스템에 적용"* + *"블록체인과 연동해 스마트컨트랙트"*
+
+## §0 옵시디언 조회 결과
+
+| 찾을 것 | 결과 |
+|---|---|
+| 이미 기각된 접근 | **없음**(이 주제로 기각 기록 0건) |
+| 추첨 **설계** 기록 | `2026-07-22_PropAI_분양앱_사이트맵_스토리보드.md` **1건뿐**이고 그 안에서 「추첨」은 **1회 언급**(계약자 여정의 한 단계). **설계 결정 기록 없음** |
+| `commit-reveal`·「사전 공약」·「검증 가능한 난수」 | **0건** — 이 주제는 볼트에 **전례가 없다** |
+| 미결·부채 | 없음 |
+
+## §1 전제 표 — **전부 실측** (★가장 중요한 것: 둘 다 「없는 것을 새로 만드는 일」이 아니다)
+
+| # | 전제 | 확인 방법 | **결과** |
+|---|---|---|---|
+| 1 | 추첨 엔진이 있나 | 전수 grep | ★**있다** — `app/services/sales/draw/draw_engine.py` (340줄) |
+| 2 | **추첨 경로가 몇 개인가** | 엔드포인트 전수 | ★**둘이고 난수 정책이 서로 다르다**(아래 §1-A) |
+| 3 | 스마트컨트랙트 인프라 | `contracts/` 실측 | ★**있다** — Solidity 4종(`PropAIEscrow`·`PropAIToken`·`PropAIGovernance`·`SubcontractPayment`) + Hardhat + typechain + 테스트 4종 |
+| 4 | 체인에 **실제로 배포**됐나 | ①`contracts/deployments/amoy/` ②★**체인에 직접 질의**(`eth_getCode`) | ①**배포 기록 파일이 있다** — `PropAIEscrow` `0x961cba4A…` · chainId **80002** · 2026-03-18. ②★**판정 불가** — 이 환경에서 `https://rpc-amoy.polygon.technology` 가 **HTTP 000**(대조군: `api.4t8t.net` 200 · `api.github.com` 200 → 망은 살아 있고 **그 호스트만 막혔다**). ***「파일에 주소가 있다」는 「체인에 코드가 있다」가 아니다*** — 나는 처음에 이것을 「실배포」라고 말했고 그건 **파일을 본 것**이었다. 정정한다. |
+| 5 | API 가 체인을 부르나 | 소비처 전수 | **부른다** — `apps/api/services/blockchain_service.py`(Web3.py) ← `apps/api/routers/blockchain.py` (★단 이 트리는 `app/` 트리와 **다른 계층**이다 — §3-5) |
+| 6 | 추첨을 잠그는 테스트 | 전수 grep(`draw_for_candidate`/`draw_engine`/`sales_draw`) | ★**전용 테스트 0건**(`test_sales_contract_crm.py` 가 계약 경로로 스치기만) · 대조군 `sales_unit_inventory` 1건 → 조회기 생존 |
+| 7 | 추첨 순번(`seq`) 결정 | `_next_seq` | **등록 순서**(`MAX(seq)+1`) — **무작위화 없음** |
+
+### §1-A ★두 경로의 난수 정책 (실측 · 이 계획의 출발점)
+
+| | ① 청약 당첨자 추첨 | ② 동·호 즉석추첨 |
+|---|---|---|
+| 엔드포인트 | `POST /subscription/{ann_id}/draw` | `POST /draw/groups/{g}/candidates/{c}/draw` |
+| 난수 원천 | `seed = body.seed or ann.announce_no or ann_id`<br>`_tiebreak = sha256(f"{seed}:{app_id}")` | `seed = secrets.token_hex(8)`<br>`random.Random(seed).choice(sorted(pool))` |
+| 난수의 역할 | **동점자 순서**(rank·가점 다음 3순위 키) | **세대 선택** |
+| ★치명 결함 | **①-a 호출자가 `seed` 를 보낼 수 있다** → 오프라인에서 원하는 당첨자 나올 때까지 굴린 뒤 제출 = **결과 선택**<br>**①-b 미지정 시 seed = 공고번호** → **공개·예측 가능** ⇒ ***당첨자를 사전에 계산할 수 있다*** | **②-a 사전 공약이 없다** → 서버가 뽑아 보고 롤백 후 재시도(**grinding**) 가능. 원장엔 **성공한 seed 하나만** 남는다<br>**②-b 재현이 CPython 구현 종속**(`random.Random(str)` 의 시딩·`choice` 내부) → **외부 감사자가 다른 언어·다른 파이썬으로 재현 불가**<br>**②-c pool 원본 미저장** · 해시도 **sha256 앞 16자(64비트) 절단** |
+
+★**그리고 독스트링이 약속한다**: *「누구나 재현·검증(부정 재추첨 방지)」*.
+①은 그 약속을 **못 지키고**, ②는 **절반만** 지킨다 — 「그 seed 로 그 결과가 나온다」는 증명하지만
+***「그 seed 가 공정하게 뽑혔다」는 증명하지 못한다.***
+
+## §2 설계 — 4단계. **1단계만으로도 치명 결함이 사라진다**
+
+### Phase 0 — 체인 없이(2~3일) · ★여기가 본체
+
+0-1. **난수 추출기를 교체**: `app/services/sales/draw/vrng.py`
+     - `HMAC-SHA256(key=seed_material, msg=f"{domain}:{counter}")` → 정수 → **rejection sampling** → 인덱스
+     - ★`random.Random` **금지**. HMAC-SHA256 은 **언어·버전 독립**이라 감사자가 파이썬 없이도 재현한다
+0-2. **commit–reveal**
+     - 추첨 개시: `server_nonce = secrets.token_bytes(32)` → **`commit = sha256(nonce)` 를 원장에 먼저 기록**(`DRAW_COMMIT`)
+     - 추첨 실행: `nonce` 를 **공개**하고 `sha256(nonce) == commit` 검증. ⇒ **서버가 seed 를 갈아치우면 해시가 안 맞는다** = grinding 차단
+0-3. **`run_draw` 의 seed 입력 제거** — 호출자 seed 금지. 공고번호 폴백 **삭제**
+0-4. **pool 전문 저장** — 정렬된 unit id 목록을 원장에 싣고, 해시는 **절단 금지**(sha256 64자)
+0-5. **순번(`seq`)도 같은 VRNG 로** 배정(등록 순서 배제)
+0-6. **검증기**: `scripts/verify_draw.py` + 공개 엔드포인트 — `(commit, nonce, pool, 결과)` 만으로 **제3자가 재현**
+
+### Phase 1 — 서버 단독 결정 배제(1~2일)
+`seed_material = HMAC(server_nonce, participants_hash ‖ beacon)`
+- `participants_hash` = 대상자 명부 확정 해시(공약에 포함)
+- `beacon` = 추첨 시각 이후 공개되는 **외부 공개 난수**(drand 등) ⇒ 서버도 참가자도 **단독으로 못 정한다**
+
+### Phase 2 — ★**블록체인 앵커링**(이미 있는 자산 재사용 · 3~5일)
+새 컨트랙트 `contracts/src/DrawRegistry.sol`:
+```solidity
+function commit(bytes32 drawId, bytes32 commitHash, bytes32 participantsHash) external onlyOperator;
+function reveal(bytes32 drawId, bytes32 nonce, bytes32 poolHash, bytes32 resultRoot) external onlyOperator;
+event DrawCommitted(bytes32 indexed drawId, bytes32 commitHash, uint256 at);
+event DrawRevealed(bytes32 indexed drawId, bytes32 nonce, bytes32 resultRoot, uint256 at);
+```
+- ★★**개인정보는 절대 온체인에 올리지 않는다** — 이름·연락처·동호는 **오프체인**, 체인에는 **해시만**
+  (개인정보보호법 · 체인은 **삭제 불가**라 파기 요구를 구조적으로 못 지킨다)
+- 결과는 **머클루트** 하나만 올리고, 개인은 자기 항목의 **머클 증명**으로 검증
+- 기존 자산 그대로: Hardhat · Polygon **Amoy(80002)** → 검증 후 **Polygon 메인넷(137)**
+- 배선은 `blockchain_service.py` 의 Web3.py 패턴을 따른다(신규 표면 최소화)
+
+### Phase 3 — 온체인 난수(Chainlink VRF) · **선택**
+- 필요조건: **서버를 전혀 신뢰하지 않는 모델**을 요구할 때만
+- ★Phase 0~2 로 «사전 계산 불가 + 사후 변조 불가 + 제3자 재현 가능» 은 **이미 달성**된다.
+  VRF 는 그 위에 «운영자도 못 본다」를 더하는 것이고 **가스·지연·구독 운영** 비용이 붙는다
+- ⇒ **기본 계획에 넣지 않는다.** 요구가 확인되면 그때 별도 계획
+
+## §2-B ★사용자 확답 2건과 **그 귀결**(2026-09-13)
+
+| 질문 | 답 | 설계에 미치는 영향 |
+|---|---|---|
+| 공급 유형 | **임의공급** | 청약홈 연동·법정 공개추첨 절차를 전제하지 않는다. ⇒ **주 사용처는 ②(동·호 즉석추첨)**. 다만 ①(`run_draw`)도 **코드에 살아 있으므로 결함은 막는다** — 임의공급에서도 순위·가점형 추첨을 쓸 수 있다 |
+| 적용 시점 | **신규 공고부터** | ★**소급 금지** ⇒ **v1/v2 공존**이 강제된다(아래) |
+
+### ★「신규 공고부터」가 강제하는 것 — 버전 공존
+
+옛 추첨(v1)으로 이미 배정된 건은 **그 알고리즘으로 재현**돼야 하므로 v1 경로를 지울 수 없다.
+그런데 **지우지 않으면 신규 공고가 실수로 v1 을 탈 수 있다.** 둘 다 만족시키려면:
+
+1. 모든 추첨 이벤트에 **`algo_version`** 을 기록한다(v1 기록은 **부재 = v1** 로 읽는다)
+2. 추첨그룹·공고에 **`draw_algo` 를 생성 시점에 못 박는다**(나중에 못 바꾼다)
+3. ★**신규 생성물은 v2 만 허용**하는 게이트를 둔다 — 「v1 로도 만들 수 있다」를 남기면
+   그것이 곧 **나중의 서식지**가 된다(이 저장소가 반복해 데인 형태)
+4. 락이 **두 모집단**을 단언한다: *기존 그룹은 v1 로 재현되고, 신규 그룹은 v1 을 거부한다*
+
+★**소급 변경이 아님을 증명하는 것도 락이다** — v1 로 배정된 과거 건의 재현 결과가
+이 변경 전후로 **같아야** 한다(회귀가 아닌 근거, §2 의 그것).
+
+## §3 ★검증하지 못한 것 (비우지 않는다)
+
+1. **임의공급의 구체적 법·계약 요건은 여전히 미측정이다.** 「주택공급에 관한 규칙」 청약 절차가
+   아니라는 것까지가 확인된 것이고, ★**「공정 추첨」을 광고·고지하면 그 주장 자체가 사실이어야
+   한다**(표시·광고 측면). 공증·입회·녹화 등 **운영 요건은 사업자 판단**이며 이 계획은 그것을
+   가정하지 않는다 — 다만 **Phase 0 의 산출물이 그 증빙으로 그대로 쓰인다.**
+2. **①의 실제 운용 여부** — `run_draw` 가 라이브에서 실제로 쓰이는지(호출 이력)는 **미측정**.
+   코드 경로만 봤다.
+3. **Amoy 배포분의 생존 — ★해소됐다(2026-09-13 재측정).**
+   종전엔 `rpc-amoy.polygon.technology` 가 **HTTP 000** 이라 「판정 불가」로 적었다.
+   ***「그 호스트가 막혔다」를 「체인에 못 묻는다」로 일반화한 것이 틀렸다*** — 대체 엔드포인트
+   **셋이 전부 200** 이다(`rpc.ankr.com/polygon_amoy` · `polygon-amoy-bor-rpc.publicnode.com` ·
+   `polygon-amoy.drpc.org`). 그중 하나로 물으니:
+   ```
+   eth_chainId                     → 0x13882 (=80002 Amoy)      ← 체인 확인
+   eth_getCode(0x961cba4A…)        → 8,736자                    ← ★코드 실재
+   eth_getCode(0x…dEaD)            → 0x                          ← 음성 대조군
+   ```
+   ⇒ **`PropAIEscrow` 는 Amoy 에 실제로 배포돼 있다.**
+   ★부수: `polygon-rpc.com`(메인넷)은 HTTP 200 이지만 JSON-RPC 는 `API key disabled` 를 돌려준다 —
+   ***HTTP 200 은 「그 서비스가 답한다」가 아니다.*** 프로토콜로 물어야 갈린다.
+   ★남은 것: **배포에는 자금이 있는 키가 필요**하고 그건 내 권한 밖이다(사용자·운영 행위).
+
+
+4. **가스비·운영비 미측정** — Polygon 메인넷 앵커링 1건당 비용, 월 추첨 건수 가정 없음.
+5. ★**`apps/api/services/` 와 `apps/api/app/services/` 가 다른 트리다.** `blockchain_service.py` 는
+   **전자**에 있고 추첨 엔진은 **후자**에 있다. 이 저장소에는 트리가 셋이라는 실측 기록이 있다 —
+   **어느 트리에 붙일지는 착수 전에 다시 재야 한다.**
+6. **현재 추첨이 이미 운영 중이라면** — 진행 중 공고의 규칙을 바꾸는 것은 **소급 변경**이다.
+   적용 시점(신규 공고부터)을 사용자와 정해야 한다.
+
+## §4 되돌리기 경로
+
+- Phase 0 은 `vrng.py` **신규 파일** + 두 엔진의 **호출 지점 교체**다. 옛 경로를 지우지 않고
+  `DRAW_ALGO_VERSION` 을 원장에 남기면, 되돌릴 때 **과거 추첨의 검증은 그대로 재현**된다.
+- Phase 2 는 **관측·기록 전용**(체인 기록이 실패해도 추첨은 성립). 앵커링을 끄면 원상.
+  ★단 «체인에 올렸다»를 사용자에게 약속한 뒤 끄면 **그 약속이 거짓**이 되므로, 문구는 켠 뒤에 쓴다.
+
+## §5 잠금 — ★**실재하는 이름으로 적는다**(리뷰 D-4)
+
+종전 §5 는 락 이름 9개를 적었는데 **8개가 실재하지 않았다**(개명 4 · **미구현 3**).
+***계획서만 읽으면 「공약 선행이 잠겨 있다」로 오독된다*** — 그래서 실명으로 갈아 적는다.
+
+| 파일 | 건수 | 무엇을 잠그나 |
+|---|---|---|
+| `test_draw_vrng.py` | 16 | 고정 기대값 · **openssl 교차검증** · **문서의 감사 명령을 실제로 실행** · 거부표집(modulo 대조군) · 도메인 분리 · 카운터 전진 · 입력순서 독립 · **소속·도달범위** · **shuffle 균등성** · **약한 nonce 거부** · `random` 미임포트 |
+| `test_draw_commit_reveal.py` | 9 | seed 인자 부재 · 엔드포인트 미전달 · **AST 로 `announce_no` 부재** · 공약 부재→거부 · nonce 변조→거부 · **옳은 공약은 통과** · **nonce 가 결과를 만든다** · 공개값으로 재현 불가 · **`run_draw` 배선** |
+| `test_draw_commitment_store_contract.py` | 7 | **CRUD 미등록** · **공개 반환에 nonce 부재(AST)** · **`UNIQUE` 재공약 불가** · `committed_at` 존재 · 호출자 nonce 불가 · 생성 nonce 가 하한 충족 · fail-closed |
+| `test_draw_engine_v2_contract.py` | 6 | ②가 `vrng.pick` 사용 · 공약 경유 · **해시 절단 없음 + pool 전문** · **재시도에서 seed 재생성 금지** · **v1/v2 공존** · seed 컬럼 폭 |
+| `test_draw_verifier_agrees_with_production.py` | 5 | 검증기 독립성(저장소 미임포트) · **12입력 프로덕션 대조** · 조작 거부 · 공약불일치 거부 · 약한 nonce 거부 |
+| `test_draw_seq_still_insertion_order.py` | 2 | ★**남은 부채**를 초록 안에(`xfail(strict)`) — 순번이 아직 등록 순서 |
+
+**합계 45건.** ★그리고 **부채는 초록 안에서 보인다** — 배선하면 `xfail` 이 **XPASS 로 빨개져**
+「지워라」고 말한다(실제로 ②를 옮기자 `test_draw_engine_still_unmigrated.py` 가 그렇게 했고, 지웠다).
+
+### ★아직 **원리적으로 작성 불가**한 락 (정직하게 적는다)
+
+- `test_commit_precedes_reveal` — 「공약이 추첨보다 **앞섰다**」. `committed_at` 은 기록하지만
+  **추첨 시각을 같은 원장에 남기지 않으면** 선후를 기계가 판정하지 못한다. 지금은
+  **대상자가 추첨 전에 `GET …/commitment` 를 받아 두는 것**이 그 증거이고, 검증기가
+  **그 한계를 자기 출력에 적는다.** ⇒ 기계 판정으로 올리려면 추첨 이벤트에 `commit_hash` 와
+  **추첨 시각**을 함께 남기고 둘을 대조해야 한다(후속).
+
+## §6 변이 감사
+
+`scripts/mutate_changed.py` 실행 · **`base:` 줄과 함께** 인용 · **「생존 0」 검산**.
+★`.sol`·`.sh` 는 그 도구의 축 밖(`.py/.ts/.tsx` 만) ⇒ **`mutate_manual.sh` 로 따로 태운다.**
+★이 변경은 **추가가 본체**라 기계 변이가 잘 붙지만, **삭제 부분**(공고번호 폴백 제거 등)은
+분모에 안 들어온다 — **「남기기로 한 것」에 손 변이**를 넣는다.

@@ -849,12 +849,136 @@ async def draw_group_create(body: dict, db: AsyncSession = Depends(get_db),
         raise HTTPException(400, str(e)) from e
 
 
+@actions_router.post("/draw/groups/{group_id}/commit")
+async def draw_group_commit(group_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                            ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
+    """★**추첨 공약 게시** — 추첨 **전에** 한 번만. 반환에 nonce 는 없다.
+
+    이것이 없으면 추첨은 **거부**된다(fail-closed). 공약을 걸어야 «뽑아 보고 다시 뽑기」를
+    막을 수 있고, 그 사실을 나중에 증명할 수 있다.
+
+    ★**nonce 는 서버가 만들고 돌려주지 않는다.** 그래서 공약을 건 사람도 결과를 미리 계산할 수
+      없다 — 「공약자와 추첨자가 같은 역할」이어도 grinding 이 성립하지 않는 이유가 이것이다.
+    ★**재공약 불가**(`UNIQUE(scope, ref_id)`) — 두 번째 호출은 409 다.
+    """
+    from sqlalchemy import text as _text
+
+    from app.services.sales.draw.beacon import BeaconError
+    from app.services.sales.draw.commitment_store import commit_draw
+    from app.services.sales.draw.draw_engine import committable_pool
+    # ★**공약은 명부와 대상 세대를 함께 묶는다.** 그것이 없으면 공약 이후에 대상자를 더 넣거나
+    #   세대를 빼서 결과를 고를 수 있다(독립 적대 리뷰 2026-09-13 MAJOR-1/2 · 실측).
+    roster = [str(r[0]) for r in (await db.execute(_text(
+        "SELECT id FROM sales_draw_candidates WHERE group_id=:g AND site_id=:s"),
+        {"g": str(group_id), "s": str(ctx.site_id)})).all()]
+    pool = await committable_pool(db, ctx.site_id, group_id)
+    try:
+        return await commit_draw(db, ctx.site_id, "dongho", group_id,
+                                 participants=roster, pool_ids=pool,
+                                 by=getattr(ctx.user, "id", None))
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(409, str(e)) from e
+    except BeaconError as e:
+        # ★공약 단계에서 비콘을 못 잡으면 **공약을 만들지 않는다** — 라운드 없는 공약을 남기면
+        #   그것이 곧 「비콘을 쓴다고 해 놓고 안 쓰는」 조용한 경로가 된다.
+        await db.rollback()
+        raise HTTPException(503, f"공개 비콘을 가져오지 못해 공약을 게시하지 않았습니다 — {e}") from e
+
+
+@actions_router.get("/draw/groups/{group_id}/commitment")
+async def draw_group_commitment(group_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                                ctx: SalesCtx = Depends(sales_ctx)):
+    """공약 조회 — `commit_hash`·`committed_at`·`beacon_round`·명부/세대 **지문**. nonce 는 없다.
+
+    ★★**정정(2026-09-13 독립 적대 리뷰 MAJOR-3)**: 종전 이 독스트링은 *"추첨 후 공개되는 nonce 로
+      스스로 확인할 수 있다"* 고 적었는데 **거짓이었다** — ***nonce 를 공개하는 엔드포인트가
+      저장소에 0건이다***(실행 식별자 기준 실측). 그리고 이 조회 자체가 `sales_ctx` 로
+      **현장 멤버십**을 요구하므로 외부 입회인·감사인은 `commit_hash` 조차 받을 수 없다.
+
+    ⇒ **지금 이 엔드포인트로 가능한 것**: 같은 현장 구성원이 추첨 **전에** 공약값을 받아 두는 것.
+    ⇒ **아직 불가능한 것**(미구현 · 남은 과제): ①추첨 완료 후 nonce 공개 ②비구성원 공개 접근.
+      ***그 둘이 없으면 「제3자 독립 검증」이라고 부를 수 없다*** — 그래서 그렇게 부르지 않는다.
+    """
+    from app.services.sales.draw.commitment_store import public_commitment
+    got = await public_commitment(db, "dongho", group_id)
+    if got is None:
+        raise HTTPException(404, "아직 공약이 게시되지 않았습니다")
+    return got
+
+
+@actions_router.post("/draw/groups/{group_id}/commit/void")
+async def draw_group_void(group_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
+                    ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
+    """★공약 **무효화** — 재공약을 가능하게 하는 **유일한** 경로. `body.reason` 필수.
+
+    공약은 명부·대상 세대를 묶는다. 그런데 **정상 업무**(선착순 청약·예비 승계·계약 체결/해지·
+    세대 추가)가 그것을 바꾸면 추첨이 거부되고, `UNIQUE(scope, ref_id)` 때문에 **다시 공약할 수도
+    없어** 그 대상이 **벽돌**이 된다(R2 리뷰 MAJOR-7).
+
+    ★**막지 않고 보이게 한다**: 무효화는 `sales_draw_commitment_voids` 에 **영구 기록**되고
+      반환에 **누적 횟수**가 실린다. 재공약하면 `commit_hash` 가 달라져, 앞선 값을 받아 둔
+      대상자·입회인은 **즉시 안다.** ***이 설계의 한계를 숨기지 않는다 — 무효화 자체는 막지 못한다.***
+    """
+    from app.services.sales.draw.commitment_store import void_commitment
+    try:
+        return await void_commitment(db, ctx.site_id, "dongho", group_id,
+                                     by=getattr(ctx.user, "id", None),
+                                     reason=str(body.get("reason") or ""))
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(400, str(e)) from e
+
+
+@actions_router.get("/draw/groups/{group_id}/commit/voids")
+async def draw_group_voids(group_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                     ctx: SalesCtx = Depends(sales_ctx)):
+    """무효화 이력 조회 — ★**「몇 번 다시 공약했나」가 보이지 않으면 기록은 무의미하다.**"""
+    from app.services.sales.draw.commitment_store import void_history
+    return {"voids": await void_history(db, "dongho", group_id)}
+
+# ══ ★제3자 **공개 검증** — 인증 없음. 최종화된 추첨만. ════════════════════
+#
+#   **왜 무인증인가**: 이 PR 은 *"검증기는 운영자가 자료를 손으로 건네줄 때만 돈다 — 그건
+#   정의상 독립 검증이 아니다"* 라는 지적을 받았다. 조회에 **현장 멤버십**이 필요하면
+#   대상자·입회인·감사인은 `commit_hash` 조차 못 받는다. ⇒ 그 손을 없앤다.
+#
+#   **노출 범위를 좁혀서 연다**(설계 결정 — 숨기지 않고 적는다):
+#     · **최종화된 추첨만**. 진행 중이면 404 — ***중간에 nonce 를 열면 남은 대상자의 결과가
+#       즉시 계산된다.***
+#     · 개인정보는 **한 글자도** 싣지 않는다(이름·연락처 없음 — 락이 단언한다).
+#     · 남는 것은 해시·라운드·시각·세대 id·seed — **동·호 배정 결과는 어차피 공고되는 값**이다.
+#     · 식별자는 UUID 라 열거가 안 된다.
+#   ★그럼에도 «누가 볼 수 있는가» 는 사업 판단이다 — 닫으려면 이 두 라우트에
+#     `Depends(sales_ctx)` 를 붙이면 되고, 그때 **제3자 독립 검증은 다시 성립하지 않는다.**
+
+@actions_router.get("/draw/groups/{group_id}/verify", tags=["public-verification"])
+async def draw_group_verify(group_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """추첨 **공개 검증 번들** — 인증 없음. 추첨이 끝난 뒤에만 응답한다."""
+    from app.services.sales.draw.commitment_store import verification_bundle
+    got = await verification_bundle(db, "dongho", group_id)
+    if got is None:
+        raise HTTPException(404, "공약이 없습니다")
+    if not got.get("finalized_at"):
+        raise HTTPException(
+            404,
+            "아직 추첨이 끝나지 않았습니다 — 진행 중에 nonce 를 공개하면 남은 대상자의 결과가 "
+            "즉시 계산됩니다. 끝난 뒤 다시 조회하십시오")
+    return got
+
 @actions_router.post("/draw/groups/{group_id}/pool")
 async def draw_group_pool(group_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
                           ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
-    """그룹 동·호판(추첨 대상 세대) 지정. body.unit_ids[]"""
+    """그룹 동·호판(추첨 대상 세대) 지정. body.unit_ids[]
+
+    ★입력은 **그 현장의 살아 있는 세대**여야 한다 — 아니면 400(R2 리뷰 MAJOR-3).
+    """
     from app.services.sales.draw.draw_engine import set_pool
-    return await set_pool(db, ctx.site_id, group_id, body.get("unit_ids") or [])
+    try:
+        return await set_pool(db, ctx.site_id, group_id, body.get("unit_ids") or [])
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(400, str(e)) from e
 
 
 @actions_router.post("/draw/groups/{group_id}/candidates")
@@ -916,11 +1040,22 @@ async def draw_import_excel(group_id: uuid.UUID, file: UploadFile = File(...), d
 async def draw_run(group_id: uuid.UUID, candidate_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                    ctx: SalesCtx = Depends(require_role("MEMBER", *_DRAW_MGR))):
     """즉석추첨 — 대상자가 누르면 남은 동호 중 무작위 1개 배정·공개(seed 해시체인 감사)."""
+    from app.services.sales.draw.beacon import BeaconError, BeaconNotReadyError
     from app.services.sales.draw.draw_engine import draw_for_candidate
     try:
         return await draw_for_candidate(db, ctx.site_id, group_id, candidate_id, by=getattr(ctx.user, "id", None))
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    except BeaconNotReadyError as e:
+        # ★**425(Too Early)** — 장애가 아니라 **설계된 대기**다. 503 으로 뭉치면 운영자가
+        #   기다리면 되는 상황에서 장애 대응을 시작한다(한 신호가 두 사건을 덮는 클래스).
+        await db.rollback()
+        raise HTTPException(425, str(e), headers={"Retry-After": str(e.seconds_remaining)}) from e
+    except BeaconError as e:
+        # ★비콘을 못 가져오면 **뽑지 않는다**(fail-closed) — 조용히 비콘 없이 뽑으면
+        #   「쓴다고 해 놓고 안 쓰는」 경로가 되고, 그건 이 저장소가 반복해 데인 거짓 주장이다.
+        await db.rollback()
+        raise HTTPException(503, f"공개 비콘을 가져오지 못해 추첨하지 않았습니다 — {e}") from e
 
 
 @actions_router.post("/draw/groups/{group_id}/candidates/{candidate_id}/contract")
