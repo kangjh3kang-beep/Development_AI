@@ -158,7 +158,11 @@ async def rone_status(keyword: str = "지가변동"):
     stat_envs = {
         "지가변동률": ("RONE_LANDPRICE_STATBL_ID", "지가변동률"),
         "주택 매매가격지수": ("RONE_HOUSING_STATBL_ID", "매매가격지수"),
-        "상업용 투자수익률": ("RONE_COMMYIELD_STATBL_ID", "투자수익률"),
+        # ★표시명은 **우리가 쓰는 항목**(소득수익률=자본환원율)을 말하고,
+        #   검색어는 **R-ONE 표 이름**을 찾는 기능값이라 그대로 둔다 — 그 표는
+        #   「투자수익률」 이름으로 등재돼 있고 그 안의 항목 중 소득수익률을 고른다.
+        #   ★검색어를 재보지 않고 바꾸면 통계표 탐색이 조용히 0건이 된다.
+        "상업용 소득수익률(자본환원율)": ("RONE_COMMYIELD_STATBL_ID", "투자수익률"),
         "전월세전환율": ("RONE_JEONSE_CONV_STATBL_ID", "전월세전환율"),
     }
     discovery: dict = {}
