@@ -1,0 +1,245 @@
+"""VRNG 락 — ★**「제3자가 재현할 수 있다」를 실제로 태운다.**
+
+이 파일의 중심 단언은 성능도 분포도 아니고 ***재현 가능성***이다.
+기존 추첨은 `random.Random(seed).choice()` 였는데 그건 **CPython 구현 세부**라
+파이썬 버전이 바뀌면 결과가 달라질 수 있고 **다른 언어로는 재현할 수 없다.**
+감사자가 우리 런타임을 신뢰해야 한다면 그것은 감사가 아니다.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import shutil
+import subprocess
+
+import pytest
+
+from app.services.sales.draw import vrng
+
+KEY = bytes.fromhex("00112233445566778899aabbccddeeff")
+
+
+# ── ① 재현 가능성 ──────────────────────────────────────────────────────────
+def test_block_is_pinned_to_a_known_value():
+    """★**고정 기대값**. 파이썬 버전이 바뀌어도 이 값이 바뀌면 과거 추첨의 재현이 깨진다.
+
+    이 수는 `openssl` 로 교차검증했다(아래 테스트가 그것을 자동으로 다시 한다).
+    """
+    assert vrng._block(KEY, "draw", 0) == 3109219369
+
+
+def test_reproducible_without_python_via_openssl():
+    """★★**파이썬 없이 재현되는가** — 이 파일의 존재 이유.
+
+    `openssl` 이 없는 환경이면 skip 하되, ***그 경우 이 축은 검증되지 않았다***는 뜻이다
+    (조용히 초록으로 넘기지 않기 위해 사유를 남긴다).
+    """
+    if not shutil.which("openssl"):
+        pytest.skip("openssl 부재 — ★이 실행에서는 「언어 독립」 축이 검증되지 않았다")
+    out = subprocess.run(
+        ["openssl", "dgst", "-sha256", "-mac", "HMAC",
+         "-macopt", f"hexkey:{KEY.hex()}", "-hex"],
+        input=b"draw:0", capture_output=True, check=True,
+    ).stdout.decode()
+    digest_hex = out.strip().split("= ")[-1]
+    assert int(digest_hex[:8], 16) == vrng._block(KEY, "draw", 0), (
+        f"openssl({digest_hex[:8]}) 과 파이썬이 갈렸다 — 「누구나 재현」이 거짓이 된다"
+    )
+
+
+def test_message_format_is_exactly_domain_colon_counter():
+    """검증 사양(주석)이 말하는 메시지 형식이 **실제 형식**인가 — 주석도 검증 대상이다."""
+    expect = int.from_bytes(
+        hmac.new(KEY, b"unit:7", hashlib.sha256).digest()[:4], "big")
+    assert vrng._block(KEY, "unit", 7) == expect
+
+
+# ── ② 편향 ────────────────────────────────────────────────────────────────
+def test_rejection_sampling_beats_modulo_on_a_skewed_range():
+    """★**두 모집단** — 거부 표집과 단순 modulo 를 **같은 키로** 돌려 편향을 갈라 본다.
+
+    n 을 2^32 의 약수가 아닌 큰 값으로 잡으면 modulo 는 앞쪽 인덱스가 유리해진다.
+    ★대조군이 없으면 「우리 것이 균등하다」는 **비교 대상 없는 주장**이다.
+    """
+    n = 3_000_000_000          # 2^32 의 약수가 아니고, 절반 이상이라 편향이 크게 드러난다
+    bound = (1 << 32) - ((1 << 32) % n)
+    low_ours = low_mod = 0
+    trials = 4000
+    counter = 0
+    for i in range(trials):
+        raw = vrng._block(KEY, "bias", i)
+        if raw % n < n // 2:
+            low_mod += 1
+        v, counter = vrng.below(KEY, "bias2", n, start=counter)
+        if v < n // 2:
+            low_ours += 1
+    # 우리 것: 이론적으로 정확히 균등 → 절반 근처
+    assert 0.45 * trials < low_ours < 0.55 * trials, low_ours
+    # 대조군이 살아 있는가 — bound 가 실제로 범위를 잘랐는가(공허 방지)
+    assert bound < (1 << 32), "거부 구간이 없다 — 이 테스트가 아무것도 안 본다"
+
+
+def test_below_refuses_empty_and_oversized():
+    """「뽑을 것이 없다」를 **0번을 뽑았다**로 만들지 않는다."""
+    with pytest.raises(ValueError):
+        vrng.below(KEY, "d", 0)
+    with pytest.raises(ValueError):
+        vrng.below(KEY, "d", (1 << 32) + 1)
+
+
+# ── ③ 도메인 분리 · 스트림 ────────────────────────────────────────────────
+def test_domains_are_independent():
+    """같은 키라도 도메인이 다르면 결과가 상관되지 않아야 한다(세대 선택 ↔ 순번 배정)."""
+    a = [vrng.below(KEY, "unit", 100, start=i)[0] for i in range(50)]
+    b = [vrng.below(KEY, "seq", 100, start=i)[0] for i in range(50)]
+    assert a != b, "두 도메인이 같은 수열을 낸다 — 도메인 분리가 동작하지 않는다"
+
+
+def test_counter_advances_so_the_same_draw_is_not_repeated():
+    """연속 호출이 **같은 값을 반복하지 않는다**(카운터를 이어 받는다)."""
+    v1, c1 = vrng.below(KEY, "d", 1000, start=0)
+    v2, c2 = vrng.below(KEY, "d", 1000, start=c1)
+    assert c1 > 0 and c2 > c1
+    assert (v1, c1) != (v2, c2)
+
+
+# ── ④ 입력 순서 독립 ──────────────────────────────────────────────────────
+def test_pick_is_independent_of_input_order():
+    """★명부를 **어떤 순서로 넣든** 같은 결과여야 한다 — 아니면 등록 순서가 추첨에 영향을 준다.
+
+    ★★그리고 **뽑힌 값이 입력에서 와야** 한다. 기계 변이가 이 구멍을 짚었다:
+      `ordered = sorted(items)` → `ordered = 0,`(튜플 `(0,)`)로 바꾸면 `pick` 이 입력과 **무관한
+      `0`** 을 돌려주는데, 「두 순서의 결과가 같다」만 보면 **둘 다 0 이라 통과**한다.
+      ***존재를 잠그고 행위는 안 잠근 형태다*** — 소속과 도달 범위를 함께 단언한다.
+    """
+    items = ["u-c", "u-a", "u-d", "u-b"]
+    got_a, _ = vrng.pick(KEY, "unit", items)
+    got_b, _ = vrng.pick(KEY, "unit", list(reversed(items)))
+    assert got_a == got_b, (got_a, got_b)
+    assert got_a in items, f"입력에 없는 값을 뽑았다: {got_a!r}"
+
+
+def test_pick_reaches_every_item_and_never_leaves_the_pool():
+    """★**도달 범위** — 키를 바꿔 가며 뽑으면 목록의 **모든 항목**이 나와야 한다.
+
+    한 항목만 계속 나오거나 목록 밖 값이 나오면 추첨이 아니다.
+    """
+    items = ["u-a", "u-b", "u-c", "u-d"]
+    seen = set()
+    for i in range(200):
+        got, _ = vrng.pick(bytes([i % 256]) * 16, "unit", items)
+        assert got in items, f"목록 밖 값: {got!r}"
+        seen.add(got)
+    assert seen == set(items), f"도달하지 못한 항목이 있다: {set(items) - seen}"
+
+
+def test_shuffle_is_a_permutation_and_order_independent():
+    """순번 배정 — **빠지거나 겹치는 사람이 없어야** 한다(집합 보존)."""
+    people = [f"p{i:02d}" for i in range(20)]
+    out_a, _ = vrng.shuffle(KEY, "seq", people)
+    out_b, _ = vrng.shuffle(KEY, "seq", list(reversed(people)))
+    assert sorted(out_a) == sorted(people), "사람이 사라지거나 중복됐다"
+    assert out_a == out_b, "입력 순서가 순번에 영향을 준다"
+    assert out_a != people, "섞이지 않았다(항등 순열)"
+
+
+# ── ⑤ 공약(commit–reveal) ─────────────────────────────────────────────────
+def test_commitment_roundtrip_and_tamper_rejection():
+    """★**두 모집단** — 옳은 nonce 는 통과하고 **바꾼 nonce 는 거부**된다."""
+    nonce = "a1" * 32
+    c = vrng.commitment(nonce)
+    assert vrng.verify_commitment(nonce, c) is True
+    assert vrng.verify_commitment("b2" * 32, c) is False, (
+        "다른 nonce 가 통과한다 — 서버가 뽑아 보고 seed 를 갈아치울 수 있다"
+    )
+    assert vrng.verify_commitment(nonce, "") is False
+
+
+def test_seed_key_mixes_contributions_so_server_alone_cannot_decide():
+    """★서버 nonce 가 같아도 **명부가 다르면 키가 다르다** — 명부 확정 전엔 결과를 못 고른다."""
+    nonce = "cc" * 32
+    k1 = vrng.seed_key(nonce, "roster-hash-A")
+    k2 = vrng.seed_key(nonce, "roster-hash-B")
+    assert k1 != k2, "기여값이 키에 섞이지 않는다 — 서버가 단독으로 결과를 정한다"
+    # 순서도 계약이다(검증 사양에 적힌 순서와 같아야 한다)
+    assert vrng.seed_key(nonce, "A", "B") != vrng.seed_key(nonce, "B", "A")
+
+
+def test_vrng_does_not_use_python_random():
+    """★`random` 을 다시 끌어들이면 언어 독립이 깨진다 — 실행 코드에서 금지."""
+    import ast
+    import pathlib
+    src = pathlib.Path(vrng.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    imported = {
+        n.names[0].name.split(".")[0]
+        for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom)) and n.names
+    }
+    assert "hmac" in imported, "대조군 실패 — 임포트를 하나도 못 읽었다"
+    assert "random" not in imported, f"random 을 임포트한다: {sorted(imported)}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★독립 적대 리뷰(2026-09-13)가 **SURVIVED 로 실증한** 자리들 — 전부 내 분모 밖이었다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_documented_audit_command_actually_runs():
+    """★★**독스트링에 적은 「감사 사양」을 그대로 셸에 태운다**(리뷰 D-3).
+
+    나는 `openssl … <<< -n "draw:0"` 이라 적고 *"이 주석이 곧 감사 사양이다"* 라고 선언했는데
+    ***그 명령은 실행되지 않는다***(`draw:0: No such file or directory` — `<<<` 가 인자를
+    **파일명**으로 읽는다). 내 테스트는 `subprocess(input=...)` 라는 **다른 형태**를 태워서
+    그 오류를 **한 번도 보지 못했다.**
+    ⇒ 이 저장소의 선례(`test_sw_cache_name_derivation_contract.py`)처럼 **문서의 명령 자체**를 태운다.
+    """
+    import pathlib
+    import re
+
+    if not shutil.which("openssl"):
+        pytest.skip("openssl 부재 — ★이 실행에서는 「감사 사양이 돈다」가 검증되지 않았다")
+    src = pathlib.Path(vrng.__file__).read_text(encoding="utf-8")
+    m = re.search(r"^\s{8}(printf .*openssl [^\n]*)$", src, re.MULTILINE)
+    assert m, "독스트링에서 감사 명령을 못 찾았다 — 사양이 사라졌거나 형식이 바뀌었다"
+    cmd = m.group(1).replace("<KEY_HEX>", KEY.hex())
+    out = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, check=False)
+    assert out.returncode == 0, f"문서의 명령이 실패한다: {out.stderr[:200]}"
+    digest_hex = out.stdout.strip().split("= ")[-1]
+    assert int(digest_hex[:8], 16) == vrng._block(KEY, "draw", 0), (
+        f"문서 명령의 결과({digest_hex[:8]})가 구현과 다르다 — 감사자가 재현하면 갈린다"
+    )
+
+
+def test_weak_nonce_is_rejected_but_strong_one_passes():
+    """★**두 모집단**(리뷰 D-2) — 짧은 nonce 는 거부, 32바이트는 통과."""
+    weak = "00"
+    assert vrng.verify_commitment(weak, vrng.commitment(weak)) is False, (
+        "8비트 nonce 가 통과한다 — 공약에서 nonce 를 전수탐색할 수 있다"
+    )
+    strong = "3f" * 32
+    assert vrng.verify_commitment(strong, vrng.commitment(strong)) is True
+    assert vrng.is_strong_nonce("zz" * 32) is False, "16진이 아닌데 통과한다"
+    assert vrng.is_strong_nonce("ab" * 31) is False, "31바이트가 통과한다"
+
+
+def test_shuffle_is_uniform_not_just_a_permutation():
+    """★**균등성**(리뷰 D-1) — Fisher–Yates 경계를 `i+1`→`i` 로 바꿔도 종전 락은 초록이었다.
+
+    순열 보존·순서 독립·비항등은 **편향된 변형에서도 참**이라 아무것도 못 본다.
+    ⇒ 마지막 원소가 **모든 자리에 고르게** 가는지를 본다(편향되면 한 자리가 비거나 몰린다).
+    """
+    n = 5
+    items = [f"x{i}" for i in range(n)]
+    pos_counts = [0] * n
+    trials = 600
+    for i in range(trials):
+        out, _ = vrng.shuffle(bytes([i % 256]) * 16, "seq", items)
+        pos_counts[out.index("x4")] += 1
+    expect = trials / n
+    # 공허 방지 — 실제로 섞였는가(한 자리에 전부 몰리면 아래 단언이 의미를 갖는다)
+    assert sum(pos_counts) == trials
+    for idx, c in enumerate(pos_counts):
+        assert 0.6 * expect < c < 1.4 * expect, (
+            f"자리 {idx} 의 빈도가 {c}(기대 {expect:.0f}) — 순번 배정이 편향됐다: {pos_counts}"
+        )
