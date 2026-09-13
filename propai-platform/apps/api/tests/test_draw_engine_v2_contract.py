@@ -35,7 +35,7 @@ def test_selection_uses_vrng_not_python_random():
 def test_commitment_is_required_for_dongho_draw():
     """★공약 저장소를 **거친다** — 공약 없는 추첨은 그 함수가 거부한다(fail-closed)."""
     names = _live_names()
-    assert "reveal_nonce" in names, "②가 공약을 읽지 않는다 — grinding 을 못 막는다"
+    assert "reveal_commitment" in names, "②가 공약을 읽지 않는다 — grinding 을 못 막는다"
 
 
 def test_pool_hash_is_not_truncated_and_pool_is_stored():

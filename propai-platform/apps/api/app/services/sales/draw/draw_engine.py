@@ -28,8 +28,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.sales.draw import vrng
-from app.services.sales.draw.commitment_store import reveal_nonce
+from app.services.sales.draw import beacon, vrng
+from app.services.sales.draw.commitment_store import reveal_commitment
 from app.services.sales.units.event_ledger import append_event
 
 _DDL_GROUPS = (
@@ -272,9 +272,15 @@ async def draw_for_candidate(db: AsyncSession, site_id, group_id, candidate_id, 
     #   ⇒ 공약된 nonce 로 **HMAC-SHA256 기반 VRNG**(`vrng.pick`)를 쓰고, pool 을 **전문 저장**한다.
     #   ★카운터는 **대상자 순번**으로 도메인 분리한다 — 같은 그룹 안에서 두 사람이 같은 스트림을
     #     쓰면 결과가 상관된다.
-    nonce_hex, commit_hex = await reveal_nonce(db, "dongho", group_id)
+    #   ★★**Phase 1(비콘)**: 공약 시점에 못 박은 **미래 drand 라운드**를 여기서 가져와 키에 섞는다.
+    #     그래서 nonce 를 아는 사람(DB 직접 접근)도 **그 라운드가 공개되기 전에는** 결과를 계산할 수
+    #     없다. 라운드가 아직이면 `beacon.seed_contributions` 가 **몇 초 남았는지 말하며 거부**하고,
+    #     비콘을 못 가져와도 **거부**한다(fail-closed — 조용히 비콘 없이 뽑지 않는다).
+    rev = await reveal_commitment(db, "dongho", group_id)
+    commit_hex = rev.commit_hash
+    beacon_parts, beacon_label = beacon.seed_contributions(rev.beacon_round)
     domain = f"dongho:{group_id}:{candidate_id}"
-    key = vrng.seed_key(nonce_hex, str(group_id), str(candidate_id))
+    key = vrng.seed_key(rev.nonce, str(group_id), str(candidate_id), *beacon_parts)
     seed = key.hex()
 
     chosen: str | None = None
@@ -315,13 +321,16 @@ async def draw_for_candidate(db: AsyncSession, site_id, group_id, candidate_id, 
                             message=f"추첨 배정: {cand[1]}(순번 {cand[0]})", by=by,
                             meta={"group_id": str(group_id), "candidate_id": str(candidate_id),
                                   "seed": seed, "pool_hash": pool_hash, "pool_size": len(pool_sorted),
-                                  "algo_version": "v2", "commit_hash": commit_hex},
+                                  "algo_version": "v2", "commit_hash": commit_hex,
+                                  "beacon_round": rev.beacon_round, "beacon": beacon_label},
                             do_commit=False)
     await db.commit()
     return {
         "ok": True, "candidate": {"seq": int(cand[0]), "name": cand[1]},
         "assigned_unit": {"id": chosen, "dong": u[0] if u else None, "ho": u[1] if u else None},
         "seed": seed, "pool_hash": pool_hash, "pool_size": len(pool_sorted), "remaining_after": len(remaining) - 1,
+        # ★비콘을 **썼는지 안 썼는지**를 응답이 말한다 — 침묵하면 「썼다고 해 놓고 안 쓰는」 경로가 보이지 않는다.
+        "beacon_round": rev.beacon_round, "beacon": beacon_label,
         "event": ev,
     }
 

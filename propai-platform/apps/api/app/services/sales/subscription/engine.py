@@ -8,8 +8,8 @@ from itertools import groupby
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.sales.draw import vrng
-from app.services.sales.draw.commitment_store import reveal_nonce
+from app.services.sales.draw import beacon, vrng
+from app.services.sales.draw.commitment_store import reveal_commitment
 from app.services.sales.harness.outbox import emit_outbox
 from apps.api.database.models.sales.subscription import (
     SalesSubscriptionAnnouncement,
@@ -108,9 +108,17 @@ async def run_draw(db: AsyncSession, site_id, announcement_id) -> int:
     #     게다가 `rules` 는 읽기 API 에 실려 nonce 를 미리 넣으면 **누구나 사전 계산**했다.
     #     ⇒ 공약을 **CRUD 밖의 append-only 저장소**로 옮긴다(`sales_draw_commitments`,
     #       `UNIQUE(scope, ref_id)` 로 **재공약 불가** · nonce 는 읽기 API 에 안 실린다).
-    nonce_hex, commit_hex = await reveal_nonce(db, "subscription", announcement_id)
+    #   ★★**Phase 1(비콘)**: 공약에 못 박은 **미래 drand 라운드**를 seed 에 섞는다 — nonce 를
+    #     아는 사람도 그 라운드가 공개되기 전에는 결과를 계산할 수 없다. 라운드가 아직이거나
+    #     비콘을 못 가져오면 **추첨을 거부**한다(fail-closed).
+    rev = await reveal_commitment(db, "subscription", announcement_id)
+    beacon_parts, beacon_label = beacon.seed_contributions(rev.beacon_round)
+    # ★청약 추첨은 당첨자 수(int)만 돌려주므로 **어떤 공약·어떤 비콘으로 뽑았는지가 반환에 실릴
+    #   자리가 없다.** 그 사실을 침묵으로 두지 않고 원장에 남긴다 — 사후 감사자가 `public_commitment`
+    #   의 `commit_hash`·`beacon_round` 와 이 줄을 대조할 수 있다.
+    logger.info("run_draw 공약 공개: ann=%s commit=%s 비콘=%s", announcement_id, rev.commit_hash, beacon_label)
     # 명부를 키에 섞는다 — 명부가 확정되기 전에는 결과를 고를 수 없다(서버 단독 결정 배제).
-    seed = vrng.seed_key(nonce_hex, str(announcement_id)).hex()
+    seed = vrng.seed_key(rev.nonce, str(announcement_id), *beacon_parts).hex()
     rules = ann.rules or {}
     special_ratio = rules.get("special_ratio", {})  # {type_id: 0~1} 파라미터
     apps = list((await db.execute(select(SalesSubscriptionApplication).where(

@@ -22,6 +22,7 @@ import inspect
 
 import pytest
 
+from app.services.sales.draw import commitment_store as cs
 from app.services.sales.draw import vrng
 from app.services.sales.subscription import engine as sub_engine
 
@@ -114,15 +115,16 @@ def _run_with(rules, *, commitment=None, monkeypatch=None):
         nonce, commit_hash = commitment
         if not vrng.verify_commitment(nonce, commit_hash):
             raise ValueError("추첨 공약이 일치하지 않습니다 — 저장된 nonce 가 공약과 다릅니다")
-        return nonce, commit_hash
+        # ★비콘 라운드 `None` — **Phase 0 시기 공약**을 흉내 낸다. 네트워크를 안 탄다.
+        return cs.Revealed(nonce, commit_hash, None)
 
-    orig = sub_engine.reveal_nonce
-    sub_engine.reveal_nonce = _fake_reveal
+    orig = sub_engine.reveal_commitment
+    sub_engine.reveal_commitment = _fake_reveal
     try:
         return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
             sub_engine.run_draw(_DB(), object(), ann.id))
     finally:
-        sub_engine.reveal_nonce = orig
+        sub_engine.reveal_commitment = orig
 
 
 def test_draw_without_commitment_is_refused():
@@ -308,8 +310,8 @@ def test_run_draw_feeds_the_nonce_derived_seed_into_ranking(monkeypatch):
     def _run(nonce):
         seen.clear()
         async def _rev(_db, _s, _r):
-            return nonce, vrng.commitment(nonce)
-        monkeypatch.setattr(sub_engine, "reveal_nonce", _rev, raising=False)
+            return cs.Revealed(nonce, vrng.commitment(nonce), None)
+        monkeypatch.setattr(sub_engine, "reveal_commitment", _rev)
         try:
             asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
                 sub_engine.run_draw(_DB(), object(), ann.id))

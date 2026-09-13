@@ -76,6 +76,7 @@ _AMOUNT_CAP = 1_000_000_000_000
 async def subscription_draw_commit(ann_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                                    ctx: SalesCtx = Depends(require_role(*_R_SUBSCRIPTION_DRAW))):
     """★청약 추첨 **공약 게시** — 추첨 전에 한 번만. 반환에 nonce 는 없다."""
+    from app.services.sales.draw.beacon import BeaconError
     from app.services.sales.draw.commitment_store import commit_draw
     try:
         return await commit_draw(db, ctx.site_id, "subscription", ann_id,
@@ -83,6 +84,11 @@ async def subscription_draw_commit(ann_id: uuid.UUID, db: AsyncSession = Depends
     except ValueError as e:
         await db.rollback()
         raise HTTPException(409, str(e)) from e
+    except BeaconError as e:
+        # ★공약 단계에서 비콘을 못 잡으면 **공약을 만들지 않는다** — 라운드 없는 공약을 남기면
+        #   그것이 곧 「비콘을 쓴다고 해 놓고 안 쓰는」 조용한 경로가 된다.
+        await db.rollback()
+        raise HTTPException(503, f"공개 비콘을 가져오지 못해 공약을 게시하지 않았습니다 — {e}") from e
 
 
 @r5.get("/subscription/{ann_id}/draw/commitment")
@@ -99,6 +105,7 @@ async def subscription_draw_commitment(ann_id: uuid.UUID, db: AsyncSession = Dep
 @r5.post("/subscription/{ann_id}/draw")
 async def draw(ann_id: uuid.UUID, body: dict | None = None, db: AsyncSession = Depends(get_db),
                ctx: SalesCtx = Depends(require_role(*_R_SUBSCRIPTION_DRAW))):
+    from app.services.sales.draw.beacon import BeaconError, BeaconNotReadyError
     try:
         # ★**호출자 seed 를 더는 받지 않는다**(2026-09-13). 종전엔 body.seed 가 그대로
         #   추첨 키가 돼 **호출자가 결과를 고를 수 있었다**. seed 는 사전 공약된 nonce 에서만 온다.
@@ -112,6 +119,16 @@ async def draw(ann_id: uuid.UUID, body: dict | None = None, db: AsyncSession = D
     except ValueError as e:
         await db.rollback()
         raise HTTPException(409, str(e)) from e
+    except BeaconNotReadyError as e:
+        # ★**425(Too Early)** — 장애가 아니라 **설계된 대기**다. 503 으로 뭉치면 운영자가
+        #   기다리면 되는 상황에서 장애 대응을 시작한다(한 신호가 두 사건을 덮는 클래스).
+        await db.rollback()
+        raise HTTPException(425, str(e), headers={"Retry-After": str(e.seconds_remaining)}) from e
+    except BeaconError as e:
+        # ★비콘을 못 가져오면 **뽑지 않는다**(fail-closed) — 조용히 비콘 없이 뽑으면
+        #   「쓴다고 해 놓고 안 쓰는」 경로가 되고, 그건 이 저장소가 반복해 데인 거짓 주장이다.
+        await db.rollback()
+        raise HTTPException(503, f"공개 비콘을 가져오지 못해 추첨하지 않았습니다 — {e}") from e
     await db.commit()
     return {"winners": n}
 

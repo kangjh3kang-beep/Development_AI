@@ -22,6 +22,7 @@ import sys
 import uuid as uuid_mod
 from datetime import UTC, datetime
 
+from app.services.sales.draw import commitment_store as _cs
 from app.services.sales.draw import vrng as _vrng
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -579,8 +580,12 @@ _FIXED_NONCE = "5a" * 32
 def _stub_commitment(monkeypatch):
     """추첨 경로의 공약 조회를 고정값으로 — DB 없는 단위테스트의 경계."""
     async def _fake(_db, _scope, _ref):
-        return _FIXED_NONCE, _vrng.commitment(_FIXED_NONCE)
-    monkeypatch.setattr(sub_engine, "reveal_nonce", _fake, raising=False)
+        # 비콘 라운드 None — 이 픽스처는 네트워크를 타지 않는다(Phase 0 시기 공약과 같은 모양).
+        return _cs.Revealed(_FIXED_NONCE, _vrng.commitment(_FIXED_NONCE), None)
+    # ★`raising=True`(기본) — 종전엔 `raising=False` 였다. 그러면 대상 이름이 바뀌어도
+    #   **조용히 없는 속성을 덮어쓰고** 프로덕션 함수가 그대로 불린다. 실제로 이번 개명에서
+    #   이 픽스처만 빨개지지 않았다 ⇒ ***스텁의 `raising=False` 는 개명을 못 보는 눈이다.***
+    monkeypatch.setattr(sub_engine, "reveal_commitment", _fake)
 
 
 class _DrawAnn:

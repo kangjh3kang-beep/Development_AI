@@ -108,5 +108,5 @@ def test_reveal_refuses_when_there_is_no_commitment():
 
     with pytest.raises(ValueError) as e:
         asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
-            cs.reveal_nonce(_DB(), "subscription", "x"))
+            cs.reveal_commitment(_DB(), "subscription", "x"))
     assert "공약이 없습니다" in str(e.value), str(e.value)

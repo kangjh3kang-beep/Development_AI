@@ -861,6 +861,7 @@ async def draw_group_commit(group_id: uuid.UUID, db: AsyncSession = Depends(get_
       없다 — 「공약자와 추첨자가 같은 역할」이어도 grinding 이 성립하지 않는 이유가 이것이다.
     ★**재공약 불가**(`UNIQUE(scope, ref_id)`) — 두 번째 호출은 409 다.
     """
+    from app.services.sales.draw.beacon import BeaconError
     from app.services.sales.draw.commitment_store import commit_draw
     try:
         return await commit_draw(db, ctx.site_id, "dongho", group_id,
@@ -868,6 +869,11 @@ async def draw_group_commit(group_id: uuid.UUID, db: AsyncSession = Depends(get_
     except ValueError as e:
         await db.rollback()
         raise HTTPException(409, str(e)) from e
+    except BeaconError as e:
+        # ★공약 단계에서 비콘을 못 잡으면 **공약을 만들지 않는다** — 라운드 없는 공약을 남기면
+        #   그것이 곧 「비콘을 쓴다고 해 놓고 안 쓰는」 조용한 경로가 된다.
+        await db.rollback()
+        raise HTTPException(503, f"공개 비콘을 가져오지 못해 공약을 게시하지 않았습니다 — {e}") from e
 
 
 @actions_router.get("/draw/groups/{group_id}/commitment")
@@ -952,11 +958,22 @@ async def draw_import_excel(group_id: uuid.UUID, file: UploadFile = File(...), d
 async def draw_run(group_id: uuid.UUID, candidate_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                    ctx: SalesCtx = Depends(require_role("MEMBER", *_DRAW_MGR))):
     """즉석추첨 — 대상자가 누르면 남은 동호 중 무작위 1개 배정·공개(seed 해시체인 감사)."""
+    from app.services.sales.draw.beacon import BeaconError, BeaconNotReadyError
     from app.services.sales.draw.draw_engine import draw_for_candidate
     try:
         return await draw_for_candidate(db, ctx.site_id, group_id, candidate_id, by=getattr(ctx.user, "id", None))
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    except BeaconNotReadyError as e:
+        # ★**425(Too Early)** — 장애가 아니라 **설계된 대기**다. 503 으로 뭉치면 운영자가
+        #   기다리면 되는 상황에서 장애 대응을 시작한다(한 신호가 두 사건을 덮는 클래스).
+        await db.rollback()
+        raise HTTPException(425, str(e), headers={"Retry-After": str(e.seconds_remaining)}) from e
+    except BeaconError as e:
+        # ★비콘을 못 가져오면 **뽑지 않는다**(fail-closed) — 조용히 비콘 없이 뽑으면
+        #   「쓴다고 해 놓고 안 쓰는」 경로가 되고, 그건 이 저장소가 반복해 데인 거짓 주장이다.
+        await db.rollback()
+        raise HTTPException(503, f"공개 비콘을 가져오지 못해 추첨하지 않았습니다 — {e}") from e
 
 
 @actions_router.post("/draw/groups/{group_id}/candidates/{candidate_id}/contract")
