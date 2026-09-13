@@ -240,3 +240,84 @@ async def public_commitment(db: AsyncSession, scope: str, ref_id) -> dict[str, A
             "pool_hash": str(row[5]) if row[5] else None,
             "participants_count": len(row[6] or []),
             "pool_size": len(row[7] or [])}
+
+
+_DDL_VOID = (
+    "CREATE TABLE IF NOT EXISTS sales_draw_commitment_voids ("
+    "  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),"
+    "  site_id uuid NOT NULL,"
+    "  scope varchar(24) NOT NULL,"
+    "  ref_id uuid NOT NULL,"
+    "  commit_hash varchar(64) NOT NULL,"      # 무효화된 공약이 무엇이었는지
+    "  beacon_round bigint,"
+    "  participants_hash varchar(64),"
+    "  pool_hash varchar(64),"
+    "  committed_at timestamptz,"
+    "  revealed_at timestamptz,"
+    "  voided_by uuid,"
+    "  voided_at timestamptz NOT NULL DEFAULT now(),"
+    "  reason text NOT NULL"
+    ")"
+)
+
+
+async def void_commitment(db: AsyncSession, site_id, scope: str, ref_id, *, by=None,
+                          reason: str) -> dict[str, Any]:
+    """공약을 **무효화**한다 — 흔적을 남기고. ★재공약을 가능하게 하는 **유일한** 경로다.
+
+    ## 왜 이것이 필요한가 (R2 독립 적대 리뷰 MAJOR-7)
+
+    공약은 명부·pool 을 묶는다. 그런데 **정상 업무**가 그것을 바꾼다(선착순 청약·예비 승계·계약
+    체결/해지·세대 추가). 그러면 게이트가 추첨을 거부하는데, 안내문은 *"다시 공약해야 합니다"*
+    라고 말하고 **`UNIQUE(scope, ref_id)` 가 그것을 영구히 막는다** ⇒ 그 공고는 **벽돌**이 된다.
+    ***지킬 수 없는 안내를 하는 게이트는 게이트가 아니라 함정이다.***
+
+    ## 이것이 grinding 통로가 되지 않게 하는 것
+
+    ★무효화는 **지워지지 않는 기록**을 남긴다(`sales_draw_commitment_voids`, append-only).
+      그래서 *"마음에 안 들어서 다시 뽑았다"* 가 **숫자로 드러난다**(무효화 횟수·사유·시각).
+    ★재공약하면 `commit_hash` 가 **달라진다** — 앞선 공약값을 받아 둔 사람은 즉시 안다.
+    ★이 함수는 **사유(reason)를 필수로** 받는다. 빈 사유는 거부한다.
+
+    ***이 설계는 「막는다」가 아니라 「보이게 한다」이다.*** 그 차이를 문서에 적는다.
+    """
+    if not (reason or "").strip():
+        raise ValueError("무효화 사유는 필수입니다 — 사유 없는 무효화는 기록의 가치를 없앱니다")
+    await _ensure(db)
+    await db.execute(text(_DDL_VOID))
+    row = (await db.execute(text(
+        "SELECT commit_hash, beacon_round, participants_hash, pool_hash, committed_at, revealed_at "
+        "FROM sales_draw_commitments WHERE scope=:s AND ref_id=:r"),
+        {"s": scope, "r": str(ref_id)})).first()
+    if not row:
+        raise ValueError("무효화할 공약이 없습니다")
+    await db.execute(text(
+        "INSERT INTO sales_draw_commitment_voids "
+        "(site_id, scope, ref_id, commit_hash, beacon_round, participants_hash, pool_hash,"
+        " committed_at, revealed_at, voided_by, reason) "
+        "VALUES (:site,:s,:r,:c,:br,:ph,:uh,:ca,:ra,:by,:why)"),
+        {"site": str(site_id), "s": scope, "r": str(ref_id), "c": row[0], "br": row[1],
+         "ph": row[2], "uh": row[3], "ca": row[4], "ra": row[5],
+         "by": str(by) if by else None, "why": reason.strip()})
+    await db.execute(text(
+        "DELETE FROM sales_draw_commitments WHERE scope=:s AND ref_id=:r"),
+        {"s": scope, "r": str(ref_id)})
+    await db.commit()
+    n = (await db.execute(text(
+        "SELECT count(*) FROM sales_draw_commitment_voids WHERE scope=:s AND ref_id=:r"),
+        {"s": scope, "r": str(ref_id)})).first()
+    return {"ok": True, "voided_commit_hash": str(row[0]),
+            # ★**누적 무효화 횟수를 돌려준다** — 이 숫자가 곧 감시 지표다.
+            "void_count": int(n[0]) if n else 1,
+            "warning": "무효화는 영구 기록됩니다. 재공약 시 commit_hash 가 달라집니다"}
+
+
+async def void_history(db: AsyncSession, scope: str, ref_id) -> list[dict[str, Any]]:
+    """★무효화 이력 **공개 조회** — 「몇 번 다시 공약했나」가 보이지 않으면 기록은 무의미하다."""
+    await _ensure(db)
+    await db.execute(text(_DDL_VOID))
+    rows = (await db.execute(text(
+        "SELECT commit_hash, beacon_round, voided_at, reason FROM sales_draw_commitment_voids "
+        "WHERE scope=:s AND ref_id=:r ORDER BY voided_at"), {"s": scope, "r": str(ref_id)})).all()
+    return [{"commit_hash": str(r[0]), "beacon_round": r[1],
+             "voided_at": str(r[2]), "reason": str(r[3])} for r in rows]

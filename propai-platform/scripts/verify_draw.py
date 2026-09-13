@@ -13,7 +13,7 @@
         --beacon-round <공약에 못 박힌 drand 라운드(공개값)> \
         --participants-hash <공약이 묶은 명부 지문> \
         --pool-hash         <공약이 묶은 대상 세대 지문> \
-        --start-counter     <추첨 응답의 start_counter · 기본 0>
+        --taken             <추첨 시점에 이미 남이 가져간 세대들 · 없으면 생략>
 
 ## ★이 도구가 하는 것과 하지 않는 것
 
@@ -22,9 +22,12 @@
             ③`--beacon-round` 를 주면 **그 라운드를 직접 drand 에서 가져와**(서로 다른 운영자
               2곳 대조) seed 에 섞는다 — ***이 값은 운영자가 만들지 않았고 공약 시점엔 세상에
               없었다.*** 즉 이 검증은 운영자가 준 자료만으로 닫히지 않는다.
-  하지 않는다 **공약이 추첨보다 앞섰는지는 증명하지 못한다.** 그건 공약 게시 시각
+  ★하지 않는다 ①**공약이 추첨보다 앞섰는지는 증명하지 못한다.** 그건 공약 게시 시각
             (`GET …/commitment` 의 `committed_at`)을 **추첨 전에 받아 둔 사람**만 말할 수 있다.
             ⇒ 대상자·입회인은 **추첨 전에 `commit_hash` 를 받아 두라.**
+            ②**`--taken` 이 정직한지도 증명하지 못한다.** 다만 그 목록은 «이미 배정된 세대»라
+            원장·화면에서 **교차 확인이 가능한 공개 사실**이다 — 반면 종전의 `--start-counter` 는
+            **아무 데도 대조할 수 없는 숫자**였고, 그래서 무엇이든 인증할 수 있었다.
 
 ★이 파일은 표준 라이브러리만 쓴다 — 검증자가 이 저장소를 설치하지 않아도 돌아간다.
   같은 계산을 `openssl` 로도 할 수 있다(아래 `--show-openssl`).
@@ -142,8 +145,9 @@ def main() -> int:
                     help="GET …/commitment 의 participants_hash(공약이 묶은 명부 지문)")
     ap.add_argument("--pool-hash", required=True,
                     help="GET …/commitment 의 pool_hash(공약이 묶은 대상 세대 지문)")
-    ap.add_argument("--start-counter", type=int, default=0,
-                    help="추첨 응답·원장의 start_counter — ★선점 경합이 있었으면 0 이 아니다")
+    ap.add_argument("--taken", default="",
+                    help=("추첨 **시도 시점에 이미 남이 가져간** 세대들(쉼표 구분·없으면 생략). "
+                          "★건너뛴 시도가 **강제된 것**이었음을 증명하는 데 쓴다"))
     ap.add_argument("--beacon-round", type=int, default=None,
                     help="공약에 못 박힌 drand 라운드(GET …/commitment 의 beacon_round)")
     ap.add_argument("--beacon-randomness", default=None,
@@ -193,11 +197,30 @@ def main() -> int:
                                  a.pool_hash, beacon_part)
     key = _seed_key(a.nonce, *parts)
     domain = f"dongho:{a.group}:{a.candidate}"
-    # ★`--start-counter` — 프로덕션은 선점 경합 시 카운터를 **이어받는다**. 0 으로 고정하면
-    #   **경합이 있던 정직한 추첨**을 조작으로 신고한다(리뷰 MED-5 실측).
-    idx, _nxt = _below(key, domain, len(pool), start=a.start_counter)
+    # ★★**시작 카운터를 인자로 받지 않는다 — 유도한다**(R2 리뷰 MAJOR-4).
+    #   종전에는 `--start-counter` 를 그대로 믿었는데, 그 값은 **운영자가 주는 무제한 자유변수**라
+    #   ***아무 세대나 「✔ 일치」로 인증할 수 있었다***(실측: 임의 6개 세대를 전부 통과시켰다).
+    #   ***거짓 음성(정직한 추첨을 조작이라 신고)을 고치려다 무조건 거짓 양성을 만들었다.***
+    #
+    #   프로덕션이 카운터를 올리는 경우는 **하나뿐**이다: 뽑은 세대의 HOLD 선점이 실패한 것,
+    #   즉 **그 세대를 이미 남이 가져갔을 때**. 그래서 0번부터 순서대로 재현하면서
+    #   **건너뛴 세대가 전부 `--taken` 안에 있는지** 확인한다. 하나라도 밖이면 **거부**한다 —
+    #   그 건너뜀은 **강제된 것이 아니라 선택된 것**이기 때문이다.
+    taken = {s.strip() for s in a.taken.split(",") if s.strip()}
+    counter, skipped, idx = 0, [], None
+    for _ in range(len(pool) + 1):
+        j, counter = _below(key, domain, len(pool), start=counter)
+        if pool[j] not in taken:
+            idx = j
+            break
+        skipped.append(pool[j])
+    if idx is None:
+        print(f"✘ pool 전부가 --taken 에 들어 있다({len(pool)}건) — 입력이 모순이다")
+        return 2
+    if skipped:
+        print(f"  강제 건너뜀 {len(skipped)}건(전부 --taken 에 있음): {skipped}")
     got = pool[idx]
-    print(f"  pool {len(pool)}건 · 도메인 {domain} · 시작 카운터 {a.start_counter}")
+    print(f"  pool {len(pool)}건 · 도메인 {domain} · 이미 선점됨 {len(taken)}건")
     print(f"  재계산 결과 = {got}")
     if got != a.expect:
         print(f"✘ **결과가 다르다** — 기록된 배정 {a.expect}")

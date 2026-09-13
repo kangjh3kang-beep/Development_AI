@@ -49,10 +49,18 @@ class _Res:
 class _DB:
     """★쿼리를 **읽고 라우팅**하는 가짜 DB. 인자를 버리면 그 층은 원리적으로 무잠금이 된다."""
 
-    def __init__(self, roster=None, assigned=(), hold_wins=True):
+    def __init__(self, roster=None, assigned=(), hold_wins=True, hold_wins_after=0):
         self.roster = list(_ROSTER if roster is None else roster)
         self.assigned = set(assigned)
         self.hold_wins = hold_wins
+        #: ★`hold_wins_after=n` → **처음 n회 선점 실패**(경합) 후 성공. 종전에는 `hold_wins=False`
+        #:   를 **한 번도 주지 않아** 경합 경로가 미검증이었다(R2 리뷰 MEDIUM-2).
+        self.hold_wins_after = hold_wins_after
+        self._hold_calls = 0
+        #: 이 세대들은 **타 현장**이거나 **소프트삭제**다 — 술어가 없으면 새어 나간다.
+        self.foreign: set[str] = set()
+        self.soft_deleted: set[str] = set()
+        self.leaked: list[tuple] = []
         self.sql: list[str] = []
 
     async def execute(self, stmt, params=None):
@@ -68,9 +76,36 @@ class _DB:
         if "SELECT assigned_unit_id FROM sales_draw_candidates" in q:
             return _Res([(a,) for a in self.assigned])
         if "UPDATE sales_unit_inventory" in q:
-            return _Res([("ok",)] if self.hold_wins else [])
+            # ★★**술어를 실제로 집행한다.** 엔진이 `site_id`·`deleted_at` 를 안 걸면 여기서
+            #   타 현장·소프트삭제 세대가 **선점에 성공**해 버린다 — 그러면 아래 테스트가 빨개진다.
+            #   ***문자열로 «SQL 에 site_id 가 있나» 를 보는 것은 효과가 아니라 모양이다.***
+            uid = (params or {}).get("u")
+            if uid in self.foreign and "site_id=:s" not in q:
+                self.leaked.append(("타현장", uid))
+            if uid in self.soft_deleted and "deleted_at IS NULL" not in q:
+                self.leaked.append(("소프트삭제", uid))
+            if uid in self.foreign or uid in self.soft_deleted:
+                # 술어가 제대로 걸렸으면 DB 는 **0행**을 돌려준다.
+                blocked = ("site_id=:s" in q and uid in self.foreign) or (
+                    "deleted_at IS NULL" in q and uid in self.soft_deleted)
+                if blocked:
+                    self._hold_calls += 1
+                    return _Res([])
+            self._hold_calls += 1
+            lost = (not self.hold_wins) or self._hold_calls <= self.hold_wins_after
+            return _Res([] if lost else [("ok",)])
         if "SELECT dong, ho" in q:
             return _Res([("101", "1501")])
+        # ★★**모르는 재고 조회는 죽인다**(R2 리뷰 MAJOR-5 실측). 종전에는 빈 결과를 돌려줘서,
+        #   엔진이 **새 재고 쿼리를 추가해 라이브 상태로 모집단을 좁혀도** 락이 못 봤다
+        #   (`_remaining_units` 라는 **이름만** 안 쓰면 통과했다).
+        #   ***스텁이 조용히 비면 그 층은 원리적으로 무잠금이다.***
+        if q.upper().startswith("SELECT") and (
+                "sales_unit_inventory" in q or "sales_draw_candidates" in q):
+            raise AssertionError(
+                "★추첨이 **이 스텁이 모르는 조회**를 한다 — 조용히 빈 결과를 주면 그 층이 "
+                f"원리적으로 무잠금이 된다(R2 리뷰 MAJOR-5·MEDIUM-5): {q[:160]}"
+            )
         return _Res([])
 
     async def commit(self):
@@ -99,10 +134,15 @@ def _run_draw(monkeypatch, rev, *, beacon_value="aa" * 32, db=None):
     monkeypatch.setattr(de.beacon, "randomness_for",
                         lambda rnd, *a, **k: beacon_value, raising=True)
 
-    async def _ev(*_a, **_k):
+    meta_seen: dict = {}
+
+    async def _ev(*_a, **kw):
+        meta_seen.clear()
+        meta_seen.update(kw.get("meta") or {})
         return {"id": "ev"}
 
     monkeypatch.setattr(de, "append_event", _ev)
+    de._last_meta_for_test = meta_seen
     return asyncio.new_event_loop().run_until_complete(
         de.draw_for_candidate(db or _DB(), uuid.uuid4(), _GROUP, _CAND))
 
@@ -403,3 +443,435 @@ def test_commit_uses_the_cross_checked_latest():
             cs.commit_draw(_D(), "s", "dongho", "r",
                            participants=_ROSTER, pool_ids=_POOL, fetch=f))
     assert "운영자" in str(e.value), str(e.value)
+
+
+# ── ⑪ ★명부 게이트가 **치환**도 막는가(추가 방향만 잠그면 뚫린다) ───────────
+def test_roster_substitution_is_refused(monkeypatch):
+    """★같은 **인원수**로 사람을 바꿔치기하면?
+
+    R2 리뷰 실측: 게이트를 `len(set(live)) != len(공약)` 으로 약화해도 초록이었다 —
+    기존 락이 **추가**만 태웠기 때문이다. 치환은 공격자에게 **새 candidate_id** 를 주므로
+    ***이 커밋이 닫으려는 바로 그 자유변수***다.
+    """
+    rev = _revealed(beacon_round=900)
+    swapped = [_ROSTER[0], "치환된-다른-사람"]          # 인원수 동일(2명), 구성만 다름
+    assert len(swapped) == len(rev.participants)
+    with pytest.raises(ValueError) as e:
+        _run_draw(monkeypatch, rev, db=_DB(roster=swapped))
+    assert "명부가 바" in str(e.value), str(e.value)
+
+
+def test_roster_removal_is_refused(monkeypatch):
+    """제거 방향도 막는다 — 경쟁자를 빼는 것도 결과를 바꾼다."""
+    rev = _revealed(beacon_round=900)
+    with pytest.raises(ValueError):
+        _run_draw(monkeypatch, rev, db=_DB(roster=[_ROSTER[0]]))
+
+
+# ── ⑫ ★청약 경로의 게이트(형제) — R2: 락 0건이었다 ─────────────────────────
+def _sub_revealed(roster, pool, *, beacon_round=900):
+    return cs.Revealed(_NONCE, vrng.commitment(_NONCE), beacon_round,
+                       binding.normalize(roster), binding.normalize(pool),
+                       binding.roster_hash(roster), binding.pool_hash(pool))
+
+
+def _run_subscription(monkeypatch, rev, live_roster, live_pool):
+    """청약 `run_draw` 의 **게이트까지만** 태운다(그 뒤는 가짜 DB 관심사 밖)."""
+    from app.services.sales.subscription import engine as se
+
+    async def _rev(_db, _s, _r):
+        return rev
+
+    async def _bind(_db, _site, _ann):
+        return list(live_roster), list(live_pool)
+
+    class _Ann:
+        id = "ann-1"
+        rules = {}
+        status = "OPEN"
+        contract_end = None
+        round_id = None
+
+    class _Res2:
+        def scalars(self):
+            return _S()
+
+        def first(self):
+            return (_Ann(),)
+
+        def scalar_one_or_none(self):
+            return _Ann()
+
+    class _S:
+        def __iter__(self):
+            return iter([_Ann()])
+
+        def first(self):
+            return _Ann()
+
+    class _D:
+        async def execute(self, *_a, **_k):
+            return _Res2()
+
+        async def flush(self):
+            return None
+
+        async def commit(self):
+            return None
+
+        def add(self, *_a, **_k):
+            return None
+
+    emitted: list[tuple] = []
+
+    async def _emit(_db, _site, event_type, payload):
+        emitted.append((event_type, payload))
+
+    monkeypatch.setattr(se, "reveal_commitment", _rev)
+    monkeypatch.setattr(se, "subscription_binding", _bind)
+    monkeypatch.setattr(se, "emit_outbox", _emit)
+    monkeypatch.setattr(se.beacon, "randomness_for", lambda *a, **k: "aa" * 32)
+    return asyncio.new_event_loop().run_until_complete(se.run_draw(_D(), "site", "ann-1"))
+
+
+@pytest.mark.parametrize(("live_roster", "live_pool", "말"), [
+    (["a", "b", "새사람"], ["u1", "u2"], "명부"),      # 명부 추가
+    (["a", "치환"], ["u1", "u2"], "명부"),             # 명부 치환(인원수 동일)
+    (["a", "b"], ["u1", "u2", "u3"], "대상 세대"),      # pool 추가
+    (["a", "b"], ["u1"], "대상 세대"),                  # pool 제거
+])
+def test_subscription_binding_gate_refuses_any_change(monkeypatch, live_roster, live_pool, 말):
+    """★R2 리뷰: 청약 쪽 게이트는 **락이 0건**이라 `if False:` 두 개가 다 생존했다.
+
+    ***고친 자리의 형제를 스윕하라*** 를 인용해 놓고 그 안에서 어긴 자리다.
+    """
+    rev = _sub_revealed(["a", "b"], ["u1", "u2"])
+    with pytest.raises(ValueError) as e:
+        _run_subscription(monkeypatch, rev, live_roster, live_pool)
+    assert 말 in str(e.value), str(e.value)
+
+
+def test_subscription_binding_gate_passes_when_unchanged(monkeypatch):
+    """대조군 — 바뀐 게 없으면 게이트를 **통과**한다(늘 거부가 아님을 가른다)."""
+    from app.services.sales.subscription import engine as se
+
+    rev = _sub_revealed(["a", "b"], ["u1", "u2"])
+    try:
+        _run_subscription(monkeypatch, rev, ["a", "b"], ["u1", "u2"])
+    except ValueError as exc:                       # 게이트 메시지면 실패, 그 뒤 가짜 DB 실패는 무시
+        assert "바뀌었습니다" not in str(exc), f"게이트가 정상 명부를 막았다: {exc}"
+    except Exception:                               # noqa: BLE001 — 가짜 DB 로 인한 후속 실패는 관심 밖
+        pass
+    assert se.binding.roster_hash(["a", "b"]) == rev.participants_hash
+
+
+# ── ⑬ ★선점 경합 경로를 **실제로** 만든다(ME-2: 한 번도 안 태워졌다) ────────
+def test_hold_contention_actually_changes_the_pick(monkeypatch):
+    """★`hold_wins=False` 를 **한 번도 주지 않아** 경합 경로가 미검증이었다.
+
+    경합이 나면 카운터가 올라가 **다른 세대**가 뽑히고, 그 사실이 `skipped_units` 로 남아야 한다.
+    """
+    rev = _revealed(beacon_round=900)
+    calm = _run_draw(monkeypatch, rev)
+    db = _DB(hold_wins_after=2)                     # 처음 2회 선점 실패 → 카운터 전진
+    fought = _run_draw(monkeypatch, rev, db=db)
+    assert fought["assigned_unit"]["id"] != calm["assigned_unit"]["id"], (
+        "경합이 있었는데 같은 세대가 나왔다 — 카운터가 안 움직인다"
+    )
+    assert fought["start_counter"] > 0, fought["start_counter"]
+    assert len(fought["skipped_units"]) == 2, fought["skipped_units"]
+    assert calm["skipped_units"] == [], calm["skipped_units"]
+    # ★**원장 meta 도 본다** — 응답만 단언하면 meta 쪽 값을 0 으로 고정해도 초록이다
+    #   (R2 재판정에서 실제로 생존했다). 감사자는 **원장**을 읽지 응답을 읽지 않는다.
+    meta = getattr(de, "_last_meta_for_test", {})
+    assert meta.get("start_counter") == fought["start_counter"], (
+        f"원장 meta 의 시작 카운터가 응답과 다르다: meta={meta.get('start_counter')} "
+        f"응답={fought['start_counter']}"
+    )
+    assert meta.get("skipped_units") == fought["skipped_units"], meta.get("skipped_units")
+
+
+# ── ⑭ ★도메인 분리(ME-3: 문서만 있고 단언이 없었다) ─────────────────────────
+def test_roster_and_pool_hashes_are_domain_separated():
+    """같은 목록이라도 **명부 지문 ≠ pool 지문** — 아니면 한쪽을 다른 쪽 자리에 넣는 혼동이 성립한다."""
+    ids = ["x", "y", "z"]
+    assert binding.roster_hash(ids) != binding.pool_hash(ids)
+    assert binding.roster_hash([]) != binding.pool_hash([])
+
+
+# ── ⑮ ★청약 추첨이 **원장 이벤트를 실제로 낸다**(R2 MAJOR-1: 삭제해도 초록이었다) ──
+def test_subscription_draw_emits_the_commitment_event(monkeypatch):
+    """★청약 경로는 당첨자 수(int)만 돌려주므로 **어떤 공약으로 뽑았는지가 반환에 실릴 자리가 없다.**
+    그래서 원장에 남기기로 했는데, 그 호출을 **지워도 초록**이었다(락 부재).
+
+    ★그리고 「냈다」로 끝내지 않는다 — **감사에 필요한 필드가 실제로 실렸는지**까지 본다
+    (R2 실측: 화이트리스트에 없어 payload 가 `{}` 로 비워지고 있었다).
+    """
+    from app.services.sales.harness.outbox import WHITELIST
+    from app.services.sales.subscription import engine as se
+
+    emitted: list[tuple] = []
+
+    async def _emit(_db, _site, event_type, payload):
+        emitted.append((event_type, dict(payload or {})))
+
+    monkeypatch.setattr(se, "emit_outbox", _emit)
+    rev = _sub_revealed(["a", "b"], ["u1", "u2"])
+
+    async def _rev(_db, _s, _r):
+        return rev
+
+    async def _bind(_db, _site, _ann):
+        return ["a", "b"], ["u1", "u2"]
+
+    monkeypatch.setattr(se, "reveal_commitment", _rev)
+    monkeypatch.setattr(se, "subscription_binding", _bind)
+    monkeypatch.setattr(se.beacon, "randomness_for", lambda *a, **k: "aa" * 32)
+
+    class _R:
+        def scalar_one_or_none(self):
+            return type("A", (), {"id": "ann-1", "rules": {}, "status": "OPEN",
+                                  "contract_end": None, "round_id": None})()
+
+        def scalars(self):
+            return []
+
+        def first(self):
+            return None
+
+    class _D:
+        async def execute(self, *_a, **_k):
+            return _R()
+
+        async def flush(self):
+            return None
+
+        async def commit(self):
+            return None
+
+        def add(self, *_a, **_k):
+            return None
+
+    try:
+        asyncio.new_event_loop().run_until_complete(se.run_draw(_D(), "site", "ann-1"))
+    except Exception as exc:                        # noqa: BLE001 — 가짜 DB 후속 실패는 관심 밖
+        assert "바뀌었습니다" not in str(exc), exc
+
+    names = [e for e, _ in emitted]
+    assert "DrawCommitmentRevealed" in names, (
+        f"★공약 공개를 원장에 안 남긴다 — 사후 감사자가 대조할 것이 없다: {names}"
+    )
+    payload = next(p for e, p in emitted if e == "DrawCommitmentRevealed")
+    allow = WHITELIST["DrawCommitmentRevealed"]
+    for k in ("commit_hash", "beacon_round", "participants_hash", "pool_hash"):
+        assert k in payload, f"{k} 를 안 싣는다: {sorted(payload)}"
+        assert k in allow, f"★{k} 가 화이트리스트 밖이라 **기록되는 순간 버려진다**"
+    assert "nonce" not in payload, "★nonce 를 원장에 실으면 누구나 사전 계산한다"
+
+
+def test_already_assigned_units_are_excluded_from_the_population(monkeypatch):
+    """★이미 배정된 세대는 모집단에서 빠지는가 — `_DB(assigned=…)` 를 **비어 있지 않게** 준다.
+
+    R2 리뷰 MEDIUM-5: 이 라우트는 **한 번도 비어 있지 않은 값으로 태워진 적이 없어서**,
+    쿼리를 깨도(스텁이 라우팅을 못 해도) 초록이었다. ***쓰이지 않는 분기는 잠금이 아니다.***
+    """
+    rev = _revealed(beacon_round=900)
+    free = _run_draw(monkeypatch, rev)["assigned_unit"]["id"]
+    # 그 세대를 「이미 배정됨」으로 두면 **다른 세대**가 나와야 한다
+    again = _run_draw(monkeypatch, rev, db=_DB(assigned=[free]))["assigned_unit"]["id"]
+    assert again != free, f"이미 배정된 세대가 또 배정됐다(이중배정): {free}"
+    assert again in _POOL
+
+
+# ── ⑯ ★내가 만든 회귀를 잠근다 — 타 현장·소프트삭제 세대 (R2 MAJOR-3) ──────
+def test_foreign_site_unit_cannot_be_held(monkeypatch):
+    """★모집단을 라이브 조회에서 공약 pool 로 바꾸면서 `site_id` 술어가 **사라졌다**.
+
+    `set_pool` 이 타 현장 uuid 를 그대로 받아 저장했기 때문에, 공약 pool 에 그 id 가 들어가면
+    **타 현장 세대가 HOLD** 됐다(이 저장소에 같은 클래스 IDOR 사고가 두 건 기록돼 있다).
+    ***모집단을 바꾸면 그 모집단이 지키던 술어도 함께 옮겨야 한다.***
+    """
+    rev = _revealed(beacon_round=900)
+    db = _DB()
+    db.foreign = set(_POOL)                      # pool 전부가 타 현장이라면 **하나도 못 잡아야** 한다
+    with pytest.raises(ValueError) as e:
+        _run_draw(monkeypatch, rev, db=db)
+    assert "남은 가용 세대가 없습니다" in str(e.value), str(e.value)
+    assert not db.leaked, f"★타 현장 세대가 새어 나갔다: {db.leaked[:3]}"
+
+
+def test_soft_deleted_unit_cannot_be_held(monkeypatch):
+    """`CRUDBase.delete` 는 `deleted_at` 만 세우고 **`status` 는 안 건드린다** —
+    즉 삭제된 세대가 `status='AVAILABLE'` 로 남는다. 술어가 없으면 그게 배정된다."""
+    rev = _revealed(beacon_round=900)
+    db = _DB()
+    db.soft_deleted = set(_POOL)
+    with pytest.raises(ValueError):
+        _run_draw(monkeypatch, rev, db=db)
+    assert not db.leaked, f"★삭제된 세대가 새어 나갔다: {db.leaked[:3]}"
+
+
+def test_live_units_still_pass_control(monkeypatch):
+    """대조군 — 정상 세대는 그대로 배정된다(⑯이 「늘 거부」가 아님을 가른다)."""
+    out = _run_draw(monkeypatch, _revealed(beacon_round=900))
+    assert out["assigned_unit"]["id"] in _POOL
+
+
+# ── ⑰ ★`set_pool` 이 입력을 검증하는가 (공약 이전 층) ───────────────────────
+def test_set_pool_rejects_units_outside_the_site():
+    """★여기서 막지 않으면 **뒤의 어느 층도 그 사실을 모른다**."""
+    class _R:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return self._rows
+
+    class _D:
+        def __init__(self, ok):
+            self.ok = ok
+
+        async def execute(self, stmt, params=None):
+            q = " ".join(str(stmt).split())
+            if q.startswith("SELECT id FROM sales_unit_inventory"):
+                return _R([(u,) for u in self.ok])
+            return _R([])
+
+        async def commit(self):
+            return None
+
+    loop = asyncio.new_event_loop()
+    with pytest.raises(ValueError) as e:
+        loop.run_until_complete(de.set_pool(_D(ok=["u1"]), "site", "g", ["u1", "남의-세대"]))
+    assert "이 현장에 없거나 삭제된" in str(e.value), str(e.value)
+    # 대조군 — 전부 이 현장 것이면 통과한다
+    got = loop.run_until_complete(de.set_pool(_D(ok=["u1", "u2"]), "site", "g", ["u1", "u2"]))
+    assert got["pool_size"] == 2, got
+
+
+# ── ⑱ ★저장되는 pool 이 **정렬**돼 있는가(원장 재현성) ──────────────────────
+def test_stored_pool_is_sorted_for_reproducible_hash(monkeypatch):
+    """`pool_hash` 는 `",".join(pool)` 의 해시다 — **순서가 곧 값**이다.
+
+    `sorted()` 를 `list()` 로 바꾸면 집합 순회 순서가 프로세스마다 달라져
+    **같은 추첨의 원장 해시가 재현되지 않는다**(당첨자는 그대로라 눈에 안 띈다).
+    """
+    import hashlib
+
+    out = _run_draw(monkeypatch, _revealed(beacon_round=900))
+    meta = getattr(de, "_last_meta_for_test", {})
+    pool = meta.get("pool")
+    if pool is None:                                # meta 에 없으면 응답의 해시로 검산한다
+        pool = sorted(_POOL)
+    assert out["pool_hash"] == hashlib.sha256(",".join(sorted(pool)).encode()).hexdigest(), (
+        "★기록된 pool_hash 가 **정렬된 pool** 의 해시가 아니다 — 프로세스마다 값이 달라진다"
+    )
+
+
+# ── ⑲ ★청약 공약 pool 이 **그 공고가 뽑는 타입**으로 좁혀졌는가 (R2 MAJOR-7) ──
+def test_subscription_pool_is_scoped_to_the_drawn_unit_types():
+    """★종전에는 **현장 전체 가용 세대**였다. 추첨은 신청이 있는 타입만 도는데 공약은 전부를 묶어,
+    **무관한 세대 하나만 상태가 바뀌어도** 추첨이 영구 거부됐다(정상 업무가 전부 그 통로였다).
+    ***위양성도 결함이다 — 게이트가 공격만 막고 정상 운영도 막으면 그건 결함이다.***
+    """
+    from app.services.sales.subscription import engine as se
+
+    class _App:
+        def __init__(self, i, type_id):
+            self.id = f"app-{i}"
+            self.unit_type_id = type_id
+
+    class _Unit:
+        def __init__(self, i, type_id):
+            self.id = f"unit-{i}"
+            self.type_id = type_id
+
+    drawn, other = "TYPE-A", "TYPE-B"
+    apps = [_App(1, drawn), _App(2, drawn)]
+    units = {drawn: [_Unit(1, drawn), _Unit(2, drawn)], other: [_Unit(9, other)]}
+    seen_types: list = []
+
+    class _Scalars:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def __iter__(self):
+            return iter(self._rows)
+
+    class _Res3:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def scalars(self):
+            return _Scalars(self._rows)
+
+    class _D:
+        async def execute(self, stmt, params=None):
+            q = " ".join(str(stmt).split())
+            if "sales_subscription_applications" in q or "unit_type_id" in q:
+                return _Res3(apps)
+            # 재고 조회 — WHERE 에 type_id IN 이 있으면 그 타입만, 없으면 전부(=결함 상태)
+            if "type_id IN" in q or "type_id IN" in q.replace("  ", " "):
+                seen_types.append("scoped")
+                return _Res3(units[drawn])
+            seen_types.append("site-wide")
+            return _Res3(units[drawn] + units[other])
+
+    roster, pool = asyncio.new_event_loop().run_until_complete(
+        se.subscription_binding(_D(), "site", "ann"))
+    assert len(roster) == 2, roster
+    assert "unit-9" not in pool, (
+        f"★공고가 뽑지 않는 타입의 세대가 공약에 묶였다 — 그 세대 상태가 바뀌면 "
+        f"무관한 이유로 추첨이 영구 거부된다: {pool}"
+    )
+    assert seen_types and seen_types[-1] == "scoped", (
+        f"★재고 조회가 타입으로 좁혀지지 않았다: {seen_types}"
+    )
+
+
+# ── ⑳ ★무효화는 **지우기 전에 기록**한다 ────────────────────────────────────
+def test_void_records_before_deleting_and_requires_a_reason():
+    """★무효화가 재공약을 가능하게 하는 유일한 경로다 — 그러므로 **흔적이 곧 방어**다.
+
+    기록 없이 지우면 *"마음에 안 들어 다시 뽑았다"* 가 **사라진다.**
+    """
+    order: list[str] = []
+
+    class _R:
+        def first(self):
+            return ("cafe" * 16, 900, "p" * 64, "u" * 64, "t0", None)
+
+    class _Count:
+        def first(self):
+            return (3,)
+
+    class _D:
+        async def execute(self, stmt, params=None):
+            q = " ".join(str(stmt).split())
+            if "INSERT INTO sales_draw_commitment_voids" in q:
+                order.append("record")
+            elif "DELETE FROM sales_draw_commitments" in q:
+                order.append("delete")
+            elif "count(*)" in q:
+                return _Count()
+            return _R()
+
+        async def commit(self):
+            return None
+
+    loop = asyncio.new_event_loop()
+    # 사유가 없으면 거부
+    with pytest.raises(ValueError) as e:
+        loop.run_until_complete(cs.void_commitment(_D(), "s", "dongho", "r", reason="  "))
+    assert "사유는 필수" in str(e.value), str(e.value)
+    # 사유가 있으면 **기록 → 삭제** 순서
+    order.clear()
+    out = loop.run_until_complete(
+        cs.void_commitment(_D(), "s", "dongho", "r", reason="선착순 계약으로 세대 변동"))
+    assert order == ["record", "delete"], (
+        f"★기록 없이 지웠거나 순서가 뒤집혔다: {order} — 지운 뒤 기록하면 그 사이 장애에 증거가 사라진다"
+    )
+    assert out["voided_commit_hash"], out
+    assert out["void_count"] == 3, (
+        f"★누적 무효화 횟수가 틀렸다({out.get('void_count')}) — 이 숫자가 곧 감시 지표다"
+    )

@@ -116,14 +116,32 @@ async def list_groups(db: AsyncSession, site_id) -> list[dict[str, Any]]:
 
 
 async def set_pool(db: AsyncSession, site_id, group_id, unit_ids: list[str]) -> dict[str, Any]:
-    """그룹 동·호판(추첨 대상 세대 집합) 지정."""
+    """그룹 동·호판(추첨 대상 세대 집합) 지정.
+
+    ★★**입력을 검증한다**(R2 리뷰 MAJOR-3). 종전에는 임의 uuid 를 그대로 `unit_pool` 에 넣었고,
+      추첨이 그 목록을 모집단으로 쓰면서 **타 현장 세대·소프트삭제 세대**가 배정될 수 있었다.
+      ***이 함수가 「그 현장의 살아 있는 세대인가」를 묻지 않으면, 뒤의 어느 층도 그것을 모른다.***
+    """
     await _ensure(db)
     import json
+    wanted = [str(u) for u in unit_ids]
+    if not wanted:
+        raise ValueError("대상 세대가 비어 있습니다")
+    ok = {str(r[0]) for r in (await db.execute(text(
+        "SELECT id FROM sales_unit_inventory "
+        "WHERE site_id=:s AND id = ANY(:ids) AND deleted_at IS NULL"),
+        {"s": str(site_id), "ids": wanted})).all()}
+    bad = [u for u in wanted if u not in ok]
+    if bad:
+        raise ValueError(
+            f"이 현장에 없거나 삭제된 세대가 {len(bad)}건 포함돼 있습니다: {bad[:5]}"
+            f"{' …' if len(bad) > 5 else ''}"
+        )
     await db.execute(text(
         "UPDATE sales_draw_groups SET unit_pool=CAST(:p AS jsonb) WHERE id=:g AND site_id=:s"),
-        {"p": json.dumps([str(u) for u in unit_ids]), "g": str(group_id), "s": str(site_id)})
+        {"p": json.dumps(wanted), "g": str(group_id), "s": str(site_id)})
     await db.commit()
-    return {"ok": True, "pool_size": len(unit_ids)}
+    return {"ok": True, "pool_size": len(wanted)}
 
 
 async def _next_seq(db: AsyncSession, group_id) -> int:
@@ -349,9 +367,18 @@ async def draw_for_candidate(db: AsyncSession, site_id, group_id, candidate_id, 
         candidate_unit, counter = vrng.pick(key, domain, pool_sorted, start=counter)
         pool_hash = hashlib.sha256(",".join(pool_sorted).encode()).hexdigest()
         # HOLD 선점(원자 조건부 UPDATE) — 0행이면 이미 다른 곳에서 선점됨 → 재추첨.
+        # ★★**`site_id`·`deleted_at` 를 여기서 다시 건다**(R2 리뷰 MAJOR-3 · 내가 만든 회귀).
+        #   모집단을 라이브 조회에서 공약된 pool 로 바꾸면서 `_remaining_units` 가 걸고 있던
+        #   `site_id=:s AND deleted_at IS NULL` 이 **통째로 사라졌다**. 그 결과:
+        #     · `CRUDBase.delete` 는 **소프트삭제**(`deleted_at` 만 세우고 `status` 는 안 건드린다)
+        #       ⇒ 삭제된 세대가 `status='AVAILABLE'` 로 남아 **배정 가능**했다
+        #     · `set_pool` 이 입력을 검증하지 않아 **타 현장 세대 id** 를 넣으면 그대로 HOLD 됐다
+        #       (이 저장소에 같은 클래스 IDOR 사고가 이미 두 건 기록돼 있다)
+        #   ***모집단을 바꾸면 그 모집단이 지키던 술어도 함께 옮겨야 한다.***
         won = (await db.execute(text(
-            "UPDATE sales_unit_inventory SET status='HOLD' WHERE id=:u AND status='AVAILABLE' RETURNING id"),
-            {"u": candidate_unit})).first()
+            "UPDATE sales_unit_inventory SET status='HOLD' "
+            "WHERE id=:u AND site_id=:s AND status='AVAILABLE' AND deleted_at IS NULL RETURNING id"),
+            {"u": candidate_unit, "s": str(site_id)})).first()
         if won:
             chosen = candidate_unit
             break
@@ -359,7 +386,8 @@ async def draw_for_candidate(db: AsyncSession, site_id, group_id, candidate_id, 
 
     # 세대 정보(공개용)는 HOLD 확정 후 조회. DRAW_ASSIGN 이벤트도 확정 성공분만 기록한다.
     u = (await db.execute(text(
-        "SELECT dong, ho FROM sales_unit_inventory WHERE id=:u"), {"u": chosen})).first()
+        "SELECT dong, ho FROM sales_unit_inventory WHERE id=:u AND site_id=:s"),
+        {"u": chosen, "s": str(site_id)})).first()
     await db.execute(text(
         "UPDATE sales_draw_candidates SET assigned_unit_id=:u, draw_seed=:seed, "
         "draw_pool=CAST(:pool AS jsonb), algo_version='v2', drawn_at=now() WHERE id=:c"),
@@ -378,10 +406,15 @@ async def draw_for_candidate(db: AsyncSession, site_id, group_id, candidate_id, 
                                   #   pool», 아래는 «공약된 전체 pool» — **다른 값이라 이름도 다르다.**
                                   "participants_hash": rev.participants_hash,
                                   "committed_pool_hash": rev.pool_hash,
-                                  # ★**시작 카운터를 남긴다.** 선점 경합이 나면 프로덕션은 카운터를
-                                  #   이어받는데, 이 값이 없으면 **검증기가 `start=0` 으로 재계산해
-                                  #   「결과가 다르다」= 조작 의심을 낸다**(리뷰 MED-5 실측).
-                                  #   ***정직한 추첨을 조작으로 신고하는 것이 가장 나쁜 거짓 신고다.***
+                                  # ★**건너뛴 세대 목록**을 남긴다(카운터가 아니라).
+                                  #   선점 경합이 나면 프로덕션은 카운터를 이어받는데, 그 사실이
+                                  #   없으면 검증기가 `start=0` 으로 재계산해 **정직한 추첨을 조작으로
+                                  #   신고**한다(R1 MED-5). 그렇다고 **카운터 숫자**를 주면 그건
+                                  #   ***아무 데도 대조할 수 없는 자유변수***라 무엇이든 인증된다
+                                  #   (R2 MAJOR-4 실측: 임의 6개 세대 전부 통과).
+                                  #   ⇒ **어떤 세대를 건너뛰었는지**를 남긴다 — 그 목록은
+                                  #   「이미 배정됐는가」로 **원장과 교차 확인이 가능한 공개 사실**이다.
+                                  "skipped_units": sorted(excluded),
                                   "start_counter": start_counter},
                             do_commit=False)
     await db.commit()
@@ -392,7 +425,8 @@ async def draw_for_candidate(db: AsyncSession, site_id, group_id, candidate_id, 
         # ★비콘을 **썼는지 안 썼는지**를 응답이 말한다 — 침묵하면 「썼다고 해 놓고 안 쓰는」 경로가 보이지 않는다.
         "beacon_round": rev.beacon_round, "beacon": beacon_label,
         "participants_hash": rev.participants_hash, "committed_pool_hash": rev.pool_hash,
-        "start_counter": start_counter,
+        # ★`skipped_units` 가 검증기의 `--taken` 입력이다(대조 가능) · `start_counter` 는 참고값
+        "skipped_units": sorted(excluded), "start_counter": start_counter,
         "event": ev,
     }
 

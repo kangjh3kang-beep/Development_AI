@@ -110,6 +110,36 @@ async def subscription_draw_commitment(ann_id: uuid.UUID, db: AsyncSession = Dep
     return got
 
 
+@r5.post("/subscription/{ann_id}/commit/void")
+async def subscription_draw_void(ann_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
+                    ctx: SalesCtx = Depends(require_role(*_R_SUBSCRIPTION_DRAW))):
+    """★공약 **무효화** — 재공약을 가능하게 하는 **유일한** 경로. `body.reason` 필수.
+
+    공약은 명부·대상 세대를 묶는다. 그런데 **정상 업무**(선착순 청약·예비 승계·계약 체결/해지·
+    세대 추가)가 그것을 바꾸면 추첨이 거부되고, `UNIQUE(scope, ref_id)` 때문에 **다시 공약할 수도
+    없어** 그 대상이 **벽돌**이 된다(R2 리뷰 MAJOR-7).
+
+    ★**막지 않고 보이게 한다**: 무효화는 `sales_draw_commitment_voids` 에 **영구 기록**되고
+      반환에 **누적 횟수**가 실린다. 재공약하면 `commit_hash` 가 달라져, 앞선 값을 받아 둔
+      대상자·입회인은 **즉시 안다.** ***이 설계의 한계를 숨기지 않는다 — 무효화 자체는 막지 못한다.***
+    """
+    from app.services.sales.draw.commitment_store import void_commitment
+    try:
+        return await void_commitment(db, ctx.site_id, "subscription", ann_id,
+                                     by=getattr(ctx.user, "id", None),
+                                     reason=str(body.get("reason") or ""))
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(400, str(e)) from e
+
+
+@r5.get("/subscription/{ann_id}/commit/voids")
+async def subscription_draw_voids(ann_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                     ctx: SalesCtx = Depends(sales_ctx)):
+    """무효화 이력 조회 — ★**「몇 번 다시 공약했나」가 보이지 않으면 기록은 무의미하다.**"""
+    from app.services.sales.draw.commitment_store import void_history
+    return {"voids": await void_history(db, "subscription", ann_id)}
+
 @r5.post("/subscription/{ann_id}/draw")
 async def draw(ann_id: uuid.UUID, body: dict | None = None, db: AsyncSession = Depends(get_db),
                ctx: SalesCtx = Depends(require_role(*_R_SUBSCRIPTION_DRAW))):

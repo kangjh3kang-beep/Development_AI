@@ -80,8 +80,18 @@ async def subscription_binding(db, site_id, announcement_id) -> tuple[list[str],
     apps = list((await db.execute(select(SalesSubscriptionApplication).where(
         SalesSubscriptionApplication.announcement_id == announcement_id,
         SalesSubscriptionApplication.eligibility == "OK"))).scalars())
+    # ★★**그 공고가 실제로 뽑는 타입으로 좁힌다**(R2 리뷰 MAJOR-7).
+    #   종전에는 **현장 전체 가용 세대**였다. 추첨은 `groupby(apps, unit_type_id)` 로 **신청이 있는
+    #   타입만** 도는데, 공약은 현장 전체를 묶고 있었으니 **무관한 세대 하나만 상태가 바뀌어도**
+    #   지문이 달라져 추첨이 막혔다 — 그리고 그 통로는 전부 **정상 업무**다:
+    #   `claim_offer`(선착순·고객이 누른다) · `promote_reserve` · 계약 체결/해지 · 세대 추가·삭제.
+    #   ***게이트가 공격만 막고 정상 운영도 막으면 그건 결함이다(위양성도 결함이다).***
+    type_ids = {a.unit_type_id for a in apps if a.unit_type_id is not None}
+    if not type_ids:
+        return [str(a.id) for a in apps], []
     units = list((await db.execute(select(SalesUnitInventory).where(
         SalesUnitInventory.site_id == site_id,
+        SalesUnitInventory.type_id.in_(list(type_ids)),
         SalesUnitInventory.status == "AVAILABLE",
         SalesUnitInventory.deleted_at.is_(None)))).scalars())
     return [str(a.id) for a in apps], [str(u.id) for u in units]
@@ -130,18 +140,8 @@ async def run_draw(db: AsyncSession, site_id, announcement_id) -> int:
     #     비콘을 못 가져오면 **추첨을 거부**한다(fail-closed).
     rev = await reveal_commitment(db, "subscription", announcement_id)
     beacon_parts, beacon_label = beacon.seed_contributions(rev.beacon_round)
-    rules = ann.rules or {}
-    special_ratio = rules.get("special_ratio", {})  # {type_id: 0~1} 파라미터
-    apps = list((await db.execute(select(SalesSubscriptionApplication).where(
-        SalesSubscriptionApplication.announcement_id == announcement_id,
-        SalesSubscriptionApplication.eligibility == "OK"))).scalars())
-    apps.sort(key=lambda a: str(a.unit_type_id))
-    # ★★**명부가 공약 이후에 바뀌었으면 뽑지 않는다**(독립 적대 리뷰 2026-09-13 MAJOR-1).
-    #   종전 주석은 *"명부를 키에 섞는다"* 라고 적었는데 **거짓이었다** — 실제 키는
-    #   `seed_key(nonce, announcement_id, 비콘)` 뿐이었고 당락은 `_tiebreak(seed, a.id)` 로 갈렸다.
-    #   그런데 `SalesSubscriptionApplication` 은 **범용 CRUD** 에 등록돼 있어(`sales/__init__.py`)
-    #   운영자가 신청을 **삭제·재생성**해 `application_id` 를 굴릴 수 있었다.
-    #   ***공약을 CRUD 밖으로 뺐지만, 공약이 묶어야 할 명부는 여전히 CRUD 안에 있었다.***
+
+    # ★게이트를 **일을 시작하기 전에** 둔다 — 거부할 추첨이면 신청 조회·정렬도 하지 않는다.
     live_roster, live_pool = await subscription_binding(db, site_id, announcement_id)
     if binding.roster_hash(live_roster) != rev.participants_hash:
         raise ValueError(
@@ -165,6 +165,18 @@ async def run_draw(db: AsyncSession, site_id, announcement_id) -> int:
         "beacon_round": rev.beacon_round, "beacon": beacon_label,
         "participants_hash": rev.participants_hash, "pool_hash": rev.pool_hash,
     })
+    rules = ann.rules or {}
+    special_ratio = rules.get("special_ratio", {})  # {type_id: 0~1} 파라미터
+    apps = list((await db.execute(select(SalesSubscriptionApplication).where(
+        SalesSubscriptionApplication.announcement_id == announcement_id,
+        SalesSubscriptionApplication.eligibility == "OK"))).scalars())
+    apps.sort(key=lambda a: str(a.unit_type_id))
+    # ★★**명부가 공약 이후에 바뀌었으면 뽑지 않는다**(독립 적대 리뷰 2026-09-13 MAJOR-1).
+    #   종전 주석은 *"명부를 키에 섞는다"* 라고 적었는데 **거짓이었다** — 실제 키는
+    #   `seed_key(nonce, announcement_id, 비콘)` 뿐이었고 당락은 `_tiebreak(seed, a.id)` 로 갈렸다.
+    #   그런데 `SalesSubscriptionApplication` 은 **범용 CRUD** 에 등록돼 있어(`sales/__init__.py`)
+    #   운영자가 신청을 **삭제·재생성**해 `application_id` 를 굴릴 수 있었다.
+    #   ***공약을 CRUD 밖으로 뺐지만, 공약이 묶어야 할 명부는 여전히 CRUD 안에 있었다.***
     total_win = 0
     for type_id, grp in groupby(apps, key=lambda a: a.unit_type_id):
         group = list(grp)
