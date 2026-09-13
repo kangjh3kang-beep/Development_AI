@@ -1,8 +1,24 @@
 """검증 가능한 난수(VRNG) — **추첨 결과를 제3자가 재현할 수 있게** 만드는 최소 도구.
 
+## ★적용 범위 — **이 모듈은 아직 ①(청약 당첨자 추첨)에만 배선돼 있다**
+
+솔직하게 적는다(독립 리뷰 M-3):
+
+  · ①`subscription/engine.py::run_draw` — **`seed_key`·`verify_commitment` 만** 쓴다.
+  · ②`draw/draw_engine.py::draw_for_candidate`(**동·호 즉석추첨**) — **아직 이 모듈을 안 쓴다.**
+    `random.Random(secrets.token_hex(8)).choice(...)` 가 그대로 살아 있고 pool 해시도
+    **64비트로 절단**된 채다.
+  · 그래서 `below`·`pick`·`shuffle` 은 지금 **테스트만 부른다**(프로덕션 소비처 0).
+
+★***계획서가 ②를 「주 사용처」라 불렀는데 고친 것은 ①이다.*** 이 사실을 여기 적어 두지 않으면
+  다음 사람이 「동·호 추첨에 VRNG 가 적용됐다」로 읽는다 — **그것이 허위 완결성이다.**
+  ②의 전환은 별도 작업이고, 그 부채는 `test_draw_engine_still_unmigrated.py` 가
+  **초록 안에서 보이게**(xfail) 들고 있다.
+
 ## 왜 `random.Random` 을 쓰지 않는가 (실측 2026-09-13)
 
-기존 동·호 추첨은 `random.Random(seed).choice(sorted(pool))` 였다. 그 방식의 문제는
+①의 종전 seed 유도와 ②의 세대 선택은 모두 파이썬 표준 `random` 계열에 기대고 있었다.
+②는 `random.Random(seed).choice(sorted(pool))` 다(**현재도 그렇다** — 위 적용 범위 참조). 그 방식의 문제는
 «무작위성» 이 아니라 **재현 가능성**이다:
 
   · `random.Random(str)` 의 시딩은 **CPython 구현 세부**다(문자열 → sha512 → 정수).

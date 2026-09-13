@@ -78,8 +78,12 @@ class _Ann:
         self.contract_end = None
 
 
-def _run_with(rules):
-    """공약 상태만 바꿔 `run_draw` 초입을 태운다(DB 없이 seed 결정 구간까지)."""
+def _run_with(rules, *, commitment=None, monkeypatch=None):
+    """공약 상태만 바꿔 `run_draw` 초입을 태운다(DB 없이 seed 결정 구간까지).
+
+    ★공약은 이제 `rules` 가 아니라 **append-only 저장소**에서 온다(리뷰 M-1/M-2).
+      `commitment` 로 그 저장소의 반환을 흉내낸다 — `None` 이면 「공약 없음」이다.
+    """
     import asyncio
 
     class _Res:
@@ -103,8 +107,22 @@ def _run_with(rules):
             return None
 
     ann = _Ann(rules)
-    return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
-        sub_engine.run_draw(_DB(), object(), ann.id))
+
+    async def _fake_reveal(_db, _scope, _ref):
+        if commitment is None:
+            raise ValueError("추첨 공약이 없습니다 — 추첨 전에 공약을 게시해야 합니다")
+        nonce, commit_hash = commitment
+        if not vrng.verify_commitment(nonce, commit_hash):
+            raise ValueError("추첨 공약이 일치하지 않습니다 — 저장된 nonce 가 공약과 다릅니다")
+        return nonce, commit_hash
+
+    orig = sub_engine.reveal_nonce
+    sub_engine.reveal_nonce = _fake_reveal
+    try:
+        return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+            sub_engine.run_draw(_DB(), object(), ann.id))
+    finally:
+        sub_engine.reveal_nonce = orig
 
 
 def test_draw_without_commitment_is_refused():
@@ -128,7 +146,7 @@ def test_tampered_nonce_is_refused():
     """★공약 이후 nonce 를 바꾸면 거부된다 — 서버가 뽑아 보고 갈아치우는 것을 막는다."""
     good = vrng.commitment(NONCE)
     with pytest.raises(ValueError) as e:
-        _run_with({"draw_commit": good, "draw_nonce": "aa" * 32})
+        _run_with({}, commitment=("aa" * 32, good))
     msg = str(e.value)
     assert "일치하지" in msg, msg
     assert "공약이 없습니다" not in msg, f"불일치가 아니라 부재로 떨어졌다: {msg}"
@@ -140,9 +158,8 @@ def test_matching_commitment_passes_the_gate():
     게이트를 넘은 뒤 DB 가 가짜라 다른 예외로 끝나는 것은 정상이다 —
     여기서 보는 것은 **공약 검증이 통과했는가** 하나다.
     """
-    rules = {"draw_commit": vrng.commitment(NONCE), "draw_nonce": NONCE}
     try:
-        _run_with(rules)
+        _run_with({}, commitment=(NONCE, vrng.commitment(NONCE)))
     except ValueError as e:
         assert "공약" not in str(e.value), f"옳은 공약인데 게이트에서 막혔다: {e}"
     except Exception:
@@ -290,7 +307,9 @@ def test_run_draw_feeds_the_nonce_derived_seed_into_ranking(monkeypatch):
 
     def _run(nonce):
         seen.clear()
-        ann.rules = {"draw_commit": vrng.commitment(nonce), "draw_nonce": nonce}
+        async def _rev(_db, _s, _r):
+            return nonce, vrng.commitment(nonce)
+        monkeypatch.setattr(sub_engine, "reveal_nonce", _rev, raising=False)
         try:
             asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
                 sub_engine.run_draw(_DB(), object(), ann.id))

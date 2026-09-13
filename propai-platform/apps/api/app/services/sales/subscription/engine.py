@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.sales.draw import vrng
+from app.services.sales.draw.commitment_store import reveal_nonce
 from app.services.sales.harness.outbox import emit_outbox
 from apps.api.database.models.sales.subscription import (
     SalesSubscriptionAnnouncement,
@@ -101,15 +102,13 @@ async def run_draw(db: AsyncSession, site_id, announcement_id) -> int:
     #     (fail-closed — 조용히 예측 가능한 값으로 떨어지지 않는다).
     #   공약/공개 절차: `rules["draw_commit"]` 에 sha256(nonce) 를 **미리** 게시하고,
     #   추첨 시 `draw_nonce` 를 넣어 대조한다. 서버가 뽑아 보고 nonce 를 갈아치우면 해시가 어긋난다.
-    commit_hex = str((ann.rules or {}).get("draw_commit") or "")
-    nonce_hex = str((ann.rules or {}).get("draw_nonce") or "")
-    if not commit_hex or not nonce_hex:
-        raise ValueError(
-            "추첨 공약이 없습니다 — 추첨 전에 공약(draw_commit)을 게시하고 "
-            "추첨 시 draw_nonce 를 함께 두어야 합니다(사전 공약 없는 추첨은 재추첨을 막을 수 없습니다)"
-        )
-    if not vrng.verify_commitment(nonce_hex, commit_hex):
-        raise ValueError("추첨 공약이 일치하지 않습니다 — nonce 가 공약 이후 바뀌었습니다")
+    #   ★★2차 정정(독립 리뷰 M-1/M-2): 공약을 `ann.rules` 에 두었더니 **연극**이었다 —
+    #     `rules` 는 범용 CRUD 로 덮어쓸 수 있고 그 쓰기 역할이 추첨 역할을 **포함**해서,
+    #     운영자가 명부를 본 뒤 commit+nonce 를 **한 번에** 써 넣고 바로 추첨할 수 있었다.
+    #     게다가 `rules` 는 읽기 API 에 실려 nonce 를 미리 넣으면 **누구나 사전 계산**했다.
+    #     ⇒ 공약을 **CRUD 밖의 append-only 저장소**로 옮긴다(`sales_draw_commitments`,
+    #       `UNIQUE(scope, ref_id)` 로 **재공약 불가** · nonce 는 읽기 API 에 안 실린다).
+    nonce_hex, commit_hex = await reveal_nonce(db, "subscription", announcement_id)
     # 명부를 키에 섞는다 — 명부가 확정되기 전에는 결과를 고를 수 없다(서버 단독 결정 배제).
     seed = vrng.seed_key(nonce_hex, str(announcement_id)).hex()
     rules = ann.rules or {}

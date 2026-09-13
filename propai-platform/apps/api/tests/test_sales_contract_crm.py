@@ -569,6 +569,20 @@ class TestRunDrawIdempotency:
         assert db.added == []
 
 
+#: ★가짜 DB 테스트용 고정 nonce. 공약 저장소(`sales_draw_commitments`)는 **진짜 DB** 가 필요하므로
+#:   이 단위테스트에서는 그 경계를 **명시적으로** 대체한다. 「공약이 없으면 거부된다」·
+#:   「재공약 불가」·「nonce 가 결과를 만든다」는 `test_draw_commit_reveal.py` 가 따로 태운다.
+_FIXED_NONCE = "5a" * 32
+
+
+@pytest.fixture(autouse=True)
+def _stub_commitment(monkeypatch):
+    """추첨 경로의 공약 조회를 고정값으로 — DB 없는 단위테스트의 경계."""
+    async def _fake(_db, _scope, _ref):
+        return _FIXED_NONCE, _vrng.commitment(_FIXED_NONCE)
+    monkeypatch.setattr(sub_engine, "reveal_nonce", _fake, raising=False)
+
+
 class _DrawAnn:
     """추첨 실행용 가짜 공고(run_draw 가 보는 필드만)."""
 
@@ -576,12 +590,7 @@ class _DrawAnn:
         self.id = uuid_mod.uuid4()
         self.status = "OPEN"            # ★DRAWN 이 아니어야 실제 추첨 경로(zip 라인)로 진입
         self.announce_no = "2026-RUN"
-        # ★**사전 공약**이 없으면 추첨이 거부된다(2026-09-13 계약 변경).
-        #   종전엔 seed 가 `announce_no`(=공개값)로 떨어져 **당첨자를 사전 계산할 수 있었다.**
-        #   픽스처를 새 계약에 맞춘다 — 약화가 아니라 **계약이 엄격해진 것**이고,
-        #   「공약 없는 추첨은 거부된다」는 별도 락이 태운다(test_draw_requires_commitment).
-        _nonce = "5a" * 32
-        self.rules = {"draw_commit": _vrng.commitment(_nonce), "draw_nonce": _nonce}
+        self.rules = {}
         self.round_id = None
         self.contract_end = None
 
