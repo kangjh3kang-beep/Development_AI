@@ -137,15 +137,44 @@ async def test_unmeasured_total_is_none_not_zero():
     assert ds["truncated"] is None, "모집단을 모르면 절단 여부도 모른다"
 
 
-async def test_summary_carries_the_total_not_just_the_count():
-    """★**소비처까지** — 요약이 반환수만 싣고 모집단을 버리면 이 변경은 장식이다."""
+def _dataset_summary_keys() -> set[str]:
+    """`run_learning_cycle` 이 `summary["dataset"]` 에 넣는 **딕셔너리 리터럴 키**를 AST 로 뽑는다.
+
+    ★**문자열 포함 검사를 쓰지 않는 이유(실측 2026-09-13)**: 처음엔 `"active_pairs_total" in src`
+      로 짰는데, 그 줄을 지우는 변이가 **SURVIVED** 했다 — **바로 위에 내가 쓴 주석**에 같은 낱말이
+      있었기 때문이다. 저장소 지침이 *「소스 검사는 주석·문자열에 뚫린다」* 를 명문으로 적어 뒀고
+      **내 락이 그것을 어겼다.** ⇒ ***AST 는 주석을 애초에 담지 않는다.***
+    """
+    import ast
     import inspect
+    import textwrap
 
     from app.services.growth import learning_loop as ll
 
-    src = inspect.getsource(ll.run_learning_cycle)
-    # ★대조군 먼저 — 이 함수가 실제로 데이터셋 요약을 만드는가(아니면 아래가 공허하다)
-    assert "active_pairs" in src, "조회기 사망 — run_learning_cycle 이 dataset 요약을 안 만든다"
-    assert "active_pairs_total" in src, (
-        "요약이 **모집단**을 안 싣는다 — 소비처가 `count` 를 모집단으로 읽게 된다")
-    assert "truncated" in src, "요약이 절단 여부를 안 싣는다"
+    tree = ast.parse(textwrap.dedent(inspect.getsource(ll.run_learning_cycle)))
+    keys: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for tgt in node.targets:
+            if (isinstance(tgt, ast.Subscript)
+                    and isinstance(tgt.slice, ast.Constant) and tgt.slice.value == "dataset"
+                    and isinstance(node.value, ast.Dict)):
+                keys |= {k.value for k in node.value.keys
+                         if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+    return keys
+
+
+async def test_summary_carries_the_total_not_just_the_count():
+    """★**소비처까지** — 요약이 반환수만 싣고 모집단을 버리면 이 변경은 장식이다."""
+    keys = _dataset_summary_keys()
+
+    # ★대조군 먼저 — AST 가 실제로 그 대입을 찾았는가(못 찾으면 아래 셋이 공허하다)
+    assert "active_pairs" in keys, (
+        f"조회기 사망 — summary['dataset'] 의 키를 못 찾았다: {sorted(keys)}")
+    # ★역대조군 — 없는 키가 잡히면 파서가 아무거나 집고 있다
+    assert "zzz_nope_sentinel" not in keys
+
+    assert "active_pairs_total" in keys, (
+        f"요약이 **모집단**을 안 싣는다 — 소비처가 count 를 모집단으로 읽게 된다: {sorted(keys)}")
+    assert "truncated" in keys, f"요약이 절단 여부를 안 싣는다: {sorted(keys)}"
