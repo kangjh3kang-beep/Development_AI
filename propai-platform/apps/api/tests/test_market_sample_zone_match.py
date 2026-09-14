@@ -578,3 +578,46 @@ def test_producer_and_consumer_share_one_sentinel():
     assert r and r["matched_count"] == 3, f"아는 행을 못 센다: {r} (mix={mix2})"
     assert r["verdict"] == "partial", f"미표기가 남았는데 «전부 일치» 라고 말한다: {r}"
     assert r["unknown_share_pct"] > 0.0, f"미표기 비율이 보고되지 않는다: {r}"
+
+
+def test_plan_section5_lock_names_exist():
+    """★★**계획서가 선언한 락이 실재하는지 기계가 본다**(독립 리뷰 M3 · 2026-09-14).
+
+    ★실측: 이 PR 의 계획서 §5 는 락 이름 **5개를 선언했고 그중 4개가 존재하지 않았다.**
+      계획 단계의 이름이 구현하면서 바뀌었고 **아무도 대조하지 않았다.** 동시에 §6 에서
+      추가한 락 4개는 표에 **한 줄도 없었다** — ***순증이 순삭제를 덮는다.***
+      저장소 §C 는 *"계획서가 선언한 잠금이 실제 테스트로 존재하는지 PR 에서 확인한다"* 고
+      적고 있었다. **산문이라 아무도 실행하지 않았다.** 그래서 실행되게 만든다.
+
+    축: 계획서 **표에서 파생**(손 목록 금지) ↔ 테스트 모듈 **AST 에서 파생**.
+    """
+    import ast
+
+    plan = (pathlib.Path(__file__).resolve().parents[3]
+            / "_workspace" / "PLAN_market_sample_zone_match_2026-09-14.md")
+    assert plan.exists(), f"★조회기 사망 — 계획서를 못 찾았다: {plan}"
+    text = plan.read_text(encoding="utf-8")
+    body = text[text.index("## §5 잠금"):text.index("## §6 실행 결과")]
+    # ★**표 행만** 본다. 절 전체를 긁으면 바로 위 정정 문단이 «실재하지 않는다» 고 적어 둔
+    #   옛 이름까지 «선언» 으로 세어, **정정문 자신이 위양성의 운반체**가 된다
+    #   (2026-09-14 실측: 이 락을 처음 짰을 때 정확히 그렇게 빨개졌다).
+    rows = [ln for ln in body.splitlines()
+            if ln.startswith("|") and not ln.startswith("|---") and "| 락 |" not in ln]
+    declared = set()
+    for ln in rows:
+        declared |= set(re.findall(r"`(test_[A-Za-z0-9_]+)`", ln))
+    # ★대조군 먼저 — 표를 실제로 읽었나(0건이면 파서가 죽은 것이지 «선언이 없다»가 아니다)
+    assert len(declared) >= 5, f"★조회기 사망 — §5 에서 락 이름을 못 읽었다: {sorted(declared)}"
+
+    tree = ast.parse(pathlib.Path(__file__).read_text(encoding="utf-8"))
+    actual = {n.name for n in tree.body
+              if isinstance(n, ast.FunctionDef) and n.name.startswith("test_")}
+    assert len(actual) >= 10, f"★조회기 사망 — 이 모듈의 테스트를 못 셌다: {len(actual)}"
+
+    missing = declared - actual
+    assert not missing, (
+        f"★계획서 §5 가 **존재하지 않는 락**을 선언한다 — 리뷰어가 이미 잠긴 것으로 오독한다: "
+        f"{sorted(missing)}")
+    unlisted = actual - declared
+    assert not unlisted, (
+        f"★실재하는 락이 §5 에 **없다** — 순증이 순삭제를 덮는 그 자리다: {sorted(unlisted)}")

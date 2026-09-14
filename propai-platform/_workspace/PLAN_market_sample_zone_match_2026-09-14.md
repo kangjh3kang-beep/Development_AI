@@ -74,17 +74,38 @@
 
 ## §5 잠금
 
+★★**2026-09-14 정정(독립 리뷰 M3)**: 이 표는 한때 **락 이름 5개를 선언하고 그중 4개가
+실재하지 않았다**(`test_zone_match_three_states` · `test_note_states_the_measured_share_not_a_conditional`
+· `test_note_unchanged_when_target_absent` · `test_reference_note_carries_the_mismatch`).
+계획을 쓸 때의 이름이 구현하면서 바뀌었고 **아무도 대조하지 않았다** — 그리고 그 사이
+§6 에서 추가한 락 4개는 이 표에 **한 줄도 없었다**. 저장소 기록 그대로다:
+***순증이 순삭제를 덮는다*** · ***계획서가 선언한 락이 실재하는지는 PR 에서 확인한다(§C).***
+⇒ 아래 표는 **AST 로 파생**해 다시 적었고, 이제 **기계가 검사한다**:
+`test_plan_section5_lock_names_exist` — 이 표의 백틱 `test_*` 이름이 실제 테스트 모듈에 없으면 **빨강**.
+
+파일: `apps/api/tests/test_market_sample_zone_match.py` (락 15 + 부채 xfail 1)
+
 | 락 | 축 |
 |---|---|
-| `test_zone_match_three_states` | `None`(못 쟀다) / `0.0`(쟀고 0%) / `>0` — **세 상태가 다른 값** |
-| `test_note_states_the_measured_share_not_a_conditional` | 대상 주면 **「섞여 있으면」이 사라지고** 실측 수치가 나온다 |
-| `test_note_unchanged_when_target_absent` | 대상 없으면 **현행과 바이트 동일**(무회귀) |
+| `test_zone_match_separates_three_states` | `None`(못 쟀다) / `0.0`(쟀고 0%) / `>0` — **세 상태가 다른 값** |
+| `test_zone_match_uses_the_same_normalisation_as_the_producer` | 생산자 `_mix_of` 와 **같은 `_norm`** 으로 비교한다 |
+| `test_note_says_the_measured_share_instead_of_a_conditional` | 대상 주면 **「섞여 있으면」이 사라지고** 실측 수치가 나온다 |
+| `test_note_is_unchanged_when_target_is_unknown` | 대상 없으면 **바이트 동일**(무회귀) |
 | `test_two_populations_produce_different_notes` | 일치 0% ↔ 일치 100% 가 **다른 문구** |
-| `test_reference_note_carries_the_mismatch` | `methods[1].reference_note` 가 실측을 싣는다(**소비처까지**) |
+| `test_reference_note_and_machine_field_carry_the_mismatch` | `methods[1]` 이 참고값과 함께 실측을 싣는다(**소비처까지**) |
+| `test_zone_match_clause_covers_all_three_branches` | 세 갈래 전수 · **거짓 금지를 양방향**으로 |
+| `test_call_sites_actually_pass_the_target_zone` | 호출부를 **AST 로 파생** · 키워드가 아니라 **값 표현식**(리터럴 정확 일치) |
+| `test_partial_branch_of_the_note_carries_the_measured_share` | 가운데 갈래도 **수치+건수 인접** |
+| `test_response_keys_are_a_contract` | 출력 키 이름이 계약 — 바뀌면 소비처가 **조용히 `None`** |
+| `test_machine_field_describes_the_very_stats_it_is_shown_beside` | ★H2 — 일치율이 **`land_market_stats` 바로 그 통계**를 잰다(동일성) |
+| `test_unmeasurable_never_collapses_into_measured_zero` | ★H3 — 공백만 대상 · 센티넬 대상 · 전부 미표기 · 섞인 미표기 |
+| `test_absence_is_counted_not_inferred_from_a_rounded_percentage` | ★M2 — `none` 은 **센 결과가 0**일 때만(반올림 바닥 1/20001) |
+| `test_match_requires_every_known_parcel_not_a_rounded_percentage` | ★L2/L1 — `match` 는 **건수 동일성** · `share_pct` 타입을 **세 모집단**에서 |
+| `test_producer_and_consumer_share_one_sentinel` | ★생산자를 태운다 — `rows` → `_mix_of` → `zone_match` 두 층 |
+| `test_debt_machine_zone_match_field_has_no_consumer_yet` | **`xfail(strict=True)` 부채** — 기계 필드 소비처 0. 배선하면 XPASS 로 실패 |
+| `test_plan_section5_lock_names_exist` | ★**이 표 자신** — 선언한 이름이 실재하지 않으면 빨강 |
 
-★**공허 방지**: 각 락은 픽스처가 **실제로 두 값을 다르게** 내는지 먼저 단언한다.
-
----
+★**공허 방지**: 각 락은 **대조군을 먼저** 단언한다(조회기 생존 · 픽스처가 실제로 두 값을 다르게 낸다).
 
 ## §6 실행 결과 — **계획서에 없던 것 셋**
 
