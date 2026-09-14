@@ -182,6 +182,36 @@ def test_zone_match_clause_covers_all_three_branches():
     assert "뿐입니다" in part_c, f"일부 일치인데 한정어가 없다: {part_c}"
 
 
+def _kwarg_value_src(func_name: str, call_name: str, kwarg: str) -> list[str]:
+    """그 호출이 `kwarg=` 로 넘기는 **값 표현식의 소스**를 뽑는다.
+
+    ★왜 키워드 존재만으로 부족한가(기계 변이 실측 2026-09-14):
+      `target_land_use=str((subject or {}).get("zone_type") or "")` 의 **문자열 `"zone_type"` 만**
+      바꾸는 변이가 **SURVIVED** 했다. 키워드는 그대로라 「넘긴다」는 참이지만, 넘어가는 값이
+      **항상 빈 값**이 되어 기능이 통째로 꺼진다.
+      ⇒ 저장소 기록 그대로다: ***「불린다」가 아니라 「무엇을 넘기는가」를 보라.***
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from app.services.land_intelligence import desk_appraisal_service as mod
+
+    src = textwrap.dedent(inspect.getsource(getattr(mod, func_name)))
+    tree = ast.parse(src)
+    out: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+        if name != call_name:
+            continue
+        for kw in node.keywords:
+            if kw.arg == kwarg:
+                out.append(ast.get_source_segment(src, kw.value) or "")
+    return out
+
+
 def _calls_and_kwargs(func_name: str, call_name: str) -> tuple[int, set[str]]:
     """`desk_appraisal` 본문에서 `call_name(...)` 호출이 넘기는 **키워드 이름**을 AST 로 뽑는다.
 
@@ -226,6 +256,14 @@ def test_call_sites_actually_pass_the_target_zone():
         assert seen, f"★조회기 사망 — desk_appraisal 안에서 {call}(...) 호출 자체를 못 찾았다"
         assert kws, (
             f"{call}(...) 을 **위치인자로만** 부른다 — 시그니처가 바뀌면 조용히 밀린다(저장소 §33)")
+        # ★★값 축 — 「넘긴다」가 아니라 **「무엇을 넘기는가」**
+        vals = _kwarg_value_src("desk_appraisal", call, "target_land_use")
+        assert vals, f"{call}(...) 의 target_land_use 값 표현식을 못 읽었다"
+        for v in vals:
+            assert "zone_type" in v, (
+                f"{call}(target_land_use=…) 이 **대상 용도지역을 안 읽는다** — "
+                f"넘기기는 하지만 값이 비면 기능이 통째로 꺼진다: {v!r}")
+            assert "subject" in v, f"{call}(target_land_use=…) 이 subject 에서 오지 않는다: {v!r}"
         assert "target_land_use" in kws, (
             f"{call}(...) 이 대상 용도지역을 **안 넘긴다** — 그러면 그 함수는 원리적으로 "
             f"가정법밖에 말할 수 없다. 넘기는 키워드: {sorted(kws)}")
