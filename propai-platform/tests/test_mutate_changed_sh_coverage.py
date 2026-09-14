@@ -976,7 +976,7 @@ def test_exclusion_constant_is_immutable() -> None:
     )
 
 
-def test_py_pair_discovery_covers_the_repo_level_tests_dir() -> None:
+def test_py_pair_discovery_covers_the_repo_level_tests_dir(monkeypatch) -> None:
     """★`.py` 짝 탐색이 **`propai-platform/tests/`** 도 본다 — 안 보면 거짓 SURVIVED 가 난다.
 
     ★★R1 MAJOR-2 의 **재발 방지**. 루트가 `apps/api/tests`·`tests` 둘뿐이던 동안
@@ -986,9 +986,13 @@ def test_py_pair_discovery_covers_the_repo_level_tests_dir() -> None:
       아무 락도 안 깨뜨렸다. ***「고쳤다」와 「고친 것을 잠갔다」는 다른 명제다.***
     ★락의 축은 **리터럴이 아니라 효과**다(루트 문자열을 단언하면 리팩토링에 부서진다).
     """
-    pair = pathlib.Path("propai-platform/tests/test_lint_ratchet.py")
-    assert pair.exists(), f"전제가 낡았다 — {pair} 가 없다(조회기 사망)"
+    # ★`_guess_tests` 는 **상대경로**로 루트를 찾는다 — pytest 의 cwd 는 `propai-platform` 이라
+    #   저장소 루트로 옮겨야 한다(이 파일의 다른 테스트도 같은 이유로 chdir 한다).
+    rel = "propai-platform/tests/test_lint_ratchet.py"
+    assert (_REPO_ROOT / rel).exists(), f"전제가 낡았다 — {rel} 가 없다(조회기 사망)"
+    monkeypatch.chdir(_REPO_ROOT)
     got = [str(x) for x in mc._guess_tests([pathlib.Path("scripts/ci/lint_ratchet.py")])]
+    pair = pathlib.Path(rel)
     assert str(pair) in got, (
         f"저장소 루트 `propai-platform/tests/` 의 짝을 못 찾는다: {got} — "
         "그 파일은 모집단에 들어오므로, 못 찾으면 **무관한 테스트로 판정**돼 거짓 생존이 난다"
