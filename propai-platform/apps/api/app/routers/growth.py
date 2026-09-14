@@ -934,7 +934,9 @@ async def learning_dataset(
             actor_id=user_id, actor_role="super_admin",
             action="growth.learn.dataset_download",
             target=f"{service or 'all'}@{status}",
-            detail={"count": ds.get("count", 0), "statuses": ds.get("statuses")},
+            # ★반출 추적은 «얼마나 나갔나」뿐 아니라 «전체 중 얼마인가」까지 남아야 한다.
+            detail={"count": ds.get("count", 0), "total": ds.get("total"),
+                    "truncated": ds.get("truncated"), "statuses": ds.get("statuses")},
         )
     except Exception:  # noqa: BLE001
         pass

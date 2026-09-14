@@ -268,8 +268,16 @@ async def build_dataset_jsonl(db, *, service: str | None = None,
     ▶실소비 활성화(플래그 ON)와 레지스트리 시딩(ingest 시 upsert_asset_right)은 WP-J 이관.
       기본값 False 라 현재 동작(run_learning_cycle 메타 카운트·기존 테스트)은 무회귀.
 
-    반환: {"count","jsonl","service","statuses","rights_enforced","excluded_no_rights"}.
-          jsonl 은 '\n' 구분 문자열.
+    반환: {"count","total","truncated","jsonl","service","statuses","rights_enforced",
+           "excluded_no_rights"}. jsonl 은 '\n' 구분 문자열.
+
+    ★**`count` 는 「반환한 행수」이고 `total` 이 「모집단」이다.** `LIMIT :lim` 이 자르므로 둘이
+      갈릴 수 있고, 갈리면 `truncated=True` 다. **`count` 를 모집단으로 읽지 마라** —
+      2026-09-13 실측: 같은 저장소의 `GET /growth/insights?limit=500` 에서 두 세션이 각각
+      `items`(500)를 전수로 읽어 분포·개수·**「없다」를 전부 틀렸다**(전수는 `total=4133`).
+      그 응답에는 `total` 이 **있었는데 안 읽었다.** 여기서는 **생산자가 함께 내보낸다.**
+    ★형제 표면 `/growth/learning/candidates` 는 이미 `total` 을 준다 —
+      **없던 것을 만드는 게 아니라 안 쓰던 것을 맞추는 것**이다.
     """
     from sqlalchemy import text
 
@@ -285,6 +293,14 @@ async def build_dataset_jsonl(db, *, service: str | None = None,
 
     lines: list[str] = []
     excluded_no_rights = 0
+    # ★`None` = **못 쟀다**(쿼리 실패). `0` = **세었고 0건**이다. 둘을 뭉치면 소비처가
+    #   「모집단이 비었다」와 「모집단을 모른다」를 구별하지 못한다 — 다음 행동이 다르다.
+    # ★★**이 선언은 아래 계수 블록의 `except: total = None` 과 「이중 가드」다**(기계 변이 실측
+    #   2026-09-13): **둘 중 하나만 지우면 SURVIVED**, **둘 다 지우면 CAUGHT** 다.
+    #   점수를 부풀리지 않으려고 적어 둔다 — 이 생존은 **구멍이 아니라 중복**이다.
+    #   남겨 두는 이유는 둘이다: ①타입 주석(`int | None`)이 **계약을 말한다**
+    #   ②계수 블록이 나중에 옮겨지거나 앞에 분기가 생기면 그때 `NameError` 를 막는다.
+    total: int | None = None
     try:
         # content_hash·tenant_id 를 함께 조회(학습게이트 키 — asset_rights 는 (asset_key, tenant) 키).
         rows = (await db.execute(text(
@@ -315,8 +331,27 @@ async def build_dataset_jsonl(db, *, service: str | None = None,
     except Exception as e:  # noqa: BLE001
         logger.warning("L3 데이터셋 생성 실패: %s", str(e)[:160])
 
+    # ★모집단을 **같은 WHERE 로** 센다(LIMIT 없이). 이것이 없으면 소비처는 `count` 를
+    #   모집단으로 읽고, 절단이 **조용히** 일어난다.
+    # ★★**자기 try 안에 둔다 — 그리고 본 산출물 뒤에 둔다.** 처음엔 행 조회 바로 뒤 같은 블록에
+    #   뒀는데, 모집단 조회가 실패하자 **데이터셋 자체가 날아갔다**(기존 테스트 3건이 잡았다).
+    #   ***보조 측정이 주 산출물을 죽이면 안 된다*** — 실패하면 `total=None`(못 쟀다)로 남기고
+    #   데이터셋은 그대로 낸다. 「모른다」와 「0건」이 구별되므로 소비처가 오독하지 않는다.
+    try:
+        total = int((await db.execute(text(
+            f"SELECT count(*) FROM learning_examples WHERE {where_sql}"
+        ), params)).scalar() or 0)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("L3 모집단 계수 실패(데이터셋은 유효): %s", str(e)[:160])
+        total = None
+
+    # ★`truncated` 는 **잰 경우에만** 판정한다. `total is None`(못 쟀다)이면 `None` 이다 —
+    #   「자르지 않았다」로 내리면 **모름이 성공으로 샌다**.
+    truncated = None if total is None else (len(lines) < total)
     return {
         "count": len(lines),
+        "total": total,
+        "truncated": truncated,
         "jsonl": "\n".join(lines),
         "service": service,
         "statuses": list(valid),
@@ -546,7 +581,14 @@ async def run_learning_cycle(db, *, since_days: int = 7) -> dict[str, Any]:
     # (2) 활성 데이터셋 메타(건수만 — 실제 JSONL 은 다운로드 API on-demand 생성).
     try:
         ds = await build_dataset_jsonl(db, statuses=("active",), limit=5000)
-        summary["dataset"] = {"active_pairs": ds.get("count", 0)}
+        # ★`active_pairs` 는 **반환수**다. 모집단은 `active_pairs_total` 이고, 둘이 갈리면
+        #   `truncated` 가 True 다. 종전에는 반환수만 실어 **절단이 보이지 않았다** —
+        #   5000 을 넘는 순간 요약이 «활성 5000건» 이라 말하고 그게 상한인지 알 길이 없었다.
+        summary["dataset"] = {
+            "active_pairs": ds.get("count", 0),
+            "active_pairs_total": ds.get("total"),      # None = **못 쟀다**(0 과 다르다)
+            "truncated": ds.get("truncated"),
+        }
     except Exception as e:  # noqa: BLE001
         summary["dataset"] = {"error": str(e)[:160]}
 
