@@ -919,19 +919,58 @@ def test_previously_excluded_shells_now_enter_the_population(tmp_path, monkeypat
       짝 테스트가 **tmp git repo 에서 실제로 실행**한다. 종전 게이트에서 이것이
       **가장 큰 손실**이었다.
     """
-    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "ci").mkdir(parents=True)
     for name in ("mutate_manual.sh", "coord.sh"):
         (tmp_path / "scripts" / name).write_text("x\n", encoding="utf-8")
+    # ★R1 MAJOR-1: 종전 픽스처가 `scripts/ci/` 밖만 담아서, 게이트에 `startswith("scripts/ci/")`
+    #   를 **덧붙이는** 변이가 이 락을 **통과**했다(실측 SURVIVED). 그 한 줄은 이 PR 이 넣은
+    #   9개 중 3개를 조용히 다시 빼낸다. ⇒ 접두가 실제로 노리는 자리를 픽스처에 넣는다.
+    (tmp_path / "scripts" / "ci" / "lint_ratchet.py").write_text("x = 1\n", encoding="utf-8")
     (tmp_path / "scripts" / "mutate_changed.py").write_text("x = 1\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         mc.subprocess, "run",
         lambda cmd, *a, **kw: subprocess.CompletedProcess(
-            cmd, 0, "scripts/mutate_manual.sh\nscripts/coord.sh\nscripts/mutate_changed.py\n", ""
+            cmd, 0,
+            "scripts/mutate_manual.sh\nscripts/coord.sh\n"
+            "scripts/ci/lint_ratchet.py\nscripts/mutate_changed.py\n", ""
         ),
     )
     got = sorted(p.name for p in mc._changed_files("BASE"))
     # ★두 모집단 — 들어와야 할 것이 들어오고 **빠져야 할 것이 빠진다**.
-    assert got == ["coord.sh", "mutate_manual.sh"], (
+    assert got == ["coord.sh", "lint_ratchet.py", "mutate_manual.sh"], (
         f"모집단이 기대와 다르다: {got} — 자기변이 도구만 빠져야 한다"
+    )
+
+
+def test_exclusion_axis_is_a_set_not_a_prefix() -> None:
+    """★**축**을 잠근다 — `_changed_files` 본문에 **접두 판정이 하나도 없어야** 한다.
+
+    ★★R1 MAJOR-1: 집합 동일성만 단언하면 **전체 교체**는 잡지만 **덧붙이는 접두**는 못 잡는다.
+      실측으로 `if n.startswith("scripts/ci/") or n in _SELF_MUTATION_EXCLUDED:` 가
+      **전건 초록으로 통과**했다. ***처방 범위가 결함 범위와 어긋난 전형이다.***
+    ★소스 grep 이 아니라 **AST** 로 본다 — 주석·독스트링에 뚫린 전례가 많다.
+    """
+    import ast as _ast
+    src = pathlib.Path(mc.__file__).read_text(encoding="utf-8")
+    fn = next(n for n in _ast.walk(_ast.parse(src))
+              if isinstance(n, _ast.FunctionDef) and n.name == "_changed_files")
+    prefix_calls = [
+        _ast.unparse(n) for n in _ast.walk(fn)
+        if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute)
+        and n.func.attr in {"startswith", "endswith"}
+        and not _ast.unparse(n).startswith("p.name.")   # 테스트 파일명 규칙은 정당
+        and ".suffix" not in _ast.unparse(n)            # 확장자 게이트도 정당
+    ]
+    assert not prefix_calls, (
+        f"_changed_files 가 경로 **접두**로 배제를 판정한다: {prefix_calls} — "
+        "배제는 `_SELF_MUTATION_EXCLUDED` **한 곳에서만** 하라. "
+        "접두는 앞으로 생길 파일까지 조용히 삼킨다."
+    )
+
+
+def test_exclusion_constant_is_immutable() -> None:
+    """[LOW] 배제 집합이 **불변**이다 — 런타임에 누가 `.add()` 하지 못한다."""
+    assert isinstance(mc._SELF_MUTATION_EXCLUDED, frozenset), (
+        f"가변 컨테이너다: {type(mc._SELF_MUTATION_EXCLUDED).__name__}"
     )

@@ -250,8 +250,12 @@ def _resolve_base(base: str) -> str:
 #: ★실측(2026-09-14 · `origin/main`):
 #:   · `mutate_manual.sh`  — 30일 **최다 변경 셸(5건)** 이고 **짝 테스트가 tmp git repo 에서
 #:     실제로 실행**한다. 이 도구는 그것을 **부르지 않으므로**(참조 0건) 자기변이가 아니다.
-#:   · `ci/lint_ratchet.py` — 짝 테스트가 **실행**한다. 변이 도구와 무관.
-#:   ⇒ 둘 다 **모집단에 들어와야 한다.**
+#:   · `ci/lint_ratchet.py` — 짝 테스트(`propai-platform/tests/test_lint_ratchet.py`)가
+#:     `sys.executable` 로 **실행**한다. 변이 도구와 무관.
+#:     ★★R1 MAJOR-2: 종전 이 주석은 «실행한다 ⇒ 들어와야 한다» 에서 멈췄는데,
+#:       **도구가 그 테스트를 찾지 못했다**(`_guess_tests` 루트에 `propai-platform/tests` 부재).
+#:       「실행한다」는 참이나 「감사된다」는 **거짓**이었다 — 같은 커밋에서 루트를 고쳤다.
+#:   ⇒ 둘 다 **모집단에 들어오고, 짝 테스트가 실제로 찾아진다**(아래 락이 단언).
 _SELF_MUTATION_EXCLUDED = frozenset({"scripts/mutate_changed.py"})
 
 
@@ -350,7 +354,14 @@ def _guess_tests(paths: list[Path]) -> list[str]:
         # 서비스 모듈 명명규칙: `foo_service.py` ↔ `test_foo.py`
         if p.stem.endswith("_service"):
             stems.append(p.stem[: -len("_service")])
-        for root in (Path("propai-platform/apps/api/tests"), Path("tests")):
+        # ★`propai-platform/tests` 가 빠져 있었다(R1 MAJOR-2 실측): `ci/lint_ratchet.py` 는
+        #   짝 테스트가 **실재하고 실행**하는데 `_guess_tests` 가 **0건**을 반환해,
+        #   모집단엔 들어오면서 **무관한 테스트로 판정**돼 거짓 SURVIVED 가 났다.
+        #   ★`.sh` 는 `_tests_referencing`(git grep)이라 찾았고 `.py` 만 못 찾았다 —
+        #   ***축이 확장자마다 달라서 한쪽만 낡은 것을 아무도 못 봤다.***
+        for root in (Path("propai-platform/apps/api/tests"),
+                     Path("propai-platform/tests"),
+                     Path("tests")):
             for stem in stems:
                 cand = root / f"test_{stem}.py"
                 if cand.exists():
