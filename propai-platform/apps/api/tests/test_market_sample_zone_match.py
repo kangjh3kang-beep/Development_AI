@@ -541,3 +541,40 @@ def test_match_requires_every_known_parcel_not_a_rounded_percentage():
         assert isinstance(r["share_pct"], float), (
             f"{label} 경로의 share_pct 가 {type(r['share_pct']).__name__} 다 — 경로마다 타입이 갈린다")
         assert isinstance(r["matched_count"], int), f"{label} 경로의 matched_count 타입이 다르다"
+
+
+def test_producer_and_consumer_share_one_sentinel():
+    """★★**생산자를 태운다** — 내 락이 `land_use_mix` 를 **손으로 만들어서** 결합을 안 봤다.
+
+    ★생존 실측(2026-09-14 재판정): `_mix_of` 가 붙이는 센티넬을
+      `UNKNOWN_BUCKET` → `"미지정"` 으로 바꾸는 변이가 `::VERDICT=SURVIVED`.
+      그러면 `zone_match` 의 배제가 **아무것도 배제하지 못해** 미표기 행이 다시
+      **실재 용도지역으로 세어진다**(= H3 거울상이 그대로 되살아난다).
+      원인 한 줄: 앞선 락 전부가 **소비자만** 태우고 생산자를 안 태웠다.
+      ⇒ 저장소 기록 그대로다: ***스텁(여기선 손으로 쓴 픽스처)이 내 락의 상한이다.***
+
+    그래서 여기서는 **원천 행(rows)에서 시작해** `_mix_of` → `zone_match` 로 이어 태운다.
+    """
+    from app.services.market.land_dong_stats import _mix_of, zone_match
+
+    rows_unknown = [{"jimok": "답"} for _ in range(6)]          # land_use 키 자체가 없다
+    mix = _mix_of(rows_unknown, "land_use")
+    # ★대조군 먼저 — 생산자가 살아 있나
+    assert mix and mix[0]["count"] == 6, f"★조회기 사망 — _mix_of 가 구성을 못 만든다: {mix}"
+    produced = mix[0]["land_use"]
+
+    # ① 생산자가 뭘 붙였든, 소비자는 그것을 **실재 용도지역으로 세면 안 된다**
+    assert zone_match({"land_use_mix": mix}, "일반상업지역") is None, (
+        f"미표기뿐인 표본을 «0% 다» 라고 단언한다 — 생산자 센티넬 {produced!r} 이 "
+        f"소비자의 배제 목록과 갈렸다")
+    assert zone_match({"land_use_mix": mix}, produced) is None, (
+        f"생산자가 붙인 센티넬 {produced!r} 을 **대상 용도지역으로 일치**시킨다 — "
+        f"「용도지역을 모르는 땅끼리 100% 같다」는 거짓이다")
+
+    # ② 두 모집단 — 아는 행이 섞이면 그 행만 세고, 미표기는 `unknown_share_pct` 로 보고한다
+    rows_mixed = [{"land_use": "일반상업지역"} for _ in range(3)] + [{"jimok": "답"} for _ in range(1)]
+    mix2 = _mix_of(rows_mixed, "land_use")
+    r = zone_match({"land_use_mix": mix2}, "일반상업지역")
+    assert r and r["matched_count"] == 3, f"아는 행을 못 센다: {r} (mix={mix2})"
+    assert r["verdict"] == "partial", f"미표기가 남았는데 «전부 일치» 라고 말한다: {r}"
+    assert r["unknown_share_pct"] > 0.0, f"미표기 비율이 보고되지 않는다: {r}"
