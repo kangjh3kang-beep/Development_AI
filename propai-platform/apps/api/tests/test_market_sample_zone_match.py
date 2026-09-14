@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import pathlib
 import sys
 
 import pytest
@@ -220,6 +221,28 @@ def _kwarg_value_src(func_name: str, call_name: str, kwarg: str) -> list[str]:
     return out
 
 
+def _literals_and_names(expr_src: str) -> tuple[set[str], set[str]]:
+    """값 표현식의 **문자열 리터럴**과 **이름**을 각각 뽑는다.
+
+    ★왜 부분문자열이 아니라 AST 인가(독립 리뷰 H1 · 2026-09-14 재현):
+      종전 단언은 `assert "zone_type" in v` 였는데 그것은 **부분문자열**이라
+      `subject.get("zone_type_2")` 도 **통과**한다. 그리고 `zone_type_2` 는 **가상이 아니다** —
+      `desk_appraisal_service.py` 가 실제로 그 키를 담고(`"zone_type_2": lc.get("zone_type_2")`),
+      web 타입에도 선언돼 있다(`lib/land/desk-appraisal.ts`). 즉 **옆에 실재하는 다른 필드**로
+      갈아 끼워도 내 락이 초록이었다(변이 실측 `::VERDICT=SURVIVED`).
+      ⇒ 저장소 기록 그대로다: ***경계를 주지 않은 포함 검사는 형제 이름에 뚫린다***
+        (`매도청구 가능` 이 `매도청구 가능여부` 를 집던 그 자리).
+    """
+    import ast
+
+    tree = ast.parse(expr_src, mode="eval")
+    lits = {n.value for n in ast.walk(tree)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    names |= {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    return lits, names
+
+
 def _calls_and_kwargs(func_name: str, call_name: str) -> tuple[int, set[str]]:
     """`desk_appraisal` 본문에서 `call_name(...)` 호출이 넘기는 **키워드 이름**을 AST 로 뽑는다.
 
@@ -268,10 +291,15 @@ def test_call_sites_actually_pass_the_target_zone():
         vals = _kwarg_value_src("desk_appraisal", call, "target_land_use")
         assert vals, f"{call}(...) 의 target_land_use 값 표현식을 못 읽었다"
         for v in vals:
-            assert "zone_type" in v, (
-                f"{call}(target_land_use=…) 이 **대상 용도지역을 안 읽는다** — "
-                f"넘기기는 하지만 값이 비면 기능이 통째로 꺼진다: {v!r}")
-            assert "subject" in v, f"{call}(target_land_use=…) 이 subject 에서 오지 않는다: {v!r}"
+            lits, names = _literals_and_names(v)
+            # ★**정확 일치**다. `"zone_type" in v` 는 부분문자열이라 실재하는 형제 키
+            #   `zone_type_2` 로 갈아 끼워도 통과했다(리뷰 H1 · 변이 SURVIVED 재현).
+            assert "zone_type" in lits, (
+                f"{call}(target_land_use=…) 이 **대상 용도지역을 안 읽는다** — 넘기기는 하지만 "
+                f"값이 비면 기능이 통째로 꺼진다. 읽는 키: {sorted(lits)} · 원문 {v!r}")
+            assert "subject" in names, (
+                f"{call}(target_land_use=…) 이 subject 에서 오지 않는다. "
+                f"이름: {sorted(names)} · 원문 {v!r}")
         assert "target_land_use" in kws, (
             f"{call}(...) 이 대상 용도지역을 **안 넘긴다** — 그러면 그 함수는 원리적으로 "
             f"가정법밖에 말할 수 없다. 넘기는 키워드: {sorted(kws)}")
@@ -331,3 +359,88 @@ def test_response_keys_are_a_contract():
 
     for k in ("land_market_stats_zone_match", "land_market_stats_note"):
         assert k in keys, f"출력 키 {k!r} 가 사라졌다 — 소비처는 조용히 None 을 받는다: {sorted(keys)}"
+
+
+def _returned_dict_value_src(func_name: str, key: str) -> str | None:
+    """반환 dict 에서 `key` 가 가진 **값 표현식의 소스**를 뽑는다."""
+    import ast
+    import inspect
+    import textwrap
+
+    from app.services.land_intelligence import desk_appraisal_service as mod
+
+    src = textwrap.dedent(inspect.getsource(getattr(mod, func_name)))
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)):
+            continue
+        for k, v in zip(node.value.keys, node.value.values):
+            if isinstance(k, ast.Constant) and k.value == key:
+                return ast.get_source_segment(src, v)
+    return None
+
+
+def _first_positional_src(expr_src: str, call_name: str) -> list[str]:
+    """`call_name(...)` 의 **첫 위치인자** 소스를 뽑는다."""
+    import ast
+
+    tree = ast.parse(expr_src, mode="eval")
+    out: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+        if name == call_name and node.args:
+            out.append(ast.get_source_segment(expr_src, node.args[0]) or "")
+    return out
+
+
+def test_machine_field_describes_the_very_stats_it_is_shown_beside():
+    """★★**키 이름이 아니라 「무엇을 재는가」를 잠근다**(독립 리뷰 H2 · 2026-09-14 재현).
+
+    ★생존 실측: `land_zone_match(land_dong_stats_out, …)` 의 **첫 인자를 `None` 으로** 바꾼
+      변이가 `::VERDICT=SURVIVED`. 앞선 락은 ①키워드 이름 ②출력 키 이름만 봤다 —
+      둘 다 그대로라 **초록인데 필드는 영구 `None`** 이었다.
+      ⇒ 저장소 기록 그대로다: ***「불린다」가 아니라 「무엇을 넘기는가」*** ·
+        ***상수를 자기 자신과 비교하는 락은 아무것도 안 잠근다.***
+
+    ★축은 **동일성**이다: 일치율은 `land_market_stats` **바로 그 통계**를 재야 한다.
+      다른 통계를 재면 화면에는 A 를 보여 주고 «A 는 0% 다» 대신 **B 의 0%** 를 말하게 된다.
+    """
+    stats_src = _returned_dict_value_src("desk_appraisal", "land_market_stats")
+    assert stats_src, "★조회기 사망 — 반환 dict 에서 land_market_stats 를 못 찾았다"
+
+    for key, call in (("land_market_stats_zone_match", "land_zone_match"),
+                      ("land_market_stats_note", "land_stats_note")):
+        val = _returned_dict_value_src("desk_appraisal", key)
+        assert val, f"★조회기 사망 — 반환 dict 에서 {key} 를 못 찾았다"
+        firsts = _first_positional_src(val, call)
+        assert firsts, f"{key} 가 {call}(...) 을 **위치 첫 인자 없이** 부른다: {val!r}"
+        for got in firsts:
+            assert got == stats_src, (
+                f"{key} 가 **land_market_stats 와 다른 것을 재고 있다** — 화면엔 {stats_src!r} 을 "
+                f"보여 주면서 일치율은 {got!r} 로 낸다. 소비처는 조용히 틀린 값을 받는다.")
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "★부채(2026-09-14 · 독립 리뷰 H2): 기계 필드 `land_market_stats_zone_match` 와 "
+    "`reference_zone_match` 는 **소비처 0** 이다(실측: 정의부·본 락 제외 0파일. "
+    "대조군 `reference_note` 는 5파일 — PDF `appraisal_adapter.py:277` · "
+    "web `DeskAppraisalReportClient.tsx:493` 로 **실제 사용자에게 닿는다**). "
+    "즉 사용자가 보는 경로는 산문 쪽이고, 기계 필드는 아직 「정의만 하고 소비처 0」 클래스다. "
+    "★배선하면 이 xfail 이 **XPASS 로 실패**한다 — 그때 부채표를 지우라는 신호다."))
+def test_debt_machine_zone_match_field_has_no_consumer_yet():
+    """소비처를 **AST/파생이 아니라 저장소 전수 grep** 으로 센다(축: 파일)."""
+    import subprocess
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    out = subprocess.run(
+        ["git", "grep", "-l", "-e", "land_market_stats_zone_match", "-e", "reference_zone_match",
+         "--", "apps/"], cwd=root, capture_output=True, text=True)
+    # rc 1 == 0건. rc >1 은 **조회기 사망**이라 부채 판정에 쓰면 안 된다.
+    assert out.returncode in (0, 1), f"★조회기 사망(rc={out.returncode}): {out.stderr[:200]}"
+    files = {f for f in out.stdout.split() if f}
+    consumers = {f for f in files
+                 if "desk_appraisal_service.py" not in f
+                 and "test_market_sample_zone_match.py" not in f}
+    assert consumers, f"기계 필드를 읽는 소비처가 생겼다 — 부채 해소: {sorted(consumers)}"
