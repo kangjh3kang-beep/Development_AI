@@ -168,6 +168,19 @@ def test_zone_match_clause_covers_all_three_branches():
     assert "83.3%" in part_c, f"일부 일치 갈래가 **실측 수치**를 안 싣는다: {part_c}"
     assert "100%" in full_c, f"전부 일치 갈래가 **실측 수치**를 안 싣는다: {full_c}"
 
+    # ★★**문구가 아니라 「거짓」을 잠근다**(기계 변이 실측 2026-09-14):
+    #   `if zm["verdict"] == "match":` 한 줄을 지우면 match 의 `return` 이 0% 블록 안의
+    #   **죽은 코드**가 되고, 100% 일치가 **partial 문구**로 떨어진다 —
+    #   *"…100% **뿐입니다 — 나머지는 다른 용도지역입니다**"*.
+    #   ***100% 일치인데 「나머지는 다른 용도지역」은 거짓이다.*** 수치만 단언하면 통과한다
+    #   (실제로 그 변이가 SURVIVED 했다). 표현이 아니라 **참·거짓**을 단언한다.
+    assert "뿐입니다" not in full_c, (
+        f"전부 일치인데 «뿐입니다» 라고 말한다 — 거짓이다: {full_c}")
+    assert "나머지는" not in full_c, (
+        f"전부 일치인데 «나머지는 다른 용도지역» 이라고 말한다 — 남은 것이 없다: {full_c}")
+    # 거울상 — 일부 일치인데 «전부» 로 말하면 그것도 거짓이다(양방향)
+    assert "뿐입니다" in part_c, f"일부 일치인데 한정어가 없다: {part_c}"
+
 
 def _calls_and_kwargs(func_name: str, call_name: str) -> tuple[int, set[str]]:
     """`desk_appraisal` 본문에서 `call_name(...)` 호출이 넘기는 **키워드 이름**을 AST 로 뽑는다.
