@@ -109,8 +109,16 @@ def test_two_populations_produce_different_notes():
     absent = stats_note(_stats(_MIX_COMMERCIAL_ABSENT), 6, target_land_use="일반상업지역")
     allmatch = stats_note(_stats(_MIX_ALL_COMMERCIAL), 6, target_land_use="일반상업지역")
     assert absent != allmatch, "두 모집단이 같은 문구를 낸다 — 이 락은 공허하다"
-    assert "0.0%" in absent and "쓸 수 없습니다" in absent
-    assert "같은 용도지역 표본입니다" in allmatch and "쓸 수 없습니다" not in allmatch
+    import re
+
+    # ★**수치와 판정어의 인접**을 본다 — 수치만 보면 같은 노트의 **구성 나열**이 단언을
+    #   «다른 이유로» 만족시키고, 판정어만 보면 수치를 지워도 통과한다.
+    #   (실측 2026-09-14: 이 파일에서 같은 클래스를 **세 번** 만났다 — 0%·partial·match)
+    assert re.search(r"0\.0%\*{0,2}\(0건\)", absent), f"0% 판정 문장에 수치가 없다: {absent[-160:]}"
+    assert "쓸 수 없습니다" in absent
+    assert re.search(r"100%\*{0,2}\s*입니다 — 같은 용도지역 표본", allmatch), (
+        f"전부 일치 **판정 문장**이 수치를 안 싣는다: {allmatch[-160:]}")
+    assert "쓸 수 없습니다" not in allmatch
 
 
 def test_reference_note_and_machine_field_carry_the_mismatch():
@@ -267,3 +275,59 @@ def test_call_sites_actually_pass_the_target_zone():
         assert "target_land_use" in kws, (
             f"{call}(...) 이 대상 용도지역을 **안 넘긴다** — 그러면 그 함수는 원리적으로 "
             f"가정법밖에 말할 수 없다. 넘기는 키워드: {sorted(kws)}")
+
+
+def test_partial_branch_of_the_note_carries_the_measured_share():
+    """★`stats_note` 의 **일부 일치** 갈래도 수치를 싣는가 — 0%/100% 만 보면 가운데가 빈다.
+
+    ★생존 실측: `land_dong_stats.py:424` 문자열변경 SURVIVED — 그 f-string 이 유일하게
+      partial 수치를 싣는데 앞선 락은 **0% 와 100% 만** 봤다.
+    """
+    from app.services.market.land_dong_stats import stats_note
+
+    import re
+
+    n = stats_note(_stats(_MIX_COMMERCIAL_ABSENT), 6, target_land_use="제1종일반주거지역")
+    assert n, "조회기 사망 — 노트가 비었다"
+
+    # ★★**「다른 이유로 만족되는 단언」을 피한다**(실측 2026-09-14):
+    #   처음엔 `"83.3%" in n` 으로 짰는데 **SURVIVED** 했다 — 같은 노트의 **구성 나열**
+    #   (`land_dong_stats:398` "용도지역 제1종일반주거지역 83.3% · …")이 그 문자열을 이미
+    #   싣기 때문이다. ***내 단언은 판정 문장이 아니라 나열 때문에 참이었다.***
+    #   ⇒ **수치와 한정어가 붙어 있는지**를 본다(그 둘의 인접이 판정 문장의 지문이다).
+    assert re.search(r"83\.3%\*{0,2}\s*뿐입니다", n), (
+        f"일부 일치 **판정 문장**이 수치를 안 싣는다(나열의 수치는 다른 것이다): {n[-170:]}")
+    assert "0.0%" not in n, "일부 일치인데 0% 를 말하면 거짓이다"
+
+
+def _returned_dict_keys(func_name: str) -> set[str]:
+    """`desk_appraisal` 이 **반환하는 dict 리터럴의 최상위 키**를 AST 로 뽑는다."""
+    import ast
+    import inspect
+    import textwrap
+
+    from app.services.land_intelligence import desk_appraisal_service as mod
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(getattr(mod, func_name))))
+    keys: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
+            keys |= {k.value for k in node.value.keys
+                     if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+    return keys
+
+
+def test_response_keys_are_a_contract():
+    """★**출력 키 이름은 계약이다** — 소비처(PDF·화면)가 그 이름으로 읽는다.
+
+    ★생존 실측: `"land_market_stats_zone_match"` · `"land_market_stats_note"` 의
+      **키 문자열을 바꾸는 변이가 SURVIVED** 했다. 키가 바뀌면 소비처는 **조용히 `None`** 을
+      받는다 — 이 저장소가 반복해 데인 «정의만 하고 소비처 0» 의 거울상이다.
+    """
+    keys = _returned_dict_keys("desk_appraisal")
+    # ★대조군 먼저 — AST 가 반환 dict 를 찾았는가
+    assert "land_market_stats" in keys, f"조회기 사망 — 반환 키를 못 찾았다: {sorted(keys)[:10]}"
+    assert "zzz_nope_sentinel" not in keys          # 역대조군
+
+    for k in ("land_market_stats_zone_match", "land_market_stats_note"):
+        assert k in keys, f"출력 키 {k!r} 가 사라졌다 — 소비처는 조용히 None 을 받는다: {sorted(keys)}"
