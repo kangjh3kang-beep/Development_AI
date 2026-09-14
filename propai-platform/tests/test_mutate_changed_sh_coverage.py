@@ -974,3 +974,26 @@ def test_exclusion_constant_is_immutable() -> None:
     assert isinstance(mc._SELF_MUTATION_EXCLUDED, frozenset), (
         f"가변 컨테이너다: {type(mc._SELF_MUTATION_EXCLUDED).__name__}"
     )
+
+
+def test_py_pair_discovery_covers_the_repo_level_tests_dir() -> None:
+    """★`.py` 짝 탐색이 **`propai-platform/tests/`** 도 본다 — 안 보면 거짓 SURVIVED 가 난다.
+
+    ★★R1 MAJOR-2 의 **재발 방지**. 루트가 `apps/api/tests`·`tests` 둘뿐이던 동안
+      `scripts/ci/lint_ratchet.py` 는 **모집단엔 들어오면서** 짝 테스트를 못 찾아
+      무관한 테스트로 판정됐다(거짓 SURVIVED 2건 실측).
+    ★★★그리고 **고친 직후의 재판정에서 이 자리가 SURVIVED 였다** — 루트를 도로 빼는 변이가
+      아무 락도 안 깨뜨렸다. ***「고쳤다」와 「고친 것을 잠갔다」는 다른 명제다.***
+    ★락의 축은 **리터럴이 아니라 효과**다(루트 문자열을 단언하면 리팩토링에 부서진다).
+    """
+    pair = pathlib.Path("propai-platform/tests/test_lint_ratchet.py")
+    assert pair.exists(), f"전제가 낡았다 — {pair} 가 없다(조회기 사망)"
+    got = [str(x) for x in mc._guess_tests([pathlib.Path("scripts/ci/lint_ratchet.py")])]
+    assert str(pair) in got, (
+        f"저장소 루트 `propai-platform/tests/` 의 짝을 못 찾는다: {got} — "
+        "그 파일은 모집단에 들어오므로, 못 찾으면 **무관한 테스트로 판정**돼 거짓 생존이 난다"
+    )
+    # ★공허 방지 — 없는 짝은 찾지 말아야 한다(무조건 참이면 이 단언은 장식이다).
+    assert mc._guess_tests([pathlib.Path("scripts/ci/zzz_no_such_module.py")]) == [], (
+        "존재하지 않는 짝을 찾아낸다 — 탐색이 너무 넓다"
+    )
