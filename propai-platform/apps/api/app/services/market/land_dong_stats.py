@@ -394,11 +394,22 @@ def zone_match(stats: dict[str, Any] | None,
         float(m.get("share_pct") or 0.0)
         for m in mix if _norm(m.get("land_use")) == UNKNOWN_BUCKET
     )), 1)
-    # ★건수는 **`count` 에서 파생**한다 — 비율에서 유추하면 «count=1 인데 0건»(리뷰 M2).
+    # ★★**판정축은 비율이 아니라 건수다.** `_mix_of` 는 `round(v*100/total, 1)` 이라
+    #   표본이 커지면 **`count >= 1` 인데 `share_pct == 0.0`** 이 실제로 나온다
+    #   (`round(1*100/20001, 1) == 0.0`). 비율로 판정하면 그 한 건이 «0건 · 모집단이 다르다»
+    #   로 보고되고, 문장은 **"근거로 쓸 수 없습니다"** 라는 **행동 지시**까지 낸다.
+    #   ⇒ 「없다」는 **센 결과가 0일 때만** 말한다(리뷰 M2).
     matched_count = int(sum(int(m.get("count") or 0) for m in matched))
-    # ★`match` 는 **100.0 이상**일 때만. 99.9%(1,000건 중 1건이 다른 용도지역)를
-    #   «같은 용도지역 표본» 이라 부르면 거짓이다(리뷰 L2).
-    verdict = "none" if share <= 0.0 else ("match" if share >= 100.0 else "partial")
+    known_count = int(sum(int(m.get("count") or 0) for m in known))
+    if matched_count <= 0:
+        verdict = "none"
+    elif matched_count >= known_count and unknown <= 0.0:
+        # ★`match` 는 **아는 표본이 전부 대상이고 미표기도 없을 때만**. 99.9%(1,000건 중
+        #   1건이 다른 용도지역)를 «같은 용도지역 표본» 이라 부르면 거짓이다(리뷰 L2).
+        #   ★반올림이 아니라 **건수 동일성**으로 본다 — 99.95% 도 `match` 가 아니다.
+        verdict = "match"
+    else:
+        verdict = "partial"
     return {"target_land_use": tgt, "share_pct": share, "matched_count": matched_count,
             "unknown_share_pct": unknown, "verdict": verdict}
 
@@ -441,7 +452,7 @@ def stats_note(stats: dict[str, Any] | None, window_months: int,
             verdict_sentence = (
                 "대상지와 다른 용도지역·지목이 섞여 있으면 단가가 크게 다를 수 있습니다."
             )
-        elif zm["share_pct"] <= 0.0:
+        elif zm["verdict"] == "none":
             # ★★쟀고 0% 다 — 「섞여 있으면」이라고 말하면 **아는 것을 숨기는 것**이다.
             verdict_sentence = (
                 f"★대상지 용도지역 **{zm['target_land_use']}** 은 이 표본에 "
@@ -456,7 +467,8 @@ def stats_note(stats: dict[str, Any] | None, window_months: int,
         else:
             verdict_sentence = (
                 f"대상지 용도지역 **{zm['target_land_use']}** 은 이 표본의 "
-                f"**{zm['share_pct']:g}%** 뿐입니다 — 나머지는 다른 용도지역이라 "
+                f"**{zm['share_pct']:g}%**({zm['matched_count']}건) 뿐입니다 — "
+                "나머지는 다른 용도지역이라 "
                 "단가가 크게 다를 수 있습니다."
             )
         tail = f" 이 표본의 구성은 {' / '.join(bits2)} 입니다 — {verdict_sentence}"

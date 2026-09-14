@@ -220,13 +220,13 @@ def _zone_match_clause(land_stats: dict | None, target_land_use: str | None) -> 
     zm = land_zone_match(land_stats, target_land_use)
     if zm is None:
         return ""
-    if zm["share_pct"] <= 0.0:
+    if zm["verdict"] == "none":
         return (f" ★대상 용도지역 {zm['target_land_use']} 은 이 표본에 0.0% 입니다 — "
                 "모집단이 다르므로 대상지 단가의 근거로 쓸 수 없습니다.")
     if zm["verdict"] == "match":
         return f" 대상 용도지역 {zm['target_land_use']} 표본 {zm['share_pct']:g}% 입니다."
-    return (f" 대상 용도지역 {zm['target_land_use']} 은 이 표본의 {zm['share_pct']:g}% 뿐입니다 — "
-            "나머지는 다른 용도지역입니다.")
+    return (f" 대상 용도지역 {zm['target_land_use']} 은 이 표본의 "
+            f"{zm['share_pct']:g}%({zm['matched_count']}건) 뿐입니다 — 나머지는 다른 용도지역입니다.")
 
 
 def _assemble_methods(

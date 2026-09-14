@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import sys
 
 import pytest
@@ -323,7 +324,9 @@ def test_partial_branch_of_the_note_carries_the_measured_share():
     #   (`land_dong_stats:398` "용도지역 제1종일반주거지역 83.3% · …")이 그 문자열을 이미
     #   싣기 때문이다. ***내 단언은 판정 문장이 아니라 나열 때문에 참이었다.***
     #   ⇒ **수치와 한정어가 붙어 있는지**를 본다(그 둘의 인접이 판정 문장의 지문이다).
-    assert re.search(r"83\.3%\*{0,2}\s*뿐입니다", n), (
+    #   ★건수까지 인접으로 묶는다 — 비율만 보면 「0.0%(1건)」 같은 **반올림 바닥** 사례에서
+    #     수치가 맞아도 건수가 리터럴일 수 있다(리뷰 M2).
+    assert re.search(r"83\.3%\*{0,2}\(5건\)\s*뿐입니다", n), (
         f"일부 일치 **판정 문장**이 수치를 안 싣는다(나열의 수치는 다른 것이다): {n[-170:]}")
     assert "0.0%" not in n, "일부 일치인데 0% 를 말하면 거짓이다"
 
@@ -444,3 +447,97 @@ def test_debt_machine_zone_match_field_has_no_consumer_yet():
                  if "desk_appraisal_service.py" not in f
                  and "test_market_sample_zone_match.py" not in f}
     assert consumers, f"기계 필드를 읽는 소비처가 생겼다 — 부채 해소: {sorted(consumers)}"
+
+
+def test_unmeasurable_never_collapses_into_measured_zero():
+    """★★**「못 쟀다」와 「쟀고 0%」를 가른다**(독립 리뷰 H3 · 2026-09-14 재현 후 봉합).
+
+    셋은 **다음 행동이 다르다**:
+      · `None`   — 모집단을 모른다 ⇒ 아무 말도 하지 않는다(가정법이 정직한 유일한 자리)
+      · `none`   — 쟀고 0건 ⇒ **"근거로 쓸 수 없습니다"** 라는 **행동 지시**를 낸다
+      · `partial`/`match` — 비율을 말한다
+    ⇒ 뭉치면 **모르는 것을 아는 것처럼** 단언하게 된다(저장소: 「무자료」는 적극적 주장이다).
+
+    ★생존 실측(봉합 전): 가드가 원본을 보고 비교는 `_norm` 을 써서 **공백만인 대상**이
+      `{'share_pct': 0, 'verdict': 'none'}` 으로 샜고, `_mix_of` 의 센티넬 `"미상"` 을
+      실재 용도지역으로 세어 **전부 미표기인 표본이 `match` 100%** 로 나왔다.
+    """
+    from app.services.market.land_dong_stats import UNKNOWN_BUCKET, zone_match
+
+    mix = [{"land_use": "제1종일반주거지역", "count": 5, "share_pct": 83.3},
+           {"land_use": "계획관리지역", "count": 1, "share_pct": 16.7}]
+    S = {"land_use_mix": mix}
+    # ★대조군 먼저 — 조회기가 살아 있나(정상 입력은 실제로 잰다)
+    alive = zone_match(S, "제1종일반주거지역")
+    assert alive and alive["verdict"] == "partial", f"★조회기 사망: {alive}"
+
+    # ① 대상이 **공백만** — `_norm` 후에 판정해야 「못 쟀다」다
+    assert zone_match(S, "   ") is None, "공백만인 대상이 「쟀고 0%」로 샌다(H3-a)"
+    assert zone_match(S, "\t\n ") is None, "공백문자 대상이 「쟀고 0%」로 샌다"
+    # ② 대상이 **센티넬 자신** — 「용도지역을 모르는 땅」과 일치했다고 말할 수 없다
+    assert zone_match(S, UNKNOWN_BUCKET) is None, "센티넬을 대상 용도지역으로 받아들인다(H3-c)"
+    # ③ 표본이 **전부 미표기** — 비율을 낼 모집단이 없다
+    allunk = {"land_use_mix": [{"land_use": UNKNOWN_BUCKET, "count": 6, "share_pct": 100.0}]}
+    assert zone_match(allunk, "일반상업지역") is None, "모집단을 모르는데 「0% 다」라고 말한다(H3-b)"
+    assert zone_match(allunk, UNKNOWN_BUCKET) is None, "미표기끼리 「100% 일치」라고 말한다(H3 거울상)"
+    # ④ 섞인 미표기는 **일치로 세지 않고** 따로 보고한다
+    mixed = zone_match({"land_use_mix": [
+        {"land_use": UNKNOWN_BUCKET, "count": 1, "share_pct": 10.0},
+        {"land_use": "A", "count": 9, "share_pct": 90.0}]}, "A")
+    assert mixed["verdict"] == "partial", f"미표기가 남았는데 전부 일치라고 말한다: {mixed}"
+    assert mixed["unknown_share_pct"] == 10.0, f"미표기 비율을 안 싣는다: {mixed}"
+
+
+def test_absence_is_counted_not_inferred_from_a_rounded_percentage():
+    """★**「없다」는 센 결과가 0일 때만 말한다**(독립 리뷰 M2).
+
+    `_mix_of` 는 `round(v * 100 / total, 1)` 이라 표본이 크면 **`count >= 1` 인데
+    `share_pct == 0.0`** 이 실제로 나온다(`round(1*100/20001, 1) == 0.0`).
+    비율로 판정하면 그 한 건이 «0건 · 모집단이 다르다» 로 보고되고,
+    문장은 **"대상지 단가의 근거로 쓸 수 없습니다"** 라는 **행동 지시**까지 낸다.
+
+    ★그리고 문장의 건수는 **파생값**이어야 한다 — 종전엔 `(0건)` 이 **리터럴**이었다.
+    """
+    from app.services.market.land_dong_stats import stats_note, zone_match
+
+    # 반올림 바닥: 1 / 20001 → 0.0%
+    big = {"land_use_mix": [{"land_use": "A", "count": 1, "share_pct": 0.0},
+                            {"land_use": "B", "count": 20000, "share_pct": 100.0}]}
+    r = zone_match(big, "A")
+    assert r["matched_count"] == 1, f"건수를 비율에서 유추한다: {r}"
+    assert r["verdict"] != "none", (
+        f"★1건이 실재하는데 «없다» 고 말한다 — 그 문장은 «근거로 쓸 수 없다» 는 행동 지시다: {r}")
+
+    # 진짜 0건일 때만 「0건」이라 말하고, 그 건수는 **파생**이다
+    zero = _stats(_MIX_COMMERCIAL_ABSENT)
+    z = zone_match(zero, "일반상업지역")
+    assert (z["verdict"], z["matched_count"]) == ("none", 0), f"라이브 재현이 깨졌다: {z}"
+    n = stats_note(zero, 6, target_land_use="일반상업지역") or ""
+    assert re.search(r"0\.0%\*{0,2}\(0건\)", n), f"0건 문장이 건수를 파생하지 않는다: {n[-160:]}"
+    # ★★**정직 표기**: `none` 분기의 `{matched_count}건` 을 리터럴 `0건` 으로 바꾸는 변이는
+    #   **SURVIVED 하고, 그것이 옳다.** 판정축을 건수로 옮긴 뒤 `none` ⟺ `matched_count == 0`
+    #   이라 두 표현이 **원리적으로 같은 값**이기 때문이다(등가 변이). 파생을 유지하는 이유는
+    #   점수가 아니라 **축이 다시 갈릴 때 문장이 따라오게** 하기 위함이다.
+    #   ⇒ 파생이 실제로 쓰이는지는 **`partial` 분기**가 잠근다(`83.3%(5건) 뿐입니다`).
+
+
+def test_match_requires_every_known_parcel_not_a_rounded_percentage():
+    """★**`match` 는 「전부」를 뜻한다** — 99.9% 를 «같은 용도지역 표본» 이라 부르면 거짓(리뷰 L2).
+
+    그리고 `share_pct` 는 **모든 경로에서 같은 타입**이어야 한다 — 0% 경로만 `int` 였다(L1).
+    소비처가 `isinstance(x, float)` 나 JSON 스키마로 판정하면 그 자리에서 갈린다.
+    """
+    from app.services.market.land_dong_stats import zone_match
+
+    near = zone_match({"land_use_mix": [{"land_use": "A", "count": 999, "share_pct": 99.9},
+                                        {"land_use": "B", "count": 1, "share_pct": 0.1}]}, "A")
+    assert near["verdict"] == "partial", f"1건이 다른 용도지역인데 «전부 일치» 라고 말한다: {near}"
+    full = zone_match({"land_use_mix": [{"land_use": "A", "count": 9, "share_pct": 100.0}]}, "A")
+    assert full["verdict"] == "match", f"전부 일치인데 match 가 아니다: {full}"
+
+    # ★타입 축 — **두 모집단**을 같은 실행에서 본다(0% 경로와 >0% 경로)
+    zero = zone_match({"land_use_mix": [{"land_use": "A", "count": 3, "share_pct": 100.0}]}, "B")
+    for label, r in (("0%", zero), ("99.9%", near), ("100%", full)):
+        assert isinstance(r["share_pct"], float), (
+            f"{label} 경로의 share_pct 가 {type(r['share_pct']).__name__} 다 — 경로마다 타입이 갈린다")
+        assert isinstance(r["matched_count"], int), f"{label} 경로의 matched_count 타입이 다르다"
