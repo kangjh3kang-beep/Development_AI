@@ -103,6 +103,7 @@
 | `test_match_requires_every_known_parcel_not_a_rounded_percentage` | ★L2/L1 — `match` 는 **건수 동일성** · `share_pct` 타입을 **세 모집단**에서 |
 | `test_producer_and_consumer_share_one_sentinel` | ★생산자를 태운다 — `rows` → `_mix_of` → `zone_match` 두 층 |
 | `test_debt_machine_zone_match_field_has_no_consumer_yet` | **`xfail(strict=True)` 부채** — 기계 필드 소비처 0. 배선하면 XPASS 로 실패 |
+| `test_missing_stats_returns_none_instead_of_raising` | ★기계 변이가 짚은 **진짜 구멍** — `stats=None` 에서 `AttributeError`. 형제 셋을 같은 입력으로 |
 | `test_plan_section5_lock_names_exist` | ★**이 표 자신** — 선언한 이름이 실재하지 않으면 빨강 |
 
 ★**공허 방지**: 각 락은 **대조군을 먼저** 단언한다(조회기 생존 · 픽스처가 실제로 두 값을 다르게 낸다).

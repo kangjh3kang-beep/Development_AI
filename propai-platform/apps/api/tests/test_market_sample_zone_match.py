@@ -621,3 +621,39 @@ def test_plan_section5_lock_names_exist():
     unlisted = actual - declared
     assert not unlisted, (
         f"★실재하는 락이 §5 에 **없다** — 순증이 순삭제를 덮는 그 자리다: {sorted(unlisted)}")
+
+
+def test_missing_stats_returns_none_instead_of_raising():
+    """★**통계가 없을 때 터지지 않는다** — 기계 변이가 짚은 **진짜 구멍**(2026-09-14).
+
+    `if not stats:` 가드를 무력화하면 `zone_match(None, "A")` 가
+    **`AttributeError: 'NoneType' object has no attribute 'get'`** 로 터지는데
+    락 16건이 전부 초록이었다 — **`stats=None` 을 한 번도 안 태웠기 때문**이다.
+
+    ★도달 가능하다(가설이 아니다): `desk_appraisal` 은
+      `land_zone_match(land_dong_stats_out, …)` 로 부르고 `land_dong_stats_out` 은
+      표본을 못 구하면 **`None`** 이다. 즉 **표본 없는 필지에서 감정평가 응답 전체가 터진다** —
+      「일치율을 못 낸다」가 아니라 **「보고서가 안 나온다」**.
+    ⇒ 저장소 기록 그대로다: ***분기를 만들었으면 그 분기를 태우는 입력을 같은 커밋에.***
+
+    ★`stats_note`·`_zone_match_clause` **형제 둘도 같은 입력으로** 태운다(축: 호출부 전부).
+    """
+    from app.services.land_intelligence.desk_appraisal_service import _zone_match_clause
+    from app.services.market.land_dong_stats import stats_note, zone_match
+
+    # ★대조군 먼저 — 정상 입력은 실제로 값을 낸다(안 그러면 «안 터진다» 가 공허하다)
+    ok = zone_match(_stats(_MIX_COMMERCIAL_ABSENT), "일반상업지역")
+    assert ok and ok["verdict"] == "none", f"★조회기 사망: {ok}"
+
+    # ★`zone_match` 는 **부분 dict 까지** 받는다 — 가드가 무력화되면 여기서 터진다
+    for bad in (None, {}, {"land_use_mix": None}, {"land_use_mix": []}):
+        assert zone_match(bad, "일반상업지역") is None, f"통계 {bad!r} 에서 값을 지어낸다"
+        assert _zone_match_clause(bad, "일반상업지역") == "", (
+            f"통계 {bad!r} 에서 절을 지어낸다 — 못 재면 **가정법도 안 붙인다**")
+
+    # ★★`stats_note` 의 축은 **좁다 — 그리고 그게 정직하다.** 계약은 «`land_dong_stats` 의
+    #   출력 또는 `None`» 이라, `{"land_use_mix": None}` 같은 **반쪽 dict 는 프로덕션이
+    #   만들지 않는다**(만들면 `scope_label` 에서 `KeyError` 다 — 실제로 그렇게 빨개졌다).
+    #   도달 불가 입력까지 «안 터진다» 고 요구하면 **없는 결함을 신고하는 가드**가 된다.
+    #   도달 가능한 것은 `None` 하나다(`land_dong_stats_out` 이 표본을 못 구했을 때).
+    assert stats_note(None, 6, target_land_use="일반상업지역") is None, "통계 없이 노트를 지어낸다"

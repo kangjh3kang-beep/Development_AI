@@ -381,6 +381,9 @@ def zone_match(stats: dict[str, Any] | None,
     if not tgt or tgt == UNKNOWN_BUCKET:
         return None
     mix = stats.get("land_use_mix") or []
+    # ★정직 표기: 이 가드를 무력화해도 **결과가 같다**(빈 `mix` → `known` 도 비어 바로 아래에서
+    #   `None`). 기계 변이가 `::VERDICT=SURVIVED` 로 짚는데 **구멍이 아니라 등가 변이**다 —
+    #   조기 반환으로 의도를 드러내려고 남긴다. 점수로 세지 않는다.
     if not mix:
         return None
     known = [m for m in mix if _norm(m.get("land_use")) != UNKNOWN_BUCKET]
