@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# ★짝 pytest 락 **없음**(2026-09-14 실측) — 실제 워크트리를 만드는 스크립트라 테스트에서
+#   태우기 어렵다. 기계 변이가 여기서 「생존」을 내면 **「장치 부재」**로 읽어라(무잠금 아님).
 # 브랜치 전용 git worktree 생성 — 세션 간 HEAD 충돌(같은 워크트리 브랜치 전환) 재발 방지.
 # 정책: WORKTREES.md 참조. 사용: scripts/new-worktree.sh <branch> [slug]
 set -euo pipefail

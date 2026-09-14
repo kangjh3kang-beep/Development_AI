@@ -239,6 +239,22 @@ def _resolve_base(base: str) -> str:
     return resolved
 
 
+#: 변이 대상에서 **뺄 파일**. ★접두(`scripts/`)가 아니라 **명시 집합**이다 —
+#: 접두로 쓰면 앞으로 생길 파일을 **조용히 삼킨다**(목록은 곧 상한).
+#:
+#: ★사유를 정확히 적는다: 종전엔 «도구 자신은 이 테스트들의 대상이 아니다(오탐)» 라고
+#:   적혀 있었고 그 사유로 **루트 `scripts/` 8개 셸 전부**가 빠져 있었다. 재 보니
+#:   그 사유가 참인 대상은 **이 파일 하나**다 — 자기가 도는 중에 **자기 소스를 재작성**하는
+#:   것이라 판정이 성립하지 않는다. 나머지는 «오탐»이 아니라 그냥 **안 태워지고 있었다**.
+#:
+#: ★실측(2026-09-14 · `origin/main`):
+#:   · `mutate_manual.sh`  — 30일 **최다 변경 셸(5건)** 이고 **짝 테스트가 tmp git repo 에서
+#:     실제로 실행**한다. 이 도구는 그것을 **부르지 않으므로**(참조 0건) 자기변이가 아니다.
+#:   · `ci/lint_ratchet.py` — 짝 테스트가 **실행**한다. 변이 도구와 무관.
+#:   ⇒ 둘 다 **모집단에 들어와야 한다.**
+_SELF_MUTATION_EXCLUDED = frozenset({"scripts/mutate_changed.py"})
+
+
 def _changed_files(base: str) -> list[Path]:
     # ★`A...B`(three-dot)는 **커밋된 것만** 본다. 커밋 전에 돌리는 것이 자연스러운
     # 사용법이라(실사용에서 발견) `A`(two-dot)로 워킹트리까지 포함한다.
@@ -258,8 +274,8 @@ def _changed_files(base: str) -> list[Path]:
             continue
         if p.name.startswith("test_") or ".test." in p.name or ".spec." in p.name:
             continue
-        if n.startswith("scripts/"):
-            continue          # 도구 자신은 이 테스트들의 대상이 아니다(오탐)
+        if n in _SELF_MUTATION_EXCLUDED:
+            continue
         out.append(p)
     return out
 

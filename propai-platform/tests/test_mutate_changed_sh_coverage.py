@@ -210,14 +210,10 @@ def test_rel_test_promotes_only_unresolvable_paths():
     assert pathlib.Path(got).is_absolute(), f"승격되지 않았다 — pytest 가 못 찾는다: {got}"
 
 
-# ── ⑦ ★부채를 초록 안에 드러낸다 (커밋 메시지에만 적으면 안 드러난다) ────────
-@pytest.mark.xfail(
-    strict=True,
-    reason="★부채: 저장소 루트 `scripts/` 의 셸은 여전히 모집단 밖이다(개수는 테스트가 "
-           "`git ls-files` 로 파생해 메시지에 싣는다 — 손으로 세지 않는다). 그 게이트의 "
-           "사유(«도구 자신은 이 테스트들의 대상이 아니다»)가 지금도 참인지 **미측정**이며 "
-           "이유는 「장치 부재」가 아니라 「안 쟀음」. 재서 참이 아니면 초록으로 뒤집힌다.",
-)
+# ── ⑦ ★부채 **상환됨**(2026-09-14) ──────────────────────────────────────────
+#  종전 이 자리의 `xfail(strict)` 은 *"그 사유가 지금도 참인지 **미측정**"* 이라 적고
+#  *"재서 참이 아니면 초록으로 뒤집힌다"* 고 스스로 조건을 걸어 두었다. **쟀고, 참이 아니었다** —
+#  그래서 게이트를 좁히고 이 마커를 같은 커밋에서 지운다(부채표지가 요구한 행동).
 def test_root_scripts_shell_also_enters_the_population(tmp_path, monkeypatch):
     derived = subprocess.run(
         ["git", "ls-files", "scripts/*.sh"], cwd=_REPO_ROOT,
@@ -900,4 +896,42 @@ def test_files_that_produced_no_mutation_are_surfaced(tmp_path):
     # ★본판정 — 변이 0건인 파일이 있으면 **조용한 초록이면 안 된다**.
     assert r.returncode != 0, (
         f"mod.py 가 한 번도 변이되지 않았는데 rc=0 이다:\n{out}"
+    )
+
+
+def test_exclusion_is_exactly_the_self_mutating_tool() -> None:
+    """★배제 집합이 **정확히 그 한 파일**이다 — 넓히면 조용히 삼킨다.
+
+    ★접두(`scripts/`)로 되돌리는 변경을 잡는 것이 이 단언의 목적이다. 종전 게이트가
+      접두였고, 그래서 «도구 자신» 이라는 **한 파일짜리 사유**로 **8개 셸이 통째로** 빠졌다.
+      ***목록은 곧 상한이 된다 — 그리고 접두는 미래의 파일까지 상한에 넣는다.***
+    """
+    assert mc._SELF_MUTATION_EXCLUDED == frozenset({"scripts/mutate_changed.py"}), (
+        f"배제 집합이 바뀌었다: {sorted(mc._SELF_MUTATION_EXCLUDED)} — "
+        "넓히려면 그 파일이 **자기 실행 중 자기 소스를 재작성**하는지 먼저 재라"
+    )
+
+
+def test_previously_excluded_shells_now_enter_the_population(tmp_path, monkeypatch) -> None:
+    """★상환의 **효과**를 잠근다 — 배제만 좁히고 실제로 안 들어오면 의미가 없다.
+
+    ★`mutate_manual.sh` 를 고른 이유(실측 2026-09-14): 30일 **최다 변경 셸**이고
+      짝 테스트가 **tmp git repo 에서 실제로 실행**한다. 종전 게이트에서 이것이
+      **가장 큰 손실**이었다.
+    """
+    (tmp_path / "scripts").mkdir()
+    for name in ("mutate_manual.sh", "coord.sh"):
+        (tmp_path / "scripts" / name).write_text("x\n", encoding="utf-8")
+    (tmp_path / "scripts" / "mutate_changed.py").write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        mc.subprocess, "run",
+        lambda cmd, *a, **kw: subprocess.CompletedProcess(
+            cmd, 0, "scripts/mutate_manual.sh\nscripts/coord.sh\nscripts/mutate_changed.py\n", ""
+        ),
+    )
+    got = sorted(p.name for p in mc._changed_files("BASE"))
+    # ★두 모집단 — 들어와야 할 것이 들어오고 **빠져야 할 것이 빠진다**.
+    assert got == ["coord.sh", "mutate_manual.sh"], (
+        f"모집단이 기대와 다르다: {got} — 자기변이 도구만 빠져야 한다"
     )
