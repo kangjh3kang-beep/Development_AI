@@ -142,3 +142,77 @@ def test_reference_note_and_machine_field_carry_the_mismatch():
     zm = cmp_m["reference_zone_match"]
     assert zm and zm["share_pct"] == 0.0 and zm["verdict"] == "none", (
         "기계 필드가 없으면 소비처는 산문을 파싱해야 한다 — 그건 소비가 아니다")
+
+
+def test_zone_match_clause_covers_all_three_branches():
+    """★`_zone_match_clause` **세 갈래 전수** — 기계 변이가 `match` 분기를 무력화해도 살아남았다.
+
+    ★생존 실측(2026-09-14 · `mutate_changed.py`): `desk_appraisal_service.py:211`
+      `if zm["verdict"] == "match":` **조건무력화 SURVIVED** — 내 락이 `None` 과 0% 만 봤다.
+      ***한 함수의 분기를 일부만 태우면 나머지는 무잠금이다.***
+    """
+    from app.services.land_intelligence.desk_appraisal_service import _zone_match_clause
+
+    none_c = _zone_match_clause(_stats(_MIX_COMMERCIAL_ABSENT), None)
+    zero_c = _zone_match_clause(_stats(_MIX_COMMERCIAL_ABSENT), "일반상업지역")
+    part_c = _zone_match_clause(_stats(_MIX_COMMERCIAL_ABSENT), "제1종일반주거지역")
+    full_c = _zone_match_clause(_stats(_MIX_ALL_COMMERCIAL), "일반상업지역")
+
+    # ★공허 방지 — 네 갈래가 **서로 다른 값**이어야 한다(차가 0이면 이 락은 장식이다)
+    assert len({none_c, zero_c, part_c, full_c}) == 4, (
+        f"갈래가 안 갈린다: {[none_c, zero_c, part_c, full_c]}")
+
+    assert none_c == "", "못 쟀으면 아무 말도 하지 않는다(가정법도 안 붙인다)"
+    assert "0.0%" in zero_c
+    # ★**수치가 계약이고 문구는 표현이다** — 수치만 단언한다(문구를 잠그면 다듬을 때마다 깨진다)
+    assert "83.3%" in part_c, f"일부 일치 갈래가 **실측 수치**를 안 싣는다: {part_c}"
+    assert "100%" in full_c, f"전부 일치 갈래가 **실측 수치**를 안 싣는다: {full_c}"
+
+
+def _calls_and_kwargs(func_name: str, call_name: str) -> tuple[int, set[str]]:
+    """`desk_appraisal` 본문에서 `call_name(...)` 호출이 넘기는 **키워드 이름**을 AST 로 뽑는다.
+
+    ★**문자열 포함 검사를 쓰지 않는다** — 주석에 그 낱말을 쓰면 위음성이 된다
+      (2026-09-14 실측: 같은 세션에서 그 형태로 변이 하나를 놓쳤다).
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from app.services.land_intelligence import desk_appraisal_service as mod
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(getattr(mod, func_name))))
+    out: set[str] = set()
+    seen = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        name = getattr(f, "id", None) or getattr(f, "attr", None)
+        if name != call_name:
+            continue
+        seen += 1
+        out |= {kw.arg for kw in node.keywords if kw.arg}
+    return seen, out
+
+
+def test_call_sites_actually_pass_the_target_zone():
+    """★★**호출부를 잠근다** — 배선을 지워도 내 락이 초록이었다(기계 변이 실측).
+
+    ★생존 실측(2026-09-14): `desk_appraisal_service.py:814`·`:835` 의
+      `target_land_use=...` **줄삭제가 SURVIVED**. 앞선 락이 `_assemble_methods` 를 **직접**
+      호출해서 **호출부를 한 번도 안 태웠기 때문**이다.
+      ⇒ 저장소 기록 그대로다: ***「존재를 잠그면 행위는 안 잠긴다」*** ·
+        ***「배선 락의 축은 AST 로 파생한 호출부」***.
+    """
+    for call in ("_assemble_methods", "land_stats_note", "land_zone_match"):
+        seen, kws = _calls_and_kwargs("desk_appraisal", call)
+        # ★대조군 먼저 — **세 상태를 가른다**: 호출 없음(조회기 사망) / 호출은 있는데 키워드 0 /
+        #   키워드는 있는데 target 이 없음. 뭉치면 "조회기 사망" 이 **위치인자 호출**을 덮는다
+        #   (2026-09-14 실측: 내가 실제로 그렇게 뭉쳐 놓고 한 번 오진했다).
+        assert seen, f"★조회기 사망 — desk_appraisal 안에서 {call}(...) 호출 자체를 못 찾았다"
+        assert kws, (
+            f"{call}(...) 을 **위치인자로만** 부른다 — 시그니처가 바뀌면 조용히 밀린다(저장소 §33)")
+        assert "target_land_use" in kws, (
+            f"{call}(...) 이 대상 용도지역을 **안 넘긴다** — 그러면 그 함수는 원리적으로 "
+            f"가정법밖에 말할 수 없다. 넘기는 키워드: {sorted(kws)}")

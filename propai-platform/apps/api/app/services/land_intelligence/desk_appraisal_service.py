@@ -827,7 +827,9 @@ async def desk_appraisal(
         "land_market_stats": land_dong_stats_out,
         # ★일치율을 **기계 필드**로 — 소비처가 산문을 파싱하지 않게.
         "land_market_stats_zone_match": land_zone_match(
-            land_dong_stats_out, str((subject or {}).get("zone_type") or "") or None),
+            land_dong_stats_out,
+            # ★키워드로 넘긴다 — 위치인자는 시그니처가 바뀌면 **조용히 밀린다**(저장소 §33).
+            target_land_use=str((subject or {}).get("zone_type") or "") or None),
         "land_market_stats_note": land_stats_note(
             land_dong_stats_out, window_months=6,
             # ★대상 용도지역을 넘긴다 — 안 넘기면 이 함수는 원리적으로 **가정법**밖에
