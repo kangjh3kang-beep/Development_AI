@@ -75,12 +75,36 @@ _DDL = (
 
 #: ★DDL 을 **프로세스당 한 번만** 돌린다. `ALTER TABLE … IF NOT EXISTS` 는 **무변경일 때도**
 #:   Postgres 에서 `ACCESS EXCLUSIVE` 잠금을 잡는다 — 공개 GET 과 추첨 트랜잭션이 매번 그
-#:   잠금을 줄 세우면 즉석추첨(동시 다발)에서 추첨 경로 전체가 직렬화된다(리뷰 MED-4).
-#:   ★플래그는 **성공한 뒤에만** 세운다 — 실패를 「했다」로 기억하면 영원히 다시 시도하지 않는다.
+#:   잠금을 줄 세우면 즉석추첨(동시 다발)에서 추첨 경로 전체가 직렬화된다.
 _DDL_DONE = False
 
 
 async def _ensure(db: AsyncSession) -> None:
+    """스키마를 보장한다. ★**DDL 을 커밋한다** — 안 하면 읽기 경로에서 통째로 사라진다.
+
+    ## ★★프로덕션 500 을 낸 자리다(2026-09-14 · 라이브 예외로 확증)
+
+        sqlalchemy.exc.ProgrammingError: UndefinedTableError:
+        relation "sales_draw_commitments" does not exist
+
+    **Postgres 에서 DDL 은 트랜잭션이다.** 종전 구현은 `CREATE TABLE` 을 실행하고
+    **커밋하지 않은 채** `_DDL_DONE = True` 를 세웠다. 그런데 `public_commitment` 은
+    **SELECT 만 하고 끝난다 — 커밋하지 않는다.** 그래서:
+
+      ①워커의 **첫 요청**이 읽기 경로면 → 같은 트랜잭션 안이라 **그 요청은 성공한다**
+      ②요청이 끝나며 트랜잭션이 롤백 → **테이블이 사라진다**
+      ③그런데 `_DDL_DONE` 은 `True` 로 남는다 → 이후 **모든 요청이 없는 테이블을 조회**한다
+
+    ***내 배포 검증 프로브가 바로 그 「첫 요청」이었다.*** 어제 `{"detail":"공약이 없습니다"}` 를
+    받고 «배선 확인」이라 보고했는데, **그 호출이 테이블을 만들고 되돌려 놓았다.**
+    ***검증 행위가 검증 대상을 망가뜨렸다.***
+
+    ★저장소 기준선과도 어긋났다: DDL 을 돌리는 파일 **40개 중 39개가 커밋한다**(전수 실측).
+
+    ★**플래그는 커밋이 성공한 뒤에만** 세운다 — 실패를 「했다」로 기억하면 영원히 재시도하지 않는다.
+    ★모든 호출부가 **진입 직후** `_ensure` 를 부르므로(쓰기 전), 여기서 커밋해도
+      호출자의 트랜잭션 원자성을 깨지 않는다.
+    """
     global _DDL_DONE
     if _DDL_DONE:
         return
@@ -93,7 +117,8 @@ async def _ensure(db: AsyncSession) -> None:
                      ("result_root", "varchar(64)"), ("finalized_at", "timestamptz")):
         await db.execute(text(
             f"ALTER TABLE sales_draw_commitments ADD COLUMN IF NOT EXISTS {col} {typ}"))
-    _DDL_DONE = True
+    await db.commit()          # ★★이 한 줄이 없어서 프로덕션이 500 이었다
+    _DDL_DONE = True           # ★커밋 **뒤에만** 세운다
 
 
 @dataclass(frozen=True)
