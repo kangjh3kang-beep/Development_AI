@@ -255,18 +255,45 @@ def analysis_verdict(astate, insights_24h, aaxes=None, analyze_period_min=None):
             )
         # ★사유에서 **원인 단정을 뺀다.** 종전 문구 「모든 축이 표본 하한 미달 — 고장이 아니다」는
         #   `0/0` 축이 있는 순간 **거짓**이고, 「고장이 아니다」는 재지 않은 진단이다.
+        # ★★2026-09-14 — **이 사유가 라이브에서 거짓을 말하고 있었다**(독립 적대 렌즈 · 실측이 증거).
+        #   개수는 `len(axes) - len(with_input)` 로 **부분집합**을 세면서 괄호는 `axes` **전체**를 찍었다:
+        #     입력 `fal 0/0 lat 0/0 pay 0/1 qua 0/0` →
+        #       "입력이 0인 축 **3개**(fal 0/0 lat 0/0 **pay 0/1** qua 0/0)"   ← 4개 열거 · `pay` 는 입력 있음
+        #     입력 `lat 1/9 pay 2/3`(전부 입력 있음) →
+        #       "입력이 0인 축 **0개**(lat 1/9 pay 2/3)"                      ← 0개라면서 2개 열거
+        #   ⇒ **개수와 열거가 같은 집합을 말한다.** 그리고 입력 0 축이 없으면 **그 절을 아예 안 붙인다**
+        #     (위양성도 결함이다 — 「0개()」는 읽는 사람에게 없는 사실을 암시한다).
+        #   ★기존 락은 **포함형**이라 둘 다 통과시켰다 — 「포함」은 「거짓을 말하지 않는가」를 함의하지 않는다.
+        #   ★★그리고 **정보를 줄이지 않는다**: 형제 락(`test_starved_reason_no_longer_asserts_a_cause`)이
+        #     *«관측은 실려야 한다 — 부정만 단언하면 사유를 통째로 지워도 통과한다»* 로 잠그고 있다.
+        #     첫 수정에서 「입력 0 축만」 열거했더니 **입력 있는 축의 값(`lat 0/19`)이 사라졌다** —
+        #     그 락이 잡았다. ⇒ **두 집합을 각각 제 이름으로 열거**한다(뭉치지도, 줄이지도 않는다).
+        zero_input = [a for a in axes if a[2] == 0]
+        fmt = lambda g: " ".join("%s %d/%d" % a for a in g)
+        head = "판정한 축 0 — 입력이 있는 축 %d개(%s)는 하한 미달" % (len(with_input), fmt(with_input))
+        if not zero_input:
+            return "ok", head
         return "ok", (
-            "판정한 축 0 — 입력이 있는 축 %d개는 하한 미달, 입력이 0인 축 %d개(%s)"
-            % (len(with_input), len(axes) - len(with_input),
-               " ".join("%s %d/%d" % a for a in axes))
+            "%s, 입력이 0인 축 %d개(%s)" % (head, len(zero_input), fmt(zero_input))
         )
     if astate == "idle":
         return "obs", "커버리지 축 자체가 없다 — 분석기가 축을 하나도 못 돌렸다"
     if astate == "judged":
+        # ★★2026-09-14 — `judged` 도 **두 사실을 덮는다**. 위 `starved` 에 그 구분을 넣어 놓고
+        #   **형제 분기에는 같은 장치를 안 걸었다**(§「축을 절반에만 걸었다」).
+        #   라이브 실측(2026-09-13T00:07:59Z): `state=judged  axes="fal 0/0 lat 1/9 pay 0/1 qua 0/0"`
+        #     — 한 축이 판정했으니 `judged` 는 **정의대로 참**이지만, **두 축은 입력이 0**이다.
+        #     그 사실이 `axes` 에 실려 오는데 이 분기가 **안 읽었다**.
+        # ★`kind` 는 **올리지 않는다**. `obs` 로 승격하면 `fal`·`qua` 가 상시 0/0 인 이 스택에서
+        #   **상시 경보**가 되고, 이 저장소는 그 길을 이미 실측으로 기각했다(경보집중 75%).
+        #   ⇒ **종료코드 빈도는 불변**이고 사람이 읽는 사유만 한 절 늘어난다.
+        starving = [a for a in parse_axes(aaxes) if a[2] == 0]
+        tail = ("" if not starving else
+                " · 단 입력이 0인 축 %d개(%s)" % (len(starving), " ".join("%s %d/%d" % a for a in starving)))
         if int(insights_24h or 0) > 0:
-            return "ok", "판정했고 인사이트도 있다"
+            return "ok", "판정했고 인사이트도 있다" + tail
         # ★판정했다면서 24h 창이 비었다 = 두 관측이 **모순**이다. 침묵으로 두지 않는다.
-        return "obs", "판정했다는데 24h 창이 비었다 — 발행·보존(supersede) 경로를 보라"
+        return "obs", "판정했다는데 24h 창이 비었다 — 발행·보존(supersede) 경로를 보라" + tail
     return "unknown", "분석상태 값을 해석하지 못했다: %s" % (astate,)
 
 
