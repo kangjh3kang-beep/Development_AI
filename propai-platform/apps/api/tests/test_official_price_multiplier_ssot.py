@@ -348,7 +348,7 @@ def test_fallback_path_actually_uses_the_ssot_value(monkeypatch):
             land_area=1000.0, official_price=op, land_price_reliable=True))
 
     # ── 모집단 A: 현행 SSOT 값
-    _total_a, block_a, notes_a = _run(1_000_000.0)
+    total_a, block_a, notes_a = _run(1_000_000.0)
     fb = mm.DESK_APPRAISAL_FALLBACK_MULTIPLIER.value
     assert block_a["per_sqm_won"] == int(1_000_000.0 * fb), (
         f"폴백 단가가 SSOT 배수를 안 쓴다: {block_a['per_sqm_won']} (배수 {fb})")
@@ -363,7 +363,7 @@ def test_fallback_path_actually_uses_the_ssot_value(monkeypatch):
                               measured=False)
     monkeypatch.setattr(mm, "DESK_APPRAISAL_FALLBACK_MULTIPLIER", other)
     monkeypatch.setattr(ro._market_multiplier, "DESK_APPRAISAL_FALLBACK_MULTIPLIER", other)
-    _total_b, block_b, notes_b = _run(1_000_000.0)
+    total_b, block_b, notes_b = _run(1_000_000.0)
 
     assert block_b["per_sqm_won"] == 1_700_000, (
         f"★SSOT 를 바꿨는데 계산값이 안 따라온다 — **사본이 어딘가 살아 있다**: {block_b['per_sqm_won']}")
@@ -371,3 +371,16 @@ def test_fallback_path_actually_uses_the_ssot_value(monkeypatch):
     assert "배율 1.7" in block_b["basis"], (
         f"★계산은 따라왔는데 **표시 문구가 안 따라왔다** — 화면이 거짓을 말한다: {block_b['basis']}")
     assert any("공시지가×1.7" in n for n in notes_b), f"고지 문구가 안 따라왔다: {notes_b}"
+
+    # ★★**총액도 잠근다** — 변이 실측(2026-09-15): `price_multiplier=_fb` 를 리터럴로 되돌리는
+    #   변이가 **SURVIVED** 했다. 나는 단가(`per_sqm_won`)만 단언하고 **총액을 버렸다**(`_total_b`).
+    #   그런데 총액이야말로 수지로 흘러가는 값이다 — `price_multiplier` 인자는 거기로만 간다.
+    #   ***내가 이름 앞에 `_` 를 붙인 순간 그 축이 잠금 밖으로 나갔다.***
+    assert total_a and total_b, f"총 토지비가 비었다: {total_a} / {total_b}"
+    assert total_b > total_a, (
+        f"★SSOT 를 1.1→1.7 로 올렸는데 **총 토지비가 안 따라온다** — "
+        f"`price_multiplier` 인자가 SSOT 를 안 쓴다: {total_a:,} → {total_b:,}")
+    # 취득세 등이 비례로 붙으므로 비율은 배수비와 **근사**해야 한다(정확 일치를 요구하지 않는다)
+    assert abs(total_b / total_a - 1.7 / fb) < 0.05, (
+        f"총액 증가율이 배수비와 어긋난다 — 다른 경로가 섞였다: "
+        f"{total_b / total_a:.3f} vs {1.7 / fb:.3f}")
