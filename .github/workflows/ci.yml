@@ -13,6 +13,42 @@ on:
   pull_request:
   workflow_dispatch:
 
+# ★같은 PR 의 낡은 실행을 취소한다 — 완주시켜도 그 결과는 쓰이지 않는다.
+#   실측(2026-09-15 · 실행 600건 페이징 · CI(pull_request) 236건 / 8일 창):
+#     · CI 시간 3,595분 중 **980분(27.3%)** 이 「head 가 이미 옮겨간 뒤에도 끝까지 돈」 실행.
+#     · 그런데 `conclusion=cancelled` 는 **0건** — 이 워크플로에 concurrency 선언이 없어서
+#       덮여도 취소되지 않고 전부 완주했다(대조군: deploy-cloudflare.yml 은 선언 1 ⇒ 조회기 생존).
+#     · 분해: 저자푸시 54회 819분 · update-branch 10회 160분. ***주축은 update-branch 가 아니다.***
+#
+# ★`cancel-in-progress` 를 **pull_request 에만** 건다 — 무조건 true 로 걸면 main 푸시 실행끼리
+#   취소돼 **래칫 기준선(그 커밋의 초록 기록)이 사라진다**. 실측: main 푸시 47건 중 다음 머지와
+#   겹친 것 **1건(2.2%)** — 드물지만 잃는 것이 회복 불가라 가드를 건다.
+#
+# ★★`github.ref` 가 아니라 **`github.run_id`** 로 떨어뜨린다(2026-09-15 · 독립 리뷰 MAJOR-1).
+#   ***`cancel-in-progress: false` 는 「취소 안 함」이 아니다.*** 같은 그룹에 **대기 중**인 실행이
+#   있으면 새 실행이 그것을 취소한다 — GitHub 은 **그룹당 대기를 하나만** 유지한다.
+#   `github.ref` 로 떨어뜨리면 main 푸시가 전부 한 그룹(`CI-refs/heads/main`)이 되어,
+#   세 번 연달아 머지될 때 **가운데 실행이 대기 중 취소**된다 — 이 블록이 막겠다고 선언한
+#   바로 그 손실(래칫 기준선)을 **가드 자신이 만들어 낸다.** 이 PR 이전에는 concurrency
+#   선언이 아예 없어 그 경로의 위험이 **0** 이었다.
+#   ★저장소 선례가 이 기전을 이미 부검해 뒀다(`deploy-cloudflare.yml:65-70`):
+#     «`false` 는 «먼저 온 것이 이긴다» 라서 … **그룹당 대기는 1개**뿐이라 다음 푸시가 앞의
+#      대기를 취소했다» — 그 워크플로 이력 **cancelled 22/22** ↔ 대조군 `CI` **cancelled 0/283**
+#      (concurrency 선언이 없어서). 기전은 같고 빈도만 다르다.
+#   ⇒ `run_id` 는 **실행마다 고유**하므로 비-PR 이벤트는 사실상 그룹을 형성하지 않는다
+#     = 이 PR 이전과 **정확히 같은 동작**. 직렬화(약 19분 대기)도 생기지 않는다.
+# ★그룹 키에 PR 번호를 넣는다. `github.workflow` 만 쓰면 **모든 PR 이 한 그룹**이 되어
+#   새 PR 이 남의 실행을 취소한다(이 저장소는 멀티세션이라 즉시 사고가 난다).
+#   push/dispatch 에는 pull_request 가 없으므로 `github.ref` 로 떨어진다.
+#
+# ★이 처방은 `deploy-cloudflare.yml` 에서 **의도적으로 기각된 적이 있다**(#1029 · sid=dcb7a4f2):
+#   사유는 «cancel-in-progress 가 `waiting`(승인대기)을 취소하는지 미검증». 그 축은 여기서
+#   **발생하지 않는다** — 이 워크플로에는 `environment:` 선언이 **0건**이라 승인 게이트가 없고,
+#   실행이 `waiting` 을 거치지 않는다(구조 판별 · 상태 계수가 아니라 정의로 갈랐다).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   changes:
     name: Detect changes
