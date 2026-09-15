@@ -87,7 +87,13 @@ async def _ensure(db: AsyncSession) -> None:
     await db.execute(text(
         "ALTER TABLE sales_draw_candidates ADD COLUMN IF NOT EXISTS algo_version varchar(8)"))
     await db.commit()
-    _READY = True
+    # ★★**DDL 을 커밋한다** — 형제 `commitment_store._ensure` 가 이것을 안 해서
+    #   프로덕션이 500 이었다(라이브 예외 `UndefinedTableError` 로 확증 · 2026-09-14).
+    #   여기도 같은 덫이 성립한다: `group_status` 는 **읽기 전용**이라 커밋하지 않는다
+    #   ⇒ 워커의 첫 요청이 그 경로면 테이블이 롤백되고 `_READY` 만 남는다.
+    #   ***형제를 스윕하지 않으면 같은 결함이 다른 이름으로 살아남는다.***
+    await db.commit()
+    _READY = True          # ★커밋 뒤에만
 
 
 async def create_group(db: AsyncSession, site_id, name: str) -> dict[str, Any]:
