@@ -44,6 +44,16 @@ _PER_PR_TOKENS = (
     "github.head_ref",                   # PR 소스 브랜치명
 )
 
+#: ★**실행마다** 고유한 토큰. 비-PR 이벤트(push/dispatch)의 그룹 키가 이것으로 떨어져야
+#: 그 이벤트들이 **사실상 그룹을 형성하지 않는다**.
+#: ★★왜 필요한가(2026-09-15 · 독립 리뷰 MAJOR-1): `cancel-in-progress: false` 는
+#:   「취소 안 함」이 **아니다** — 같은 그룹의 **대기 중** 실행을 새 실행이 취소한다
+#:   (GitHub 은 그룹당 대기를 하나만 유지). `github.ref` 로 떨어뜨리면 main 푸시가 전부
+#:   한 그룹이 되어 **가운데 머지의 래칫 기준선이 사라진다** — 이 파일이 막겠다고 선언한
+#:   바로 그 손실이다. `github.ref` 는 «PR 마다 다름»에는 참이지만 «실행마다 다름»에는
+#:   **거짓**이라, 두 목록을 **따로** 둔다.
+_RUN_UNIQUE_TOKENS = ("github.run_id",)
+
 
 def _classify(conc: object) -> str:
     """concurrency 선언 하나를 판정한다. 반환값은 **닫힌 어휘**다.
@@ -59,6 +69,10 @@ def _classify(conc: object) -> str:
     cancel = str(conc.get("cancel-in-progress", "")).strip()
     if not any(tok in group for tok in _PER_PR_TOKENS):
         return "그룹공유"          # ① 모든 PR 이 한 그룹 — 남의 실행을 취소한다
+    if "pull_request" in cancel and not any(t in group for t in _RUN_UNIQUE_TOKENS):
+        # ★비-PR 이벤트가 그룹을 **공유**한다. 그때 cancel-in-progress 는 false 로 평가되는데,
+        #   false 는 「취소 안 함」이 아니라 **「대기 중인 것을 취소한다」**이다.
+        return "비PR그룹공유"
     if cancel.lower() in ("", "false"):
         return "취소안함"          # ② 선언만 있고 효과 0
     if cancel.lower() == "true":
@@ -80,7 +94,14 @@ def _classify(conc: object) -> str:
         ({"group": "${{ github.ref }}", "cancel-in-progress": True}, "무조건취소"),
         ({"group": "${{ github.ref }}",
           "cancel-in-progress": "${{ github.event_name == 'push' }}"}, "조건불명"),
+        # ★★MAJOR-1 회귀 대조군: 이 형태가 **종전 초판**이고, 락이 그것을 「적합」으로 읽었다.
+        #   yml 만 고치고 이 행이 없으면 다음 사람이 되돌릴 때 **전건 초록**이 된다.
         ({"group": "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
+          "cancel-in-progress": "${{ github.event_name == 'pull_request' }}"}, "비PR그룹공유"),
+        # ★음성 대조군 — 무조건 취소면 비-PR 그룹 공유가 문제가 아니다(라벨이 뭉치면 안 된다).
+        ({"group": "${{ github.workflow }}-${{ github.ref }}",
+          "cancel-in-progress": True}, "무조건취소"),
+        ({"group": "${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}",
           "cancel-in-progress": "${{ github.event_name == 'pull_request' }}"}, "적합"),
     ],
 )
@@ -91,8 +112,9 @@ def test_classifier_separates_every_failure_mode(conc: object, expect: str) -> N
 
 def test_classifier_labels_are_all_distinct() -> None:
     """★라벨이 뭉치면 «없음»과 «틀림»이 구별되지 않는다(한 신호가 두 사건을 덮는다)."""
-    labels = {"선언없음", "형식오류", "그룹공유", "취소안함", "무조건취소", "조건불명", "적합"}
-    assert len(labels) == 7
+    labels = {"선언없음", "형식오류", "그룹공유", "비PR그룹공유", "취소안함",
+              "무조건취소", "조건불명", "적합"}
+    assert len(labels) == 8
 
 
 # ── 본판정 ────────────────────────────────────────────────────────────────────
