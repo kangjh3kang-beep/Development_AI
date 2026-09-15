@@ -314,8 +314,6 @@ def test_partial_branch_of_the_note_carries_the_measured_share():
     """
     from app.services.market.land_dong_stats import stats_note
 
-    import re
-
     n = stats_note(_stats(_MIX_COMMERCIAL_ABSENT), 6, target_land_use="제1종일반주거지역")
     assert n, "조회기 사망 — 노트가 비었다"
 
@@ -377,7 +375,9 @@ def _returned_dict_value_src(func_name: str, key: str) -> str | None:
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)):
             continue
-        for k, v in zip(node.value.keys, node.value.values):
+        # ★`strict=True` — `ast.Dict` 는 keys/values 길이가 같음이 보장된다.
+        #   길이가 갈리면 **조용히 잘리는 대신 터져야** 한다(짝이 어긋난 채 읽으면 위양성).
+        for k, v in zip(node.value.keys, node.value.values, strict=True):
             if isinstance(k, ast.Constant) and k.value == key:
                 return ast.get_source_segment(src, v)
     return None
