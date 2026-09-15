@@ -317,3 +317,57 @@ def test_detector_catches_the_pre_fix_violation():
         assert any("official_price" in src for _, src in hits), f"엉뚱한 것을 잡았다: {hits}"
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def test_fallback_path_actually_uses_the_ssot_value(monkeypatch):
+    """★★**그 블록을 실제로 태운다** — AST 스캔만으로는 배선이 안 잠긴다.
+
+    ★기계 변이 실측(2026-09-15 · 54건): **생존 7건이 전부 한 블록**
+    (`rough_feasibility_orchestrator` 폴백)에 몰렸다 — `_fb = ...` 줄삭제 ·
+    `price_multiplier=_fb` 줄삭제 · `official_price * _fb` 줄삭제까지 **전부 SURVIVED**.
+    원인 한 줄: 내 락이 그 함수를 **한 번도 실행하지 않았다**(AST 만 읽었다).
+    ***생존이 한 블록에 몰리면 그 블록이 「안 태워지는 층」이다***(저장소 기록).
+
+    ★**두 모집단**으로 본다 — 차가 0인 픽스처는 잠금이 아니다:
+      SSOT 값을 바꾸면 **계산값과 사용자 표시 문구가 함께** 따라와야 한다.
+      한쪽만 따라오면 화면이 **적용값과 다른 배율**을 말하게 된다(그게 이 PR 이 고치는 결함이다).
+    """
+    import asyncio
+
+    from app.services.feasibility import rough_feasibility_orchestrator as ro
+    from app.services.land_intelligence import market_multiplier as mm
+
+    async def _boom(**_kw):
+        raise RuntimeError("탁상감정 강제 실패 — 폴백 경로를 태운다")
+
+    monkeypatch.setattr(ro, "desk_appraisal", _boom)
+
+    def _run(op: float):
+        return asyncio.run(ro._resolve_land_cost(
+            address="경기도 남양주시 화도읍 마석우리 265-1",
+            land_area=1000.0, official_price=op, land_price_reliable=True))
+
+    # ── 모집단 A: 현행 SSOT 값
+    _total_a, block_a, notes_a = _run(1_000_000.0)
+    fb = mm.DESK_APPRAISAL_FALLBACK_MULTIPLIER.value
+    assert block_a["per_sqm_won"] == int(1_000_000.0 * fb), (
+        f"폴백 단가가 SSOT 배수를 안 쓴다: {block_a['per_sqm_won']} (배수 {fb})")
+    assert f"배율 {fb}" in block_a["basis"], (
+        f"★표시 문구가 **적용값과 다른 배율**을 말한다: {block_a['basis']}")
+    assert any(f"공시지가×{fb}" in n for n in notes_a), (
+        f"★고지 문구가 적용 배율을 안 싣는다: {notes_a}")
+
+    # ── 모집단 B: SSOT 를 바꾸면 **계산과 문구가 함께** 따라오는가
+    other = mm.MultiplierSpec(value=1.7, purpose=mm.DESK_APPRAISAL_FALLBACK_MULTIPLIER.purpose,
+                              provenance="두 모집단 확인용 임시값 — 실제 계수가 아니다(테스트 전용)",
+                              measured=False)
+    monkeypatch.setattr(mm, "DESK_APPRAISAL_FALLBACK_MULTIPLIER", other)
+    monkeypatch.setattr(ro._market_multiplier, "DESK_APPRAISAL_FALLBACK_MULTIPLIER", other)
+    _total_b, block_b, notes_b = _run(1_000_000.0)
+
+    assert block_b["per_sqm_won"] == 1_700_000, (
+        f"★SSOT 를 바꿨는데 계산값이 안 따라온다 — **사본이 어딘가 살아 있다**: {block_b['per_sqm_won']}")
+    assert block_b["per_sqm_won"] != block_a["per_sqm_won"], "두 모집단이 같은 값을 낸다 — 이 락은 공허하다"
+    assert "배율 1.7" in block_b["basis"], (
+        f"★계산은 따라왔는데 **표시 문구가 안 따라왔다** — 화면이 거짓을 말한다: {block_b['basis']}")
+    assert any("공시지가×1.7" in n for n in notes_b), f"고지 문구가 안 따라왔다: {notes_b}"
