@@ -29,6 +29,7 @@ from app.services.feasibility.aggregation_engine import aggregate_feasibility
 from app.services.feasibility.dcf_assembly import assemble_monthly_dcf
 from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
 from app.services.finance.return_kpi import compute_return_kpi
+from app.services.land_intelligence import market_multiplier as _market_multiplier
 from app.services.land_intelligence.comprehensive_analysis_service import (
     build_integrated_context,
 )
@@ -988,20 +989,23 @@ async def _resolve_land_cost(
             "source": da.get("source") or "desk_appraisal(탁상감정)",
         }, notes
 
-    # 폴백: 공시지가(또는 미확보 시 표준 가정단가) × 배율(1.1) → 취득세 등 포함.
+    # 폴백: 공시지가(또는 미확보 시 표준 가정단가) × 배율 → 취득세 등 포함.
+    # ★배율의 SSOT 는 `market_multiplier` 다(2026-09-15). 종전엔 호출 인자와 문구에 **리터럴
+    #   1.1 이 세 군데** 박혀 있어, 한 곳만 고치면 표시 문구가 조용히 거짓이 됐다.
+    _fb = _market_multiplier.DESK_APPRAISAL_FALLBACK_MULTIPLIER.value
     if official_price and official_price > 0:
         lc = land_cost_engine.calculate_total_land_cost(
             total_area_sqm=land_area, official_price_per_sqm=official_price,
-            price_multiplier=1.1, land_category="land", include_taxes_and_fees=True,
+            price_multiplier=_fb, land_category="land", include_taxes_and_fees=True,
         )
         total = int(lc["total_land_cost_won"])
-        per_sqm = int(official_price * 1.1)
+        per_sqm = int(official_price * _fb)
         if land_price_reliable:
             # 실제 공시지가 확보 — '공시지가'라 정직하게 부를 수 있다.
-            notes.append("토지비: 탁상감정 미확보 — 공시지가×1.1 배율 폴백(참고용)")
+            notes.append(f"토지비: 탁상감정 미확보 — 공시지가×{_fb} 배율 폴백(참고용)")
             block = {
                 "total_won": total, "per_sqm_won": per_sqm,
-                "basis": f"공시지가 {int(official_price):,}원/㎡ × 배율 1.1 × 면적 {land_area:,.0f}㎡ + 취득세 등",
+                "basis": f"공시지가 {int(official_price):,}원/㎡ × 배율 {_fb} × 면적 {land_area:,.0f}㎡ + 취득세 등",
                 "evidence": None, "source": "공시지가×배율(폴백)",
             }
         else:
