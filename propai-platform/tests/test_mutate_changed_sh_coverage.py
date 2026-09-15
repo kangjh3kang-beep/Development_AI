@@ -210,14 +210,10 @@ def test_rel_test_promotes_only_unresolvable_paths():
     assert pathlib.Path(got).is_absolute(), f"승격되지 않았다 — pytest 가 못 찾는다: {got}"
 
 
-# ── ⑦ ★부채를 초록 안에 드러낸다 (커밋 메시지에만 적으면 안 드러난다) ────────
-@pytest.mark.xfail(
-    strict=True,
-    reason="★부채: 저장소 루트 `scripts/` 의 셸은 여전히 모집단 밖이다(개수는 테스트가 "
-           "`git ls-files` 로 파생해 메시지에 싣는다 — 손으로 세지 않는다). 그 게이트의 "
-           "사유(«도구 자신은 이 테스트들의 대상이 아니다»)가 지금도 참인지 **미측정**이며 "
-           "이유는 「장치 부재」가 아니라 「안 쟀음」. 재서 참이 아니면 초록으로 뒤집힌다.",
-)
+# ── ⑦ ★부채 **상환됨**(2026-09-14) ──────────────────────────────────────────
+#  종전 이 자리의 `xfail(strict)` 은 *"그 사유가 지금도 참인지 **미측정**"* 이라 적고
+#  *"재서 참이 아니면 초록으로 뒤집힌다"* 고 스스로 조건을 걸어 두었다. **쟀고, 참이 아니었다** —
+#  그래서 게이트를 좁히고 이 마커를 같은 커밋에서 지운다(부채표지가 요구한 행동).
 def test_root_scripts_shell_also_enters_the_population(tmp_path, monkeypatch):
     derived = subprocess.run(
         ["git", "ls-files", "scripts/*.sh"], cwd=_REPO_ROOT,
@@ -900,4 +896,108 @@ def test_files_that_produced_no_mutation_are_surfaced(tmp_path):
     # ★본판정 — 변이 0건인 파일이 있으면 **조용한 초록이면 안 된다**.
     assert r.returncode != 0, (
         f"mod.py 가 한 번도 변이되지 않았는데 rc=0 이다:\n{out}"
+    )
+
+
+def test_exclusion_is_exactly_the_self_mutating_tool() -> None:
+    """★배제 집합이 **정확히 그 한 파일**이다 — 넓히면 조용히 삼킨다.
+
+    ★접두(`scripts/`)로 되돌리는 변경을 잡는 것이 이 단언의 목적이다. 종전 게이트가
+      접두였고, 그래서 «도구 자신» 이라는 **한 파일짜리 사유**로 **8개 셸이 통째로** 빠졌다.
+      ***목록은 곧 상한이 된다 — 그리고 접두는 미래의 파일까지 상한에 넣는다.***
+    """
+    assert mc._SELF_MUTATION_EXCLUDED == frozenset({"scripts/mutate_changed.py"}), (
+        f"배제 집합이 바뀌었다: {sorted(mc._SELF_MUTATION_EXCLUDED)} — "
+        "넓히려면 그 파일이 **자기 실행 중 자기 소스를 재작성**하는지 먼저 재라"
+    )
+
+
+def test_previously_excluded_shells_now_enter_the_population(tmp_path, monkeypatch) -> None:
+    """★상환의 **효과**를 잠근다 — 배제만 좁히고 실제로 안 들어오면 의미가 없다.
+
+    ★`mutate_manual.sh` 를 고른 이유(실측 2026-09-14): 30일 **최다 변경 셸**이고
+      짝 테스트가 **tmp git repo 에서 실제로 실행**한다. 종전 게이트에서 이것이
+      **가장 큰 손실**이었다.
+    """
+    (tmp_path / "scripts" / "ci").mkdir(parents=True)
+    for name in ("mutate_manual.sh", "coord.sh"):
+        (tmp_path / "scripts" / name).write_text("x\n", encoding="utf-8")
+    # ★R1 MAJOR-1: 종전 픽스처가 `scripts/ci/` 밖만 담아서, 게이트에 `startswith("scripts/ci/")`
+    #   를 **덧붙이는** 변이가 이 락을 **통과**했다(실측 SURVIVED). 그 한 줄은 이 PR 이 넣은
+    #   9개 중 3개를 조용히 다시 빼낸다. ⇒ 접두가 실제로 노리는 자리를 픽스처에 넣는다.
+    (tmp_path / "scripts" / "ci" / "lint_ratchet.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "scripts" / "mutate_changed.py").write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        mc.subprocess, "run",
+        lambda cmd, *a, **kw: subprocess.CompletedProcess(
+            cmd, 0,
+            "scripts/mutate_manual.sh\nscripts/coord.sh\n"
+            "scripts/ci/lint_ratchet.py\nscripts/mutate_changed.py\n", ""
+        ),
+    )
+    got = sorted(p.name for p in mc._changed_files("BASE"))
+    # ★두 모집단 — 들어와야 할 것이 들어오고 **빠져야 할 것이 빠진다**.
+    assert got == ["coord.sh", "lint_ratchet.py", "mutate_manual.sh"], (
+        f"모집단이 기대와 다르다: {got} — 자기변이 도구만 빠져야 한다"
+    )
+
+
+def test_exclusion_axis_is_a_set_not_a_prefix() -> None:
+    """★**축**을 잠근다 — `_changed_files` 본문에 **접두 판정이 하나도 없어야** 한다.
+
+    ★★R1 MAJOR-1: 집합 동일성만 단언하면 **전체 교체**는 잡지만 **덧붙이는 접두**는 못 잡는다.
+      실측으로 `if n.startswith("scripts/ci/") or n in _SELF_MUTATION_EXCLUDED:` 가
+      **전건 초록으로 통과**했다. ***처방 범위가 결함 범위와 어긋난 전형이다.***
+    ★소스 grep 이 아니라 **AST** 로 본다 — 주석·독스트링에 뚫린 전례가 많다.
+    """
+    import ast as _ast
+    src = pathlib.Path(mc.__file__).read_text(encoding="utf-8")
+    fn = next(n for n in _ast.walk(_ast.parse(src))
+              if isinstance(n, _ast.FunctionDef) and n.name == "_changed_files")
+    prefix_calls = [
+        _ast.unparse(n) for n in _ast.walk(fn)
+        if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute)
+        and n.func.attr in {"startswith", "endswith"}
+        and not _ast.unparse(n).startswith("p.name.")   # 테스트 파일명 규칙은 정당
+        and ".suffix" not in _ast.unparse(n)            # 확장자 게이트도 정당
+    ]
+    assert not prefix_calls, (
+        f"_changed_files 가 경로 **접두**로 배제를 판정한다: {prefix_calls} — "
+        "배제는 `_SELF_MUTATION_EXCLUDED` **한 곳에서만** 하라. "
+        "접두는 앞으로 생길 파일까지 조용히 삼킨다."
+    )
+
+
+def test_exclusion_constant_is_immutable() -> None:
+    """[LOW] 배제 집합이 **불변**이다 — 런타임에 누가 `.add()` 하지 못한다."""
+    assert isinstance(mc._SELF_MUTATION_EXCLUDED, frozenset), (
+        f"가변 컨테이너다: {type(mc._SELF_MUTATION_EXCLUDED).__name__}"
+    )
+
+
+def test_py_pair_discovery_covers_the_repo_level_tests_dir(monkeypatch) -> None:
+    """★`.py` 짝 탐색이 **`propai-platform/tests/`** 도 본다 — 안 보면 거짓 SURVIVED 가 난다.
+
+    ★★R1 MAJOR-2 의 **재발 방지**. 루트가 `apps/api/tests`·`tests` 둘뿐이던 동안
+      `scripts/ci/lint_ratchet.py` 는 **모집단엔 들어오면서** 짝 테스트를 못 찾아
+      무관한 테스트로 판정됐다(거짓 SURVIVED 2건 실측).
+    ★★★그리고 **고친 직후의 재판정에서 이 자리가 SURVIVED 였다** — 루트를 도로 빼는 변이가
+      아무 락도 안 깨뜨렸다. ***「고쳤다」와 「고친 것을 잠갔다」는 다른 명제다.***
+    ★락의 축은 **리터럴이 아니라 효과**다(루트 문자열을 단언하면 리팩토링에 부서진다).
+    """
+    # ★`_guess_tests` 는 **상대경로**로 루트를 찾는다 — pytest 의 cwd 는 `propai-platform` 이라
+    #   저장소 루트로 옮겨야 한다(이 파일의 다른 테스트도 같은 이유로 chdir 한다).
+    rel = "propai-platform/tests/test_lint_ratchet.py"
+    assert (_REPO_ROOT / rel).exists(), f"전제가 낡았다 — {rel} 가 없다(조회기 사망)"
+    monkeypatch.chdir(_REPO_ROOT)
+    got = [str(x) for x in mc._guess_tests([pathlib.Path("scripts/ci/lint_ratchet.py")])]
+    pair = pathlib.Path(rel)
+    assert str(pair) in got, (
+        f"저장소 루트 `propai-platform/tests/` 의 짝을 못 찾는다: {got} — "
+        "그 파일은 모집단에 들어오므로, 못 찾으면 **무관한 테스트로 판정**돼 거짓 생존이 난다"
+    )
+    # ★공허 방지 — 없는 짝은 찾지 말아야 한다(무조건 참이면 이 단언은 장식이다).
+    assert mc._guess_tests([pathlib.Path("scripts/ci/zzz_no_such_module.py")]) == [], (
+        "존재하지 않는 짝을 찾아낸다 — 탐색이 너무 넓다"
     )
