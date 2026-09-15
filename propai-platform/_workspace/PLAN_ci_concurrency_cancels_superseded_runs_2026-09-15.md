@@ -76,9 +76,31 @@ concurrency:
 
 ★변이로 CAUGHT 를 확인하고 `scripts/mutate_manual.sh` 의 `::VERDICT=` 출력을 §6 에 싣는다.
 
-## §6 변이 결과
+## §6 변이 결과 — **4/4 CAUGHT, 그리고 기계는 0건을 골랐다**
 
-(커밋 후 채움 — 선언만 남기지 않는다)
+`scripts/mutate_manual.sh` (base `c9427bf13`):
+
+| 변이 | 무엇을 흉내내나 | `::VERDICT=` |
+|---|---|---|
+| M1 `cancel-in-progress: true` | main 푸시 기준선까지 취소 | **CAUGHT** |
+| M2 `group: ${{ github.workflow }}` | 모든 PR 이 한 그룹 — 남의 실행 취소 | **CAUGHT** |
+| M3 `cancel-in-progress: false` | 선언만 있고 효과 0 | **CAUGHT** |
+| M4 잡에 `environment:` 추가 | 처방의 **전제** 파괴(승인 게이트) | **CAUGHT** |
+
+★★**그런데 그 4개는 내가 골랐다.** 기계 변이는 **하나도 고를 수 없었다**:
+
+    $ python scripts/mutate_changed.py --tests propai-platform/tests/test_ci_concurrency…py
+      base: origin/main → c9427bf13423 (공통 조상 · 남의 커밋 제외)
+      ★감사할 소스 변경이 없다 — 이 실행은 **아무것도 검증하지 않았다**.
+
+원인은 확장자 게이트다 — `mutate_changed.py` 는 `(".py", ".ts", ".tsx", ".sh")` 만 본다.
+***이 PR 의 런타임 산출물은 `.yml` 이라 기계 감사 분모에 아예 없다.***
+즉 이 변경의 커버리지를 만든 것은 **손 변이와 리뷰뿐**이다. 「4/4 CAUGHT」를 머지 보증으로
+읽지 말 것 — 그 분모를 정한 것이 나다.
+
+★같은 결함 클래스가 지금 큐에 있다: **#1055** 가 `.sh` 를 그 분모에 넣는 PR 이고,
+그것도 `.yml` 까지는 넓히지 않는다. **별건으로 남긴다**(처방 범위를 결함 범위에 맞춘다 —
+여기서 `.yml` 지원을 끼워 넣으면 이 PR 이 두 가지를 하게 된다).
 
 ## §7 이 계획이 스스로 썩지 않게
 
