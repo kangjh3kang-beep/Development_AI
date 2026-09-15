@@ -294,6 +294,13 @@ def dong_land_stats(
     return None
 
 
+#: `_mix_of` 가 **미표기 행**에 붙이는 센티넬(«그 행의 값을 모른다»).
+#: ★소비처가 이것을 **실재하는 용도지역으로 세면** 「모른다」가 「측정된 값」으로 승격된다 —
+#:   실측(2026-09-14 리뷰 H3): 표본이 전부 미표기인데 대상 `"미상"` 이 **100% match** 로 나왔다.
+#:   그래서 상수로 공유한다(문자열을 두 벌 두면 한쪽만 고쳐진다).
+UNKNOWN_BUCKET = "미상"
+
+
 def _mix_of(rows: list[dict[str, Any]], field: str) -> list[dict[str, Any]]:
     """표본의 **구성**(많은 순). 값을 바꾸지 않고 무엇이 섞였는지만 밝힌다.
 
@@ -306,7 +313,7 @@ def _mix_of(rows: list[dict[str, Any]], field: str) -> list[dict[str, Any]]:
     """
     counts: dict[str, int] = {}
     for r in rows:
-        key = _norm(r.get(field)) or "미상"
+        key = _norm(r.get(field)) or UNKNOWN_BUCKET
         counts[key] = counts.get(key, 0) + 1
     total = sum(counts.values())
     # ★정직 표기 — 이 가드는 **도달 불가**다(변이 생존 실측). 호출부가 최소 표본을 이미
@@ -332,7 +339,86 @@ def _scope_label(layer: str, target: dict[str, str]) -> str:
     }.get(layer, "시군구 전체")
 
 
-def stats_note(stats: dict[str, Any] | None, window_months: int) -> str | None:
+def zone_match(stats: dict[str, Any] | None,
+               target_land_use: str | None) -> dict[str, Any] | None:
+    """대상 용도지역이 **이 표본에서 차지하는 비율**. ★잴 수 있으면 조건문으로 말하지 않는다.
+
+    ★왜(라이브 실측 2026-09-14 · 남양주 화도읍 마석우리 265-1):
+      `subject.zone_type` = **일반상업지역**, 표본 `land_use_mix` = 제1종일반주거 83.3% ·
+      계획관리 16.7% ⇒ **일치 0.0%**. 즉 참고단가 3,855,297원/㎡ 는 **다른 시장의 값**이다.
+      그런데 응답 전수(리프 168개)에 그 「0%」를 담은 **기계 필드가 0건**이었고, 산문만
+      *"대상지와 다른 용도지역·지목이 **섞여 있으면** …"* 이라 **가정법**으로 말했다.
+      ⇒ 「확인 못 했다」와 「확인했고 0% 다」가 **같은 문장으로 덮인다.**
+
+    ★★**3상태**(뭉치면 「모름」이 「없음」으로 샌다):
+      · `None`          — **못 쟀다**. 넷 중 하나다:
+          ①통계가 없다 ②대상 용도지역이 없다(**공백만인 것도 포함**)
+          ③표본 구성이 없다 ④표본이 **전부 `UNKNOWN_BUCKET`**(미표기)이다
+        ★④가 「0%」가 아닌 이유: 모집단의 용도지역을 **모르는** 것이지 «대상이 없다»가 아니다.
+      · `share_pct == 0.0` — **쟀고 0%**(용도지역을 아는 표본 중 대상이 하나도 없다)
+      · `share_pct > 0`    — 일부(`partial`) 또는 전부(`match`)
+
+    ★독립 리뷰(2026-09-14)가 짚은 넷을 여기서 닫는다 — **넷 다 재현시킨 뒤** 고쳤다:
+      · **H3** 가드는 원본(`target_land_use`)을 보고 비교는 `_norm` 을 써서, 공백만인 대상이
+        「못 쟀다」가 아니라 **「쟀고 0%」로 샜다** ⇒ 가드를 `_norm` **뒤로** 내렸다.
+      · **H3 거울상** `_mix_of` 의 센티넬을 실재 용도지역으로 세어 **100% match** 를 냈다.
+      · **M2** 문장의 `(0건)` 이 **리터럴**이라 `count=1` 인데도 «0건» 이라 말했다
+        ⇒ `matched_count` 를 **`count` 에서 파생**해 문장이 그것을 쓴다.
+      · **L1/L2** 0% 경로만 `int` 였고, `99.9%` 를 «전부 같은 용도지역» 이라 불렀다.
+
+    ★이 값은 **행동 지시**로 번역된다("대상지 단가의 근거로 쓸 수 없습니다").
+      그래서 오진의 비용이 문구 문제가 아니다 — 셋이 실제로 갈리는지 락이 단언한다.
+
+    Returns:
+        `{"target_land_use", "share_pct", "matched_count", "unknown_share_pct", "verdict"}`
+        또는 `None`.
+    """
+    if not stats:
+        return None
+    # ★`_norm` **뒤에** 판정한다 — 생산자(`_mix_of`)와 같은 정규화로 봐야
+    #   «공백만인 대상» 이 「쟀다」 쪽으로 새지 않는다(리뷰 H3-a).
+    tgt = _norm(target_land_use)
+    if not tgt or tgt == UNKNOWN_BUCKET:
+        return None
+    mix = stats.get("land_use_mix") or []
+    # ★정직 표기: 이 가드를 무력화해도 **결과가 같다**(빈 `mix` → `known` 도 비어 바로 아래에서
+    #   `None`). 기계 변이가 `::VERDICT=SURVIVED` 로 짚는데 **구멍이 아니라 등가 변이**다 —
+    #   조기 반환으로 의도를 드러내려고 남긴다. 점수로 세지 않는다.
+    if not mix:
+        return None
+    known = [m for m in mix if _norm(m.get("land_use")) != UNKNOWN_BUCKET]
+    if not known:
+        # 표본의 용도지역을 **하나도 모른다** — 비율을 낼 모집단이 없다(리뷰 H3-b).
+        return None
+    matched = [m for m in known if _norm(m.get("land_use")) == tgt]
+    # ★`float()` 로 고정 — 빈 합은 `int 0` 이라 0% 경로만 타입이 갈렸다(리뷰 L1).
+    share = round(float(sum(float(m.get("share_pct") or 0.0) for m in matched)), 1)
+    unknown = round(float(sum(
+        float(m.get("share_pct") or 0.0)
+        for m in mix if _norm(m.get("land_use")) == UNKNOWN_BUCKET
+    )), 1)
+    # ★★**판정축은 비율이 아니라 건수다.** `_mix_of` 는 `round(v*100/total, 1)` 이라
+    #   표본이 커지면 **`count >= 1` 인데 `share_pct == 0.0`** 이 실제로 나온다
+    #   (`round(1*100/20001, 1) == 0.0`). 비율로 판정하면 그 한 건이 «0건 · 모집단이 다르다»
+    #   로 보고되고, 문장은 **"근거로 쓸 수 없습니다"** 라는 **행동 지시**까지 낸다.
+    #   ⇒ 「없다」는 **센 결과가 0일 때만** 말한다(리뷰 M2).
+    matched_count = int(sum(int(m.get("count") or 0) for m in matched))
+    known_count = int(sum(int(m.get("count") or 0) for m in known))
+    if matched_count <= 0:
+        verdict = "none"
+    elif matched_count >= known_count and unknown <= 0.0:
+        # ★`match` 는 **아는 표본이 전부 대상이고 미표기도 없을 때만**. 99.9%(1,000건 중
+        #   1건이 다른 용도지역)를 «같은 용도지역 표본» 이라 부르면 거짓이다(리뷰 L2).
+        #   ★반올림이 아니라 **건수 동일성**으로 본다 — 99.95% 도 `match` 가 아니다.
+        verdict = "match"
+    else:
+        verdict = "partial"
+    return {"target_land_use": tgt, "share_pct": share, "matched_count": matched_count,
+            "unknown_share_pct": unknown, "verdict": verdict}
+
+
+def stats_note(stats: dict[str, Any] | None, window_months: int,
+               *, target_land_use: str | None = None) -> str | None:
     """통계에 붙일 정직 고지. 통계가 없으면 None.
 
     ★값만 보여 주면 사용자는 "내 땅 시세"로 읽는다. 이 값이 **무엇의 대표값인지**,
@@ -363,10 +449,32 @@ def stats_note(stats: dict[str, Any] | None, window_months: int) -> str | None:
         # 지목은 단가를 자릿수로 가른다(대 vs 도로).
         bits2.append("지목 " + " · ".join(f"{m['jimok']} {m['share_pct']:g}%" for m in jm[:3]))
     if bits2:
-        tail = (
-            f" 이 표본의 구성은 {' / '.join(bits2)} 입니다 — "
-            "대상지와 다른 용도지역·지목이 섞여 있으면 단가가 크게 다를 수 있습니다."
-        )
+        zm = zone_match(stats, target_land_use)
+        if zm is None:
+            # ★대상 용도지역을 모른다 — **가정법이 정직한 자리**다(여기서만).
+            verdict_sentence = (
+                "대상지와 다른 용도지역·지목이 섞여 있으면 단가가 크게 다를 수 있습니다."
+            )
+        elif zm["verdict"] == "none":
+            # ★★쟀고 0% 다 — 「섞여 있으면」이라고 말하면 **아는 것을 숨기는 것**이다.
+            verdict_sentence = (
+                f"★대상지 용도지역 **{zm['target_land_use']}** 은 이 표본에 "
+                f"**0.0%**({zm['matched_count']}건)입니다 — 값이 아니라 **모집단이 다릅니다.** "
+                "같은 지역의 다른 시장 단가이므로 대상지 단가의 근거로 쓸 수 없습니다."
+            )
+        elif zm["verdict"] == "match":
+            verdict_sentence = (
+                f"대상지 용도지역 **{zm['target_land_use']}** 이 이 표본의 "
+                f"**{zm['share_pct']:g}%** 입니다 — 같은 용도지역 표본입니다."
+            )
+        else:
+            verdict_sentence = (
+                f"대상지 용도지역 **{zm['target_land_use']}** 은 이 표본의 "
+                f"**{zm['share_pct']:g}%**({zm['matched_count']}건) 뿐입니다 — "
+                "나머지는 다른 용도지역이라 "
+                "단가가 크게 다를 수 있습니다."
+            )
+        tail = f" 이 표본의 구성은 {' / '.join(bits2)} 입니다 — {verdict_sentence}"
     return (
         f"{head}입니다. 공개 실거래 자료가 지번을 가려서 제공해 **개별 필지 위치는 "
         f"반영되지 않았습니다** — 같은 구역 안에서도 필지별 차이가 클 수 있습니다.{tail}"

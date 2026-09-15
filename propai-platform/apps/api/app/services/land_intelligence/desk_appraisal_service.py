@@ -26,6 +26,7 @@ PUB_METHOD_RATIONALE_TEMPLATE = (
 )
 from app.services.land_intelligence.land_price_estimator import _market_multiplier
 from app.services.market.land_dong_stats import stats_note as land_stats_note
+from app.services.market.land_dong_stats import zone_match as land_zone_match
 from app.utils.pnu import lawd_cd_from_pnu
 
 logger = structlog.get_logger(__name__)
@@ -194,6 +195,40 @@ def _subject_consistency(subject: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _zone_match_clause(land_stats: dict | None, target_land_use: str | None) -> str:
+    """참고값 뒤에 붙일 **용도지역 일치 실측** 한 절. 못 재면 **빈 문자열**(가정법도 안 붙인다).
+
+    ★라이브 실측(2026-09-14 · 마석우리 265-1): 대상 **일반상업지역** ↔ 표본 제1종일반주거 83.3% ·
+      계획관리 16.7% ⇒ **일치 0.0%**. 그런데 참고단가 3,855,297원/㎡ 가 「참고」 라벨로 나갔다.
+      ***값이 아니라 모집단이 다른 것인데, 그 사실이 기계 필드로도 문장으로도 없었다.***
+    """
+    # ★**남은 변이 생존은 「산문」이다 — 구멍이 아니다**(기계 변이 실측 2026-09-14).
+    #   아래 세 갈래의 **설명 문구**(예: "나머지는 다른 용도지역입니다.")를 바꾸는 변이는
+    #   SURVIVED 한다. **의도적으로 잠그지 않는다** — 저장소 규율:
+    #     *"산문(경고 문구 자체)까지 단언하지 마라 — 계약이 아니라 표현이라 다듬을 때마다 깨진다."*
+    #   ★대신 **계약을 잠근다**: ①일치율 수치가 실린다 ②100% 일치인데 「나머지는」이라
+    #     말하지 않는다(**거짓 금지** · 양방향) ③호출부가 `zone_type` 을 **실제로 넘긴다**(값 축)
+    #     ④일치율이 `land_market_stats` **바로 그 통계**를 잰다(동일성).
+    #   ★★**정정(2026-09-14 · 독립 리뷰 H1)**: 이 줄은 한때 ③을 **거짓으로** 주장했다.
+    #     당시 락은 `assert "zone_type" in v` 라 **부분문자열**이었고, 실재하는 형제 키
+    #     `zone_type_2`(이 파일이 실제로 담는다 · web 타입에도 있다)로 갈아 끼우면 **초록**이었다
+    #     (`::VERDICT=SURVIVED`). 지금은 AST 문자열 리터럴 **정확 일치**로 잠근다.
+    #     ⇒ ***주석에 적은 「잠갔다」도 검증 대상이다*** — 다음 사람은 이 문장을 재검증하지 않는다.
+    #   ★**부채**: 바로 아래 `reference_zone_match` 와 응답의 `land_market_stats_zone_match` 는
+    #     **소비처 0** 이다(대조군 `reference_note` 는 PDF·web 2곳에서 실제로 소비된다).
+    #     초록 안에 `xfail(strict=True)` 로 드러나 있다 — 배선하면 XPASS 로 실패한다.
+    zm = land_zone_match(land_stats, target_land_use)
+    if zm is None:
+        return ""
+    if zm["verdict"] == "none":
+        return (f" ★대상 용도지역 {zm['target_land_use']} 은 이 표본에 0.0% 입니다 — "
+                "모집단이 다르므로 대상지 단가의 근거로 쓸 수 없습니다.")
+    if zm["verdict"] == "match":
+        return f" 대상 용도지역 {zm['target_land_use']} 표본 {zm['share_pct']:g}% 입니다."
+    return (f" 대상 용도지역 {zm['target_land_use']} 은 이 표본의 "
+            f"{zm['share_pct']:g}%({zm['matched_count']}건) 뿐입니다 — 나머지는 다른 용도지역입니다.")
+
+
 def _assemble_methods(
     method_pub: dict | None,
     method_cmp: dict | None,
@@ -201,6 +236,7 @@ def _assemble_methods(
     income: dict | None,
     *,
     land_stats: dict | None,
+    target_land_use: str | None = None,
     comparable_skip_note: str | None,
 ) -> list[dict[str, Any]]:
     """감정평가 **4방법을 전부 목록에 남긴다** — 적용 못 한 것은 사유와 함께.
@@ -232,7 +268,11 @@ def _assemble_methods(
             "reference_note": (
                 "법정동·지목 층화 실거래(참고) — 개별 필지 위치가 반영되지 않았습니다. "
                 "지역요인까지만 반영된 값이라 개별요인 보정 전이며, 채택 단가에 쓰지 않습니다."
+                + _zone_match_clause(land_stats, target_land_use)
             ) if (land_stats or {}).get("unit_price_per_sqm") else None,
+            # ★기계 필드로도 낸다 — 소비처가 **산문을 파싱하지 않아도** 판정할 수 있게
+            #   (라이브 실측 2026-09-14: 응답 리프 168개 중 일치율 필드 **0건**이었다).
+            "reference_zone_match": land_zone_match(land_stats, target_land_use),
         })
     if building and building.get("building_value_won"):
         out.append({"method": "원가법(건물)", "unit_price": None,
@@ -786,6 +826,7 @@ async def desk_appraisal(
         "methods": _assemble_methods(
             method_pub, method_cmp, building, income,
             land_stats=land_dong_stats_out,
+            target_land_use=str((subject or {}).get("zone_type") or ""),
             comparable_skip_note=comparable_skip_note,
         ),
         "weight_note": weight_note,
@@ -799,7 +840,17 @@ async def desk_appraisal(
         #   ★값만 주면 "내 땅 시세"로 오독한다 — `note` 가 **개별 필지 위치가 반영되지
         #   않았다**는 것을 같은 자리에서 말한다.
         "land_market_stats": land_dong_stats_out,
-        "land_market_stats_note": land_stats_note(land_dong_stats_out, window_months=6),
+        # ★일치율을 **기계 필드**로 — 소비처가 산문을 파싱하지 않게.
+        "land_market_stats_zone_match": land_zone_match(
+            land_dong_stats_out,
+            # ★키워드로 넘긴다 — 위치인자는 시그니처가 바뀌면 **조용히 밀린다**(저장소 §33).
+            target_land_use=str((subject or {}).get("zone_type") or "") or None),
+        "land_market_stats_note": land_stats_note(
+            land_dong_stats_out, window_months=6,
+            # ★대상 용도지역을 넘긴다 — 안 넘기면 이 함수는 원리적으로 **가정법**밖에
+            #   말할 수 없다("섞여 있으면"). 넘기면 **실측**을 말한다("0.0% 입니다").
+            target_land_use=str((subject or {}).get("zone_type") or "") or None,
+        ),
         "road_side": road_side,
         "source": src,
         "base_year": base_year,
