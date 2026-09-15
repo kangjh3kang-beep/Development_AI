@@ -23,8 +23,16 @@ PYEONG_SQM = 3.305785  # 1평 = 3.305785㎡
 # ── 개략 추정 가정 상수(매직넘버 제거) ──
 # 평당 건축비(만원/평): 도급공사 기준 중간값 가정. 정밀 단가는 V2 cost 엔진이 산출.
 CONSTRUCTION_COST_PER_PYEONG_10K = 750
-# 토지 매입비 추정: 공시지가에 곱하는 실거래 배수(공시지가는 통상 실거래의 약 40~60% 수준 → 2.5배 환산)
-LAND_COST_OFFICIAL_PRICE_MULTIPLIER = 2.5
+# 토지 매입비 추정: 공시지가에 곱하는 배수. ★**SSOT 는 `market_multiplier` 다**(2026-09-15).
+#   종전 주석은 «공시지가는 통상 실거래의 약 40~60% 수준 → 2.5배 환산» 이라 적었는데
+#   그것은 **역산**이다(`1/0.40 = 2.5` — 밴드의 극단을 골랐고 출처 인용 0건).
+#   ***PR #1019 가 고친 바로 그 형태(계수를 먼저 고르고 사유를 역산)가 여기서 살아남았다.***
+#   값은 **바꾸지 않는다**(바꿀 표본이 없다) — 사유와 소유권만 옮긴다.
+from app.services.land_intelligence.market_multiplier import (  # noqa: E402
+    LAND_COST_ROUGH_MULTIPLIER as _LAND_COST_SPEC,
+)
+
+LAND_COST_OFFICIAL_PRICE_MULTIPLIER = _LAND_COST_SPEC.value
 # 공시지가 정보가 없을 때 토지비 기본 단가(만원/평)
 LAND_COST_DEFAULT_PER_PYEONG_10K = 2000
 # 부대비용율: (건축비+토지비) 대비 설계·인허가·금융 등 소프트코스트 비율

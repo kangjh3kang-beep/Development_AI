@@ -208,3 +208,112 @@ def resolve_market_multiplier(address: str) -> MultiplierVerdict:
         SCOPE_DEFAULT,
         PROVENANCE_UNVERIFIED_PRESET,
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ★2026-09-15 — **SSOT 밖에 남아 있던 형제 둘**을 들인다
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# ★왜: 위 지도가 SSOT 가 된 뒤에도 **같은 실물량**(공시지가→시세 배수)을 쓰는 자리가 둘 더
+#   있었고, 하필 **가장 극단값**이었다. 저장소가 반복해 데인 «처방 범위 ≠ 결함 범위» 다 —
+#   PR #1019 가 **자기가 본 두 자리**만 들이고 형제를 스윕하지 않았다.
+#
+#   실측(@`c9427bf13` · 2026-09-15 · 마석우리 265-1 · 2,790㎡ · 공시 2,789,000원/㎡):
+#
+#       rough 폴백     ×1.10 →  85.6억   ← SSOT 밖이었다
+#       지역 지도 기본   ×1.20 →  93.4억
+#       국토부 공표      ×1.53 → 118.8억   (표준지 현실화율 65.5%의 역수)
+#       실제 감정평가    ×1.98 → 154.1억   (15,390,680,000원 / 844평)
+#       사업성 개략     ×2.50 → 194.5억   ← SSOT 밖이었다
+#
+#   ***같은 필지가 어느 화면을 여느냐에 따라 2.3배 갈렸다.***
+#
+# ★★**값은 바꾸지 않는다.** #1019 가 이미 판단했고 그 근거를 다시 읽고 채택했다:
+#   *"근거 없이 값을 바꾸는 것은 고치려는 그 죄의 반복"*. 바꿀 표본이 없다.
+#   이 변경이 하는 일은 **불일치를 한 곳에 모아 보이게** 하는 것뿐이다.
+#
+# ★그리고 `feasibility_service` 의 사유가 **역산**이었다:
+#       "공시지가는 통상 실거래의 약 40~60% 수준 → 2.5배 환산"
+#   그런데 `1/0.40 = 2.5` 다 — **밴드의 극단**을 골랐다(중앙 50%면 2.0). 출처 인용은 0건.
+#   ***#1019 가 고친 바로 그 형태(계수를 먼저 고르고 사유를 역산)가 형제에서 살아남았다.***
+#   ⇒ 아래 `provenance` 는 **있는 그대로** 적는다 — 「현실화율 40%」라고 부르지 않는다.
+
+
+class MultiplierSpec(NamedTuple):
+    """배수 하나와 **그 수가 어디서 왔는지**. ★출처 없는 배수를 못 만들게 하는 것이 요점이다.
+
+    `measured` 가 `False` 면 **사전 설정 휴리스틱**이다 — 산출물에 「현실화율 N%」로
+    번역하지 마라(그 순간 역산이 근거로 둔갑한다).
+    """
+
+    value: float
+    purpose: str          # 어디에 쓰이는가(경로가 다르면 배수도 다를 수 있다)
+    provenance: str       # 이 수가 **어디서 왔는지**. 빈 문자열이면 락이 빨강
+    measured: bool        # 실측인가(False = 사전 설정 휴리스틱)
+
+
+#: 사업성 **개략** 추정의 토지 매입비 배수(`market/feasibility_service.py`).
+#: ★소비자에게 닿는다: `market_report_service.py` → `apps/api/routers/market_report.py`
+#:   → 시장보고서·PDF·PPTX·DOCX.
+LAND_COST_ROUGH_MULTIPLIER = MultiplierSpec(
+    value=2.5,
+    purpose="사업성 개략 추정의 토지 매입비(참고용 — 정밀 수지는 FeasibilityServiceV2)",
+    provenance=(
+        "출처 미상의 사전 설정값. 종전 주석은 «공시지가는 통상 실거래의 약 40~60% 수준 → "
+        "2.5배» 라 적었으나 그것은 **역산**이다(1/0.40=2.5 · 밴드의 극단 · 출처 인용 0건). "
+        "국토부 공표 표준지 현실화율 65.5%(2020 수준 동결)의 역수는 1.53배다."
+    ),
+    measured=False,
+)
+
+#: 탁상감정을 **못 구했을 때** 토지비 폴백 배수(`feasibility/rough_feasibility_orchestrator.py`).
+DESK_APPRAISAL_FALLBACK_MULTIPLIER = MultiplierSpec(
+    value=1.1,
+    purpose="탁상감정 미확보 시 토지비 폴백(참고용 · 사용자에게 「폴백」이라 고지됨)",
+    provenance=(
+        "출처 미상의 사전 설정값(호출 인자에 리터럴로 박혀 있었다). "
+        "국토부 공표 표준지 현실화율 65.5%의 역수 1.53배보다 **낮다** — 즉 보수적이다."
+    ),
+    measured=False,
+)
+
+#: 국토부가 **공표한** 기준선. 우리 값이 아니라 **외부 앵커**다 — 비교용으로만 싣는다.
+#: 출처: 2025년 표준지 공시가격(안) — 시세반영률 65.5%(2020년 수준 동결, 4년 연속).
+OFFICIAL_REALIZATION_RATE_PCT = 65.5
+OFFICIAL_ANCHOR_MULTIPLIER = round(100.0 / OFFICIAL_REALIZATION_RATE_PCT, 2)   # 1.53
+
+#: ★이 저장소가 같은 실물량에 쓰는 배수 **전부**. 손 목록이 아니라 **여기가 모집단**이다 —
+#:   새 배수를 만들려면 여기에 등록해야 하고, 등록하면 출처를 적어야 한다(락이 강제).
+MULTIPLIER_REGISTRY: dict[str, MultiplierSpec] = {
+    "land_cost_rough": LAND_COST_ROUGH_MULTIPLIER,
+    "desk_appraisal_fallback": DESK_APPRAISAL_FALLBACK_MULTIPLIER,
+    "region_default": MultiplierSpec(
+        value=DEFAULT_MULTIPLIER,
+        purpose="지역 지도 미등록 주소의 시세보정 기본값(시세분석·탁상감정)",
+        provenance=(
+            "사전 설정 휴리스틱. 형제 세션 실측은 남양주 화도읍 일반상업지역 12개월 3,291건에서 "
+            "1.448배(n=3·1개 읍면)로 이 값과 어긋난다 — 전국 계수를 갱신할 표본이 없어 유지한다."
+        ),
+        measured=False,
+    ),
+}
+
+
+def registry_disagreement() -> dict[str, float]:
+    """★**불일치를 숨기지 않고 데이터로 낸다.**
+
+    같은 실물량에 서로 다른 수를 쓰고 있다는 사실 자체가 정보다. 숨기면 다음 사람이
+    «어느 게 맞나» 를 **물을 수조차 없다**(각 화면에서 하나씩만 보이므로).
+
+    ★`official_anchor` 는 **우리 값이 아니다** — 국토부 공표치다. 우리 범위가 그것을
+      가운데 두고 **양쪽으로** 벌어져 있다는 것이 이 함수의 요점이다.
+    """
+    vals = [s.value for s in MULTIPLIER_REGISTRY.values()]
+    lo, hi = min(vals), max(vals)
+    return {
+        "min": lo,
+        "max": hi,
+        "spread_ratio": round(hi / lo, 2),
+        "official_anchor": OFFICIAL_ANCHOR_MULTIPLIER,
+        "count": len(vals),
+    }
