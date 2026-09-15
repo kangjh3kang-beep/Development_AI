@@ -43,9 +43,24 @@ def test_multiplier_values_are_unchanged_by_the_move():
     assert mm.LAND_COST_ROUGH_MULTIPLIER.value == 2.5
     assert mm.DESK_APPRAISAL_FALLBACK_MULTIPLIER.value == 1.1, "탁상감정 폴백 배수가 바뀌었다"
     assert mm.DEFAULT_MULTIPLIER == 1.2, "지역 기본 배수가 바뀌었다"
-    # ★소비처가 **SSOT 를 실제로 읽는지** — 값만 같으면 사본이어도 통과하므로 동일성을 본다
-    assert LAND_COST_OFFICIAL_PRICE_MULTIPLIER is mm.LAND_COST_ROUGH_MULTIPLIER.value or \
-        mm.LAND_COST_ROUGH_MULTIPLIER.value == LAND_COST_OFFICIAL_PRICE_MULTIPLIER
+    assert mm.LAND_COST_ROUGH_MULTIPLIER.value == LAND_COST_OFFICIAL_PRICE_MULTIPLIER
+
+    # ★★**「값이 같다」는 「그곳에서 왔다」가 아니다.** 사본이면 SSOT 를 고쳐도 소비처가 안 따라온다
+    #   — 그런데 위 단언은 초록이다(변이 실측 2026-09-15: 소비처를 `= 2.5` 리터럴로 되돌리는
+    #   변이가 **SURVIVED**). 저장소 기록: ***상수를 자기 자신과 비교하는 락은 아무것도 안 잠근다.***
+    #   ⇒ **대입식의 출처**를 AST 로 본다 — 리터럴이면 빨강, SSOT 에서 오면 초록.
+    src = (_API_ROOT / "app/services/market/feasibility_service.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    assigns = [n for n in tree.body if isinstance(n, ast.Assign)
+               and any(isinstance(t, ast.Name) and t.id == "LAND_COST_OFFICIAL_PRICE_MULTIPLIER"
+                       for t in n.targets)]
+    assert assigns, "★조회기 사망 — 소비처 상수의 대입식을 못 찾았다"
+    for a in assigns:
+        seg = ast.get_source_segment(src, a.value) or ""
+        assert not isinstance(a.value, ast.Constant), (
+            f"소비처가 **리터럴을 다시 박았다** — SSOT 를 고쳐도 여기는 안 따라온다: {seg!r}")
+        assert "SPEC" in seg or "market_multiplier" in seg or "_LAND_COST" in seg, (
+            f"소비처 상수가 SSOT 에서 오지 않는다: {seg!r}")
 
 
 def _numeric_multipliers_of(path: pathlib.Path) -> list[tuple[int, str]]:
@@ -169,10 +184,12 @@ def test_every_official_price_multiplier_goes_through_the_ssot():
             continue
         for lineno, src in found:
             hits.append(f"{rel}:{lineno}  {src[:90]}  [리터럴]")
-        # ★축 ② — **모듈 상수로 이름을 준** 가정. 이름이 붙는 순간 축 ①이 못 본다
+        # ★★축 ② — **모듈 상수로 이름을 준** 가정. 이름이 붙는 순간 축 ①이 못 본다.
+        #   ★여기서 «SSOT 를 임포트하면 봐준다» 를 **쓰지 않는다**(변이 실측):
+        #     임포트 줄이 남아 있는 채로 대입만 리터럴로 되돌리면 면제가 걸려 **SURVIVED** 했다.
+        #   ***임포트는 「값이 그곳에서 흘러온다」의 증거가 아니다.***
         for w in _baked_in_multipliers(f):
-            if not _imports_ssot(f):
-                hits.append(f"{rel}:{w}  [SSOT 미경유]")
+            hits.append(f"{rel}:{w}  [SSOT 미경유 — 값이 리터럴에서 왔다]")
     assert not hits, (
         "★공시지가에 **수치 리터럴**을 곱하는 자리가 있다 — `market_multiplier` SSOT 를 경유하라.\n"
         "  (세율·면적 환산처럼 배수가 아니면 명명 상수로 빼고 이 락에 사유를 적어라)\n  "
