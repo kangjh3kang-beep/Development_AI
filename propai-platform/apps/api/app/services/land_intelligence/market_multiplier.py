@@ -250,6 +250,11 @@ class MultiplierSpec(NamedTuple):
     purpose: str          # 어디에 쓰이는가(경로가 다르면 배수도 다를 수 있다)
     provenance: str       # 이 수가 **어디서 왔는지**. 빈 문자열이면 락이 빨강
     measured: bool        # 실측인가(False = 사전 설정 휴리스틱)
+    #: ★`measured=True` 를 **산문으로 증명하게 하지 않는다.** 종전 락은 출처 문자열에
+    #:   "건"·"실측"·"표본" 이 있는지 봤는데, `land_cost_rough` 의 출처에 있는
+    #:   **"출처 인용 0건"**(=근거가 **없다**는 뜻)이 그 단언을 만족시켜 변이가 SURVIVED 했다.
+    #:   ***어휘 가드는 원리적으로 불완전하다 — 계약은 기계 필드에 둔다.***
+    sample_n: int | None = None   # 표본 수. `measured=True` 면 1 이상이어야 한다
 
 
 #: 사업성 **개략** 추정의 토지 매입비 배수(`market/feasibility_service.py`).

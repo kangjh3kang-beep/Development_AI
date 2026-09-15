@@ -210,10 +210,18 @@ def test_every_spec_declares_where_its_number_came_from():
         assert spec.purpose.strip(), f"{key}: **용도**가 비었다 — 어디에 쓰이는지 모르면 고칠 수 없다"
         assert len(spec.provenance.strip()) >= 20, (
             f"{key}: **출처**가 비었거나 너무 짧다 — 근거 없이 상수를 늘릴 수 없다: {spec.provenance!r}")
-        # ★`measured=True` 라 주장하려면 출처에 **무엇을 어떻게 쟀는지**가 있어야 한다
+        # ★★`measured=True` 는 **기계 필드**로 증명한다 — 산문 검색은 뚫린다.
+        #   변이 실측(2026-09-15): 종전 락은 출처에 "건"·"실측"·"표본" 이 있는지 봤는데
+        #   `land_cost_rough` 출처의 **"출처 인용 0건"**(근거가 **없다**는 뜻)이 그것을
+        #   만족시켜 `measured=False → True` 변이가 **SURVIVED** 했다.
+        #   ***단언이 「다른 이유로」 만족되면 그건 잠금이 아니다.***
         if spec.measured:
-            assert any(t in spec.provenance for t in ("건", "n=", "실측", "표본")), (
-                f"{key}: measured=True 인데 출처에 측정 내용이 없다: {spec.provenance!r}")
+            assert isinstance(spec.sample_n, int) and spec.sample_n >= 1, (
+                f"{key}: measured=True 인데 표본 수(sample_n)가 없다 — "
+                f"«쟀다» 고 말하려면 **몇 건을 쟀는지**가 있어야 한다: sample_n={spec.sample_n!r}")
+        else:
+            assert spec.sample_n is None, (
+                f"{key}: measured=False 인데 표본 수가 있다 — 둘 중 하나가 거짓이다")
 
 
 def test_no_module_prints_an_inverted_realization_rate():
