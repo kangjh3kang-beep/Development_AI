@@ -136,3 +136,7 @@ xmltodict==0.14.2
 
 # LiveKit 화상회의 (Phase 3)
 livekit-api==1.1.0
+# 추첨 공약의 **온체인 앵커링**(sales/draw/anchor.py). ★`web3` 대신 이것을 쓴다 —
+#   이 컨트랙트는 인자가 전부 bytes32 라 ABI 인코더가 필요 없고, web3 는 aiohttp 계열
+#   10개를 더 끌어온다(실측: web3 28개 ↔ eth-account 18개). JSON-RPC 는 기존 httpx 로.
+eth-account==0.13.7
