@@ -214,10 +214,31 @@ async def my_customers(request: Request, scope: str = "site",
                        q: str | None = None,
                        db: AsyncSession = Depends(get_db),
                        user=Depends(get_current_user)) -> dict:
-    """scope=site: 단일현장(역할범위). scope=all: 내 멤버십 전현장 union(현장칩 포함, 요약필드만).
+    """내가 멤버인 현장의 고객 목록. `scope=site` 는 한 현장, `scope=all` 은 전 현장 union.
 
-    통합(all)은 개인범위 요약(이름·현장·단계·온도)만 노출하고 민감상세(연락처)는 마스킹한다.
-    민감상세는 현장별(site) 진입 후 2차인증(X-Site-Token) 컨텍스트에서 조회한다.
+    ★★**2026-09-08 — 종전 독스트링 3문장이 코드와 어긋나 있었다. 사실대로 고친다.**
+
+    종전 문장과 실제:
+
+    | 선언했던 것 | 실제 코드 |
+    |---|---|
+    | *"역할범위"* | 쿼리에 **role 조건 0개** |
+    | *"개인범위 요약"* | 쿼리에 **user/assigned_node_id 조건 0개** — `site_id IN (...)` 뿐 |
+    | *"민감상세는 2차인증(X-Site-Token) 컨텍스트에서"* | 이 라우트는 `get_current_user` 만 받고 **토큰을 검사하지 않는다**(`sales_ctx` 아님) |
+
+    ⇒ **지금 이 엔드포인트가 실제로 하는 일**: 「내가 멤버인 **모든 현장의 모든 고객**」을 낸다.
+       `masked=False` 면 `phone_e164` **평문**을 낸다(마스킹 여부는 `scope` 가 정한다).
+       즉 같은 현장 동료의 고객 명부와 연락처가 보인다.
+
+    ★**거짓 주석을 지우는 것이 먼저인 이유**: 다음 사람이 이 문장을 **근거로 판단한다.**
+      「2차인증 뒤에 있다」고 읽으면 이 경로를 안전하다고 여기고 그 위에 기능을 얹는다.
+
+    ## 남은 일 (사용자 결정 D-1 = (b) 조직 서브트리 격리, 2026-09-08)
+
+    `SalesCustomer.assigned_node_id` 컬럼이 **이미 있는데 쿼리가 안 쓴다.**
+    소유 = 담당 노드 · 열람 = 소유 + **상위 서브트리**(`path <@ app.org_path`)로 좁혀야 한다.
+    ★그 형태는 `sales_org_nodes` 의 `p_org` RLS 정책이 **이미 쓰고 있다** — 새로 만들 필요가 없다.
+    이 변경은 응답 축이 바뀌므로 **별도 PR**로 간다(이 커밋은 거짓 문장 제거까지).
     """
     await _ensure(db)
     roles = await _my_site_roles(db, user)

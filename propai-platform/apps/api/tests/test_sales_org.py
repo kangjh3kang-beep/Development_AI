@@ -332,7 +332,11 @@ class _MoveNode:
         self.site_id = site_id
         self.path = path
         self.parent_id = None
-        # 직속 파이프라인(2026-07-23) 위계 가드가 노드 직급을 읽는다(기존 테스트는 기본값 무해).
+        # 직속 파이프라인(2026-07-23) 위계 가드가 노드 직급을 읽는다.
+        # ★★기본값 `MEMBER` 는 **무해하지 않다**(2026-09-08 정정). MEMBER 는 서열 **최하위**라
+        #   자식을 가질 수 없다 — 이 기본값으로 부모를 만들면 **원래 불법인 조합**이 된다.
+        #   `create_node` 가 위계를 안 보던 동안만 통과했고, 위계를 생성 함수로 내리자 CI 가 잡았다.
+        #   ⇒ **부모로 쓸 노드에는 직급을 명시하라**(기본값에 기대지 마라).
         self.node_type = node_type
 
 
@@ -887,9 +891,18 @@ async def test_create_node_rejects_missing_parent():
 
 @pytest.mark.asyncio
 async def test_create_node_same_site_parent_inherits_path():
-    """같은 현장 부모는 정상: 자식 path = 부모.path + 라벨(현장격리 통과 경로)."""
+    """같은 현장 부모는 정상: 자식 path = 부모.path + 라벨(현장격리 통과 경로).
+
+    ★2026-09-08 — 부모 직급을 **명시**한다. 종전엔 `_MoveNode` 의 기본값(`MEMBER`)을 그대로 써서
+      `MEMBER → MEMBER` 를 만들고 있었다. 그 조합은 **라우터에서는 원래부터 400** 이었고
+      (`_ORG_RANK` 는 MEMBER 가 최하위 · `add_node` 가 `p_rank >= n_rank` 로 거부),
+      `create_node` 가 위계를 안 봐서 **여기서만 통과**하던 것이다.
+      위계를 생성 함수로 내리자(적대 리뷰 M1) 이 픽스처가 빨개졌다 — **가드가 옳고 픽스처가 틀렸다.**
+      이 테스트의 주제는 «부모 path 상속» 이지 «MEMBER 아래에 MEMBER» 가 아니므로,
+      정당한 상위(`TEAM_LEADER`)로 바꾼다. 단언은 그대로다.
+    """
     site_a = uuid.uuid4()
-    parent = _MoveNode(uuid.uuid4(), site_a, "x.y")
+    parent = _MoveNode(uuid.uuid4(), site_a, "x.y", node_type="TEAM_LEADER")
     db = _CreateNodeFakeDB([parent])
     node = await org_service.create_node(db, site_a, "MEMBER", parent_id=parent.id)
     assert node.path.startswith("x.y.")   # 부모 경로 상속.

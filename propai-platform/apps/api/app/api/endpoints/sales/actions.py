@@ -18,11 +18,16 @@ from app.services.sales.contract.service import (
 )
 from app.services.sales.org.overview import TeamOverviewResponse, team_overview
 from app.services.sales.org.service import (
+    _ORG_RANK,
+    OrgChainNotCommissionableError,
     OrgCrossSiteError,
     OrgCycleError,
+    OrgMemberNodeFormatError,
     OrgNodeNotFoundError,
+    assert_hierarchy,
     create_node,
     move_subtree,
+    resolve_member_node,
     seed_default_org,
 )
 from app.services.sales.pricing.engine import (
@@ -55,10 +60,10 @@ _REGISTER_MATRIX = {
     "MEMBER": {"TEAM_LEADER"},
 }
 
-# 조직 위계 서열(작을수록 상위) — add_node 부모-자식 위계 검증·프론트 addable 판정 공용.
-_ORG_RANK = {
-    "AGENCY": 0, "SUBAGENCY": 1, "GM_DIRECTOR": 2, "DIRECTOR": 3, "TEAM_LEADER": 4, "MEMBER": 5,
-}
+# ★조직 위계 서열은 **서비스 층이 SSOT** 다(2026-09-08 · `org/service.py`).
+#   여기서 이름만 다시 내보낸다 — 라우터를 안 거치는 생산자(`create_node`)도 같은 표를 봐야 하는데,
+#   종전엔 이 파일에만 있어서 위계 판정이 **라우터 두 벌**로만 존재했다.
+#   (`sales_actions._ORG_RANK` 를 보는 기존 테스트는 이 재수출로 그대로 산다.)
 
 # 자주 쓰는 역할 집합(시그니처 길이·중복 축소). require_role(*상수) 로 전개.
 # ★SUPERADMIN 포함(2026-07-23): 매트릭스는 총괄관리자(SUPERADMIN)의 대행사 지정을 허용하는데
@@ -120,11 +125,12 @@ async def add_node(body: dict, db: AsyncSession = Depends(get_db),
             SalesOrgNode.deleted_at.is_(None)))).scalar_one_or_none()
         if parent is None:
             raise HTTPException(404, "상위(부모) 노드를 찾을 수 없습니다")
-        p_rank = _ORG_RANK.get(parent.node_type)
-        n_rank = _ORG_RANK.get(ntype)
-        if p_rank is None or n_rank is None or p_rank >= n_rank:
-            raise HTTPException(
-                400, f"{parent.node_type} 아래에 {ntype}을(를) 둘 수 없습니다(직속 위계 위반).")
+        # ★판정은 서비스 층 한 곳에서 한다(`create_node` 도 같은 것을 부른다).
+        #   여기서 먼저 부르는 이유는 **응답 코드**다 — 서비스는 ValueError 를, API 는 400 을 낸다.
+        try:
+            assert_hierarchy(parent.node_type, ntype)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
         my_path = getattr(ctx, "org_path", None) or ""
         parent_path = str(parent.path)
         if my_path and not (parent_path == my_path or parent_path.startswith(my_path + ".")):
@@ -373,11 +379,14 @@ async def move_node(node_id: uuid.UUID, body: dict, db: AsyncSession = Depends(g
     node_path, parent_path = str(node.path), str(new_parent.path)
     if parent_path == node_path or parent_path.startswith(node_path + "."):
         raise HTTPException(422, "자기 자신 또는 하위 노드 아래로는 이동할 수 없습니다(순환)")
-    p_rank = _ORG_RANK.get(new_parent.node_type)
-    n_rank = _ORG_RANK.get(node.node_type)
-    if p_rank is None or n_rank is None or p_rank >= n_rank:
+    # ★판정은 같은 함수, 문구만 이동 맥락으로 바꾼다(사용자는 «둘 수 없다» 가 아니라 «옮길 수 없다» 를 본다).
+    try:
+        assert_hierarchy(new_parent.node_type, node.node_type)
+    except ValueError as e:
         raise HTTPException(
-            400, f"{new_parent.node_type} 아래로 {node.node_type}을(를) 이동할 수 없습니다(직속 위계 위반).")
+            400,
+            f"{new_parent.node_type} 아래로 {node.node_type}을(를) 이동할 수 없습니다(직속 위계 위반).",
+        ) from e
     my_path = getattr(ctx, "org_path", None) or ""
     if my_path:
         for p in (node_path, parent_path):
@@ -598,12 +607,34 @@ async def contract_create(body: dict, db: AsyncSession = Depends(get_db),
     rnd = body.get("round_id")
     mnode = body.get("member_node_id")  # 담당 영업사원 노드(있으면 계약 체결 시 수수료가 배분됨)
     htok = body.get("hold_token")       # FCFS 임시선점 토큰(있으면 선점 소유권 증명에 사용)
+
+    # ★★`member_node_id` 를 **검증한다**(2026-09-08). 종전엔 body 값을 그대로 UUID 로 캐스트해
+    #   넘겼고, 그 노드가 이 현장 것인지·살아 있는지·수수료 체인이 성립하는지 **아무도 안 봤다.**
+    #   그래서 부모 없는 노드가 넘어오면 정산이 `chain=[자기자신]` 이 되어
+    #   **RESIDUAL 전액이 그 노드에 귀속**됐다(`commission/engine.py`).
+    #   ★세 조건을 **한 번에** 본다 — 하나라도 빠지면 그 축이 무잠금이 된다:
+    #     ①이 현장 소속 ②삭제 안 됨 ③**조상 체인의 최상위가 AGENCY**(=배분이 성립한다)
+    #   ★해석·검증·정규화가 **한 값 흐름**이다(`resolve_member_node`). 종전엔 라우터에 세 조각
+    #     (빈 값 분기 · UUID 파싱 · 검증 호출)으로 흩어져 있어, 기계 변이가 **어느 하나를 꺼도**
+    #     나머지가 그대로 돌았다(`if mnode:`→`if False:` · 정규화 대입 삭제 → 둘 다 SURVIVED).
+    #     ★특히 두 번째가 나쁘다 — 검증은 **돌지만** 그 결과가 버려지고 원문 문자열이 계약으로 간다.
+    #     한 줄로 묶으면 끄는 순간 담당자가 사라져 **호출부에서 즉시 드러난다.**
+    #     여기 남는 것은 **HTTP 매핑**뿐이다(400 형식 / 404 못 찾음 / 409 상태 충돌).
+    try:
+        mnode = await resolve_member_node(db, ctx.site_id, mnode)
+    except OrgMemberNodeFormatError as e:
+        raise HTTPException(400, str(e)) from e
+    except OrgNodeNotFoundError as e:
+        raise HTTPException(404, str(e)) from e
+    except OrgChainNotCommissionableError as e:
+        raise HTTPException(409, str(e)) from e
+
     try:
         c = await create_contract(
             db, ctx.site_id, unit_id,
             customer_id=uuid.UUID(str(cust)) if cust else None,
             round_id=uuid.UUID(str(rnd)) if rnd else None,
-            member_node_id=uuid.UUID(str(mnode)) if mnode else None,
+            member_node_id=mnode,  # ★위에서 검증·정규화됐다(UUID or None)
             total_price=body.get("total_price"), by=ctx.user.id,
             hold_token=str(htok) if htok else None)
     except NotFoundError as e:
