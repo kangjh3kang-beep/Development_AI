@@ -16,6 +16,7 @@ from app.api.endpoints.sales.lifecycle_p6 import r6
 from app.api.endpoints.sales.mh import mh_router
 from app.api.endpoints.sales.referral import referral_router
 from app.api.endpoints.sales.site_auth import site_auth_router
+from app.api.endpoints.sales.site_join import site_join_router
 from app.api.endpoints.sales.termination_cert import termination_cert_router
 from app.api.endpoints.sales.units_live import units_live_router
 from app.api.endpoints.sales.views import views_router
@@ -114,6 +115,8 @@ sales_router.include_router(crm_enhance_router)
 sales_router.include_router(referral_router)
 sales_router.include_router(termination_cert_router)
 sales_router.include_router(site_auth_router)
+# Stage 2 — 현장 발견·등록신청·승인(2026-09-09). 신규 라우트만 더한다(기존 계약 불변).
+sales_router.include_router(site_join_router)
 sales_router.include_router(mh_router)
 sales_router.include_router(views_router)
 sales_router.include_router(units_live_router)

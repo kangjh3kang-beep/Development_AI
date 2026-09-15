@@ -35,6 +35,8 @@ import LoanPanel from "@/components/sales/LoanPanel";
 import ResalePanel from "@/components/sales/ResalePanel";
 import TaxPanel from "@/components/sales/TaxPanel";
 import OrgTree from "@/components/sales/OrgTree";
+// Stage 2 — 등록신청 승인 대기열. 조직도 옆이 그 자리다(수락하면 이 트리에 배치된다).
+import JoinRequestsPanel from "@/components/sales-app/JoinRequestsPanel";
 import CommissionBoard from "@/components/sales/CommissionBoard";
 import CrmPanel from "@/components/sales/CrmPanel";
 import WorkLogPanel from "@/components/sales/WorkLogPanel";
@@ -404,7 +406,13 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
           {tab === "loan" && <LoanPanel siteCode={siteId} />}
           {tab === "resale" && <ResalePanel siteCode={siteId} />}
           {tab === "tax" && <TaxPanel siteCode={siteId} />}
-          {tab === "org" && <OrgTree siteCode={siteId} />}
+          {tab === "org" && (
+            <div className="space-y-6">
+              {/* ★승인 화면이 없으면 파이프라인이 완결되지 않는다 — 신청은 되는데 아무도 결정할 수 없다. */}
+              <JoinRequestsPanel siteId={siteId} />
+              <OrgTree siteCode={siteId} />
+            </div>
+          )}
           {tab === "commission" && (
             <div className="space-y-6">
               <CommissionBoard siteCode={siteId} />

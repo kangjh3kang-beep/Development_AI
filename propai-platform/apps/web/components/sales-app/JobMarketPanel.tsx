@@ -13,6 +13,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
+import { membershipNote } from "@/lib/sales-app/membership-reason";
 
 type Kind = "hire" | "seek" | "promote_site" | "recruit_agency";
 
@@ -351,6 +352,9 @@ function PostDetail({ post, me, onBack }: { post: Post; me: CurrentUser | null; 
   const [appsLoading, setAppsLoading] = useState(isAuthor);
   const [appsErr, setAppsErr] = useState("");
   const [decidingId, setDecidingId] = useState("");
+  // ★승인했는데 조직도 멤버십이 안 붙은 이유 — 종전엔 서버가 bool 만 주고 화면은 그것마저 버렸다.
+  //   라이브 대부분의 현장이 조직도 미시드라 «승인은 됐는데 아무 일도 안 일어난» 것처럼 보였다.
+  const [decideNote, setDecideNote] = useState("");
 
   const loadApps = useCallback(() => {
     if (!isAuthor) return;
@@ -402,11 +406,16 @@ function PostDetail({ post, me, onBack }: { post: Post; me: CurrentUser | null; 
 
   const decide = (appId: string, accept: boolean) => {
     setDecidingId(appId);
+    setDecideNote("");
     apiClient
-      .post<{ id: string; status: string; membership_linked?: boolean }>(`/market/applications/${appId}/decide`, {
-        body: { accept },
+      .post<{ id: string; status: string; membership_linked?: boolean; membership_reason?: string }>(
+        `/market/applications/${appId}/decide`,
+        { body: { accept } },
+      )
+      .then((r) => {
+        if (accept && r.membership_linked === false) setDecideNote(membershipNote(r.membership_reason));
+        return loadApps();
       })
-      .then(() => loadApps())
       .catch(() => setAppsErr("처리에 실패했습니다."))
       .finally(() => setDecidingId(""));
   };
@@ -479,6 +488,7 @@ function PostDetail({ post, me, onBack }: { post: Post; me: CurrentUser | null; 
         <div className="space-y-3">
           <p className="text-sm font-bold text-[var(--text-primary)]">신청자 ({apps.length})</p>
           {appsErr && <p className="text-sm font-semibold text-rose-300">{appsErr}</p>}
+          {decideNote && <p className="text-sm font-semibold text-amber-300">{decideNote}</p>}
           {appsLoading ? (
             <div className="h-20 animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]" />
           ) : apps.length === 0 ? (
