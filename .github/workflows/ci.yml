@@ -13,6 +13,29 @@ on:
   pull_request:
   workflow_dispatch:
 
+# ★같은 PR 의 낡은 실행을 취소한다 — 완주시켜도 그 결과는 쓰이지 않는다.
+#   실측(2026-09-15 · 실행 600건 페이징 · CI(pull_request) 236건 / 8일 창):
+#     · CI 시간 3,595분 중 **980분(27.3%)** 이 「head 가 이미 옮겨간 뒤에도 끝까지 돈」 실행.
+#     · 그런데 `conclusion=cancelled` 는 **0건** — 이 워크플로에 concurrency 선언이 없어서
+#       덮여도 취소되지 않고 전부 완주했다(대조군: deploy-cloudflare.yml 은 선언 1 ⇒ 조회기 생존).
+#     · 분해: 저자푸시 54회 819분 · update-branch 10회 160분. ***주축은 update-branch 가 아니다.***
+#
+# ★`cancel-in-progress` 를 **pull_request 에만** 건다 — 무조건 true 로 걸면 main 푸시 실행끼리
+#   취소돼 **래칫 기준선(그 커밋의 초록 기록)이 사라진다**. 실측: main 푸시 47건 중 다음 머지와
+#   겹친 것 **1건(2.2%)** — 드물지만 잃는 것이 회복 불가라 가드를 건다.
+#
+# ★그룹 키에 PR 번호를 넣는다. `github.workflow` 만 쓰면 **모든 PR 이 한 그룹**이 되어
+#   새 PR 이 남의 실행을 취소한다(이 저장소는 멀티세션이라 즉시 사고가 난다).
+#   push/dispatch 에는 pull_request 가 없으므로 `github.ref` 로 떨어진다.
+#
+# ★이 처방은 `deploy-cloudflare.yml` 에서 **의도적으로 기각된 적이 있다**(#1029 · sid=dcb7a4f2):
+#   사유는 «cancel-in-progress 가 `waiting`(승인대기)을 취소하는지 미검증». 그 축은 여기서
+#   **발생하지 않는다** — 이 워크플로에는 `environment:` 선언이 **0건**이라 승인 게이트가 없고,
+#   실행이 `waiting` 을 거치지 않는다(구조 판별 · 상태 계수가 아니라 정의로 갈랐다).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   changes:
     name: Detect changes
