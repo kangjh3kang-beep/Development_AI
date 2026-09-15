@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { fetchAuthMeRole, fetchIsAdmin } from "@/lib/use-is-admin";
 import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
+import { launchFieldApp, shouldInterceptFieldAppClick } from "@/lib/field-app-launch";
 import {
   type NavNode,
   type NavSection,
@@ -161,6 +162,12 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
                 <Link
                   href={singleLeaf.href}
                   prefetch={singleLeaf.prefetch}
+                  // ★섹션에 리프가 하나뿐이면 여기로 그려진다 — 같은 NavNode 라 정책도 같다.
+                  onClick={(e) => {
+                    if (singleLeaf.launch === "app-window" && shouldInterceptFieldAppClick(e)) {
+                      if (launchFieldApp(singleLeaf.href!) !== "same") e.preventDefault();
+                    }
+                  }}
                   className={`flex h-10 items-center gap-2 rounded-[var(--r-pill)] px-3 text-sm font-bold transition ${
                     active
                       ? "bg-[var(--accent-strong)] text-[var(--on-primary)]"
@@ -236,9 +243,15 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
                           key={link.id}
                           href={link.href!}
                           prefetch={link.prefetch}
-                          onClick={() => {
+                          onClick={(e) => {
                             clearCloseTimer();
                             setOpenSectionId(null);
+                            // ★앱형 라우트(현장앱)는 지금 창을 빼앗지 않는다.
+                            //   ★★이 데스크톱 내비가 **신고자 모집단**이다 — 사이드바는 lg:hidden 이라
+                            //     모바일 전용이고, ≥1024px 사용자는 전부 여기를 지난다(적대 리뷰 B-1).
+                            if (link.launch === "app-window" && shouldInterceptFieldAppClick(e)) {
+                              if (launchFieldApp(link.href!) !== "same") e.preventDefault();
+                            }
                           }}
                           className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-bold transition ${
                             linkActive

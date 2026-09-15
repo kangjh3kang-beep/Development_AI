@@ -23,7 +23,8 @@
 
 import { AppWindow } from "lucide-react";
 import { usePwaRuntime } from "@/components/pwa/PwaRuntimeProvider";
-import { FIELD_APP_WINDOW_NAME, useFieldAppShell } from "@/lib/field-app-shell";
+import { useFieldAppShell } from "@/lib/field-app-shell";
+import { launchFieldApp } from "@/lib/field-app-launch";
 
 /*
  * ★변이 생존 설명(scripts/mutate_changed.py) — 구멍이 아닌 이유.
@@ -71,19 +72,11 @@ export default function FieldAppAffordance() {
 
   return (
     <button
-      onClick={() => {
-        if (typeof window === "undefined") return;
-        const w = Math.min(1440, window.screen.availWidth - 40);
-        const h = Math.min(960, window.screen.availHeight - 40);
-        const left = Math.max(0, Math.round((window.screen.availWidth - w) / 2));
-        const top = Math.max(0, Math.round((window.screen.availHeight - h) / 2));
-        // ★`location=no` 를 넣지 않는다 — 현대 브라우저가 무시하므로 **지키지 못할 약속**이다.
-        const feat = `popup=yes,width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,status=no,resizable=yes,scrollbars=yes`;
-        const win = window.open(window.location.href, FIELD_APP_WINDOW_NAME, feat);
-        // 팝업 차단되면 새 탭 폴백(기능 보존).
-        if (!win) window.open(window.location.href, "_blank", "noopener,noreferrer");
-        else win.focus();
-      }}
+      // ★창 열기 판정은 **공용 함수 하나**를 거친다(2026-09-08). 종전엔 여기 인라인이었는데
+      //   플랫폼→현장앱 진입이라는 **두 번째 소비처**가 생겼다. 각자 구현하면 폴백을 한쪽만
+      //   고치는 순간 형제가 갈린다 — 이 저장소가 반복해 데인 형태다.
+      //   `field-app-launch.wiring.test.ts` 가 「window.open 을 담은 파일」을 파생형으로 잠근다.
+      onClick={() => void launchFieldApp()}
       className="inline-flex min-h-[40px] items-center gap-1 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3.5 text-xs font-black text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)] active:scale-95"
     >
       <AppWindow className="size-4" aria-hidden /> 별도 창으로 열기
