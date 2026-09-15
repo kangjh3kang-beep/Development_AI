@@ -384,3 +384,26 @@ def test_fallback_path_actually_uses_the_ssot_value(monkeypatch):
     assert abs(total_b / total_a - 1.7 / fb) < 0.05, (
         f"총액 증가율이 배수비와 어긋난다 — 다른 경로가 섞였다: "
         f"{total_b / total_a:.3f} vs {1.7 / fb:.3f}")
+
+
+def test_registry_keys_are_addresses_not_prose():
+    """★**레지스트리 키는 산문이 아니라 주소다** — 기계 변이가 셋을 짚었다(2026-09-15).
+
+    `purpose`·`provenance` 는 산문이라 **의도적으로 잠그지 않는다**(저장소 규율:
+    *"산문까지 단언하면 계약이 아니라 표현을 잠가 다듬을 때마다 깨진다"*).
+    그러나 **키**는 다르다 — 소비처가 그 이름으로 찾는다. 바뀌면 `KeyError` 이거나,
+    더 나쁘게는 **조용히 `None`** 이다(이 저장소가 반복해 데인 «출력 키 이름은 계약이다»).
+
+    ★현재 키로 조회하는 소비처는 **0건**이다(전부 `.items()` 순회). 그래도 잠근다:
+      ***지금 장식인 예외가 나중의 서식지가 된다*** — 첫 소비처가 생기는 순간
+      이름은 이미 계약이고, 그때는 바꾼 사람이 깨진 줄 모른다.
+    """
+    from app.services.land_intelligence import market_multiplier as mm
+
+    keys = set(mm.MULTIPLIER_REGISTRY)
+    assert "zzz_nope_sentinel" not in keys                     # 역대조군
+    assert keys == {"land_cost_rough", "desk_appraisal_fallback", "region_default"}, (
+        f"★레지스트리 키가 바뀌었다 — 이름으로 찾는 소비처가 조용히 못 찾는다: {sorted(keys)}")
+    # ★키와 값이 **짝이 맞는지**까지 — 이름만 맞고 다른 스펙을 가리키면 더 나쁘다
+    assert mm.MULTIPLIER_REGISTRY["land_cost_rough"] is mm.LAND_COST_ROUGH_MULTIPLIER
+    assert mm.MULTIPLIER_REGISTRY["desk_appraisal_fallback"] is mm.DESK_APPRAISAL_FALLBACK_MULTIPLIER
