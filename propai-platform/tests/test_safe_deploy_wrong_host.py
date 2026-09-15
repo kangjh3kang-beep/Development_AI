@@ -844,6 +844,17 @@ def test_the_sandbox_refuses_when_substitution_misses(tmp_path: Path) -> None:
 _GUARDED_CONSTANTS = ("REPO", "LOCKDIR", "STATUS", "LOG")
 
 
+#: 직전 `_canonical_script_runs` 실행에서 **argv 를 정적으로 읽지 못한** 호출의 줄번호.
+#: ★「없음」과 「못 읽음」을 가르기 위한 별도 채널이다 — 같은 반환값에 섞으면 신호가 뭉친다.
+_LAST_UNRESOLVED: list[int] = []
+
+
+def _unresolved_subprocess_calls(src: str | None = None) -> list[int]:
+    """argv 를 정적으로 못 읽은 `subprocess.run` 호출의 줄번호."""
+    _canonical_script_runs(src)
+    return list(_LAST_UNRESOLVED)
+
+
 def _canonical_script_runs(src: str | None = None) -> list[int]:
     """`src` 에서 **정본 `SCRIPT` 를 실행**하는 `subprocess.run` 의 줄번호(기본: 이 파일).
 
@@ -857,6 +868,7 @@ def _canonical_script_runs(src: str | None = None) -> list[int]:
     """
     text = Path(__file__).read_text(encoding="utf-8") if src is None else src
     hits: list[int] = []
+    unresolved: list[int] = []
     for node in ast.walk(ast.parse(text)):
         if not isinstance(node, ast.Call):
             continue
@@ -866,6 +878,12 @@ def _canonical_script_runs(src: str | None = None) -> list[int]:
             continue
         argv = node.args[0] if node.args else None
         if not isinstance(argv, ast.List):
+            # ★★P2-② (#1051 리뷰 지적 · 실측 재현): 종전엔 여기서 **조용히 넘어갔다**.
+            #   `cmd = ["bash", str(SCRIPT), "web"]; subprocess.run(cmd)` 는
+            #   `args[0]` 이 `ast.Name` 이라 탐지기가 **[] 를 반환** — 즉 「정본 실행 없음」과
+            #   **「읽을 수 없음」이 같은 신호**였다(한 신호가 두 사건을 덮는다).
+            #   ⇒ 이제 **판정 불가**로 따로 모은다. 호출부가 그것을 **따로 단언**한다.
+            unresolved.append(node.lineno)
             continue
         argv_src = ast.unparse(argv)
         if "SCRIPT" not in argv_src:
@@ -873,6 +891,8 @@ def _canonical_script_runs(src: str | None = None) -> list[int]:
         if "'-n'" in argv_src or '"-n"' in argv_src:
             continue          # 문법 검사 — 부작용 없음
         hits.append(node.lineno)
+    _LAST_UNRESOLVED.clear()
+    _LAST_UNRESOLVED.extend(unresolved)
     return hits
 
 
@@ -951,9 +971,35 @@ def _declaration_rhs_all(src: str, var: str) -> list[str]:
     return re.findall(rf'^{var}=(.*)$', src, re.MULTILINE)
 
 
+#: 선언 우변에서 **허용되는 셸 확장**. ★`$HOME` 은 정당하다 — A1 경로가 그 위에 뿌리내린다.
+#: 그 밖의 어떤 이름도 **값을 env 로 좌우**할 수 있으므로 거부한다.
+_ALLOWED_EXPANSIONS = frozenset({"HOME"})
+
+#: 우변에 나타나는 모든 셸 확장 이름(`$NAME` · `${NAME…}` 둘 다).
+_EXPANSION_NAMES = re.compile(r'\$\{?([A-Za-z_][A-Za-z0-9_]*)')
+
+
+def _expansion_names(rhs: str) -> set[str]:
+    """우변이 참조하는 셸 변수 이름들."""
+    return set(_EXPANSION_NAMES.findall(rhs))
+
+
 def _declares_closed_literal(rhs: str) -> bool:
-    """우변이 env 확장 없는 닫힌 리터럴인가(허용 모양 화이트리스트)."""
-    return bool(_CLOSED_LITERAL.match(rhs)) and "${" not in rhs
+    """우변이 **env 로 좌우될 수 없는** 닫힌 리터럴인가(허용 모양 화이트리스트).
+
+    ★★P2-① (#1051 리뷰 지적 · 실측 재현): 종전 판은 `${` 만 거부해서
+      **중괄호 없는 확장**이 통과했다 —
+        `"$HOME/Development_AI/$REPO_OVERRIDE"` → 종전 `closed=True`
+        `"$REPO_OVERRIDE"`                      → 종전 `closed=True`
+      둘 다 **env 로 덮인다.** ***금지 목록은 한 글자 차이로 샌다 — 허용된 모양을 요구하라***
+      를 적어 놓고 **모양만 화이트리스트로 하고 이름은 블랙리스트로** 두었던 것이다.
+    ⇒ 이제 **확장 이름의 집합**을 보고 `_ALLOWED_EXPANSIONS` 에 없으면 거부한다.
+      (형제 락 `test_repo_constant_is_the_a1_path` 는 **값이 A1 에 뿌리내리는지**를 보므로
+       축이 다르다 — 그쪽은 `$HOME/Development_AI/$X` 를 「뿌리내림」으로 통과시킨다.)
+    """
+    if not _CLOSED_LITERAL.match(rhs):
+        return False
+    return _expansion_names(rhs) <= _ALLOWED_EXPANSIONS
 
 
 def test_safe_deploy_path_constants_are_not_env_overridable() -> None:
@@ -1019,9 +1065,62 @@ def test_closed_literal_detector_discriminates() -> None:
         '"${REPO:=$HOME/Development_AI}"',     # ★종전 SURVIVED
         '"${REPO-$HOME/Development_AI}"',      # ★종전 SURVIVED
         '"${REPO_OVERRIDE:-$HOME/Development_AI}"',
+        # ★★P2-① — **중괄호 없는 확장**. 종전 판은 `${` 만 봐서 **전부 통과**시켰다.
+        '"$HOME/Development_AI/$REPO_OVERRIDE"',
+        '"$REPO_OVERRIDE"',
+        '"$HOME/$SOMETHING/Development_AI"',
     ):
         assert not _declares_closed_literal(spelling), f"열린 모양이 통과한다: {spelling}"
     # 첨가 축 — 둘째 선언을 실제로 센다.
     two = 'REPO="$HOME/Development_AI"\nREPO="${REPO_OVERRIDE:-$REPO}"\n'
     assert len(_declaration_rhs_all(two, "REPO")) == 2, "둘째 선언을 못 센다"
     assert _declaration_rhs_all('OTHER="x"', "REPO") == [], "없는 선언에 값을 지어낸다"
+
+
+def test_expansion_whitelist_admits_home_and_nothing_else() -> None:
+    """[판별력] 허용 확장 집합이 **정확히 `$HOME` 하나**다 — 넓히면 값이 env 로 샌다.
+
+    ★두 모집단을 같은 실행에서 본다: `$HOME` 은 **통과해야** 하고(위양성 방지),
+      다른 이름은 **전부 거부**돼야 한다.
+    """
+    assert _ALLOWED_EXPANSIONS == frozenset({"HOME"}), (
+        f"허용 확장이 바뀌었다: {sorted(_ALLOWED_EXPANSIONS)} — 넓히려면 그 이름이 "
+        "**env 로 좌우될 수 없는 이유**를 먼저 대라"
+    )
+    assert _expansion_names('"$HOME/Development_AI"') == {"HOME"}
+    assert _expansion_names('"$HOME/x/$REPO_OVERRIDE"') == {"HOME", "REPO_OVERRIDE"}
+    assert _expansion_names('"${REPO:-$HOME/x}"') == {"REPO", "HOME"}
+    assert _expansion_names('"/tmp/deploy.log"') == set(), "확장이 없는데 있다고 읽는다"
+
+
+def test_unreadable_argv_is_reported_not_silently_passed() -> None:
+    """★**「정본 실행 없음」과 「argv 를 못 읽음」을 가른다** — 같은 신호면 우회가 무해로 읽힌다.
+
+    ★★P2-② (#1051 리뷰 지적). 종전 탐지기는 argv 가 `ast.List` 가 아니면 **조용히 넘어가**
+      `cmd = [...]; subprocess.run(cmd)` 형태가 **`[]`(=깨끗함)** 로 보고됐다.
+      ***한 신호가 두 사건을 덮으면, 우회한 쪽이 「문제 없음」으로 읽힌다.***
+    """
+    direct = 'subprocess.run(["bash", str(SCRIPT), "web"])\n'
+    viavar = 'cmd = ["bash", str(SCRIPT), "web"]\nsubprocess.run(cmd)\n'
+    unrelated = 'subprocess.run(["echo", "hi"])\n'
+
+    assert _canonical_script_runs(direct) == [1], "직접 전달을 못 잡는다"
+    assert _unresolved_subprocess_calls(direct) == [], "읽을 수 있는데 판정불가로 센다"
+
+    # ★핵심: 변수 경유는 **hits 가 비어도** 판정불가로 **보고돼야** 한다.
+    assert _canonical_script_runs(viavar) == [], "정적으로 읽을 수 없는 것을 hit 로 센다"
+    assert _unresolved_subprocess_calls(viavar) == [2], (
+        "argv 를 못 읽은 호출이 보고되지 않는다 — 그 형태로 락을 조용히 우회할 수 있다"
+    )
+    # 음성 대조군 — 무관한 실행은 어느 쪽에도 안 들어간다.
+    assert _canonical_script_runs(unrelated) == []
+    assert _unresolved_subprocess_calls(unrelated) == []
+
+
+def test_this_file_has_no_unreadable_subprocess_calls() -> None:
+    """이 파일 자체에 **판정 불가 호출이 0건**이다 — 있으면 위 부채 단언이 공허해진다."""
+    unresolved = _unresolved_subprocess_calls()
+    assert not unresolved, (
+        f"argv 를 정적으로 못 읽는 subprocess 호출 {len(unresolved)}건(줄 {unresolved}) — "
+        "리스트 리터럴로 직접 넘기거나, 탐지기를 그 형태까지 읽게 넓혀라"
+    )
